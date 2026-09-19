@@ -1,12 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
-import { signup } from '../actions';
+import { saveRole } from './actions';
 import { UserRole } from '@/types/database.types';
-import GoogleSignInButton from '@/components/GoogleSignInButton';
 
-export default function SignupPage() {
+export default function OnboardingPage() {
   const [role, setRole] = useState<UserRole>('student');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,7 +18,7 @@ export default function SignupPage() {
     formData.set('role', role);
 
     try {
-      const result = await signup(formData);
+      const result = await saveRole(formData);
       if (result?.error) {
         setErrorMessage(result.error);
         setLoading(false);
@@ -29,7 +27,7 @@ export default function SignupPage() {
       if (err instanceof Error && err.message.includes('NEXT_REDIRECT')) {
         return;
       }
-      setErrorMessage('회원가입 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      setErrorMessage('저장 중 오류가 발생했습니다. 다시 시도해 주세요.');
       setLoading(false);
     }
   }
@@ -39,9 +37,9 @@ export default function SignupPage() {
       <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-8 shadow-xl">
         <div className="mb-6 text-center">
           <div className="mb-2 text-3xl font-extrabold text-blue-600">Q-Class</div>
-          <h1 className="text-2xl font-bold text-gray-900">회원가입</h1>
+          <h1 className="text-2xl font-bold text-gray-900">거의 완료되었습니다!</h1>
           <p className="mt-2 text-sm text-gray-500">
-            시작하기 위해 가입 유형을 선택해 주세요.
+            원활한 수업 진행을 위해 역할을 선택해 주세요.
           </p>
         </div>
 
@@ -51,19 +49,10 @@ export default function SignupPage() {
           </div>
         )}
 
-        <div className="mb-6">
-          <GoogleSignInButton text="Google 계정으로 시작하기" />
-          <div className="relative my-6 flex items-center justify-center">
-            <div className="w-full border-t border-gray-200" />
-            <span className="absolute bg-white px-3 text-xs text-gray-400">또는 이메일로 직접 가입</span>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* 역할 선택 카드 */}
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">
-              가입 유형
+              어떤 역할로 활동하시나요?
             </label>
             <div className="grid grid-cols-2 gap-3">
               <button
@@ -75,9 +64,9 @@ export default function SignupPage() {
                     : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                <span className="text-2xl mb-1">🧑‍🎓</span>
-                <span className="text-sm font-bold">학생</span>
-                <span className="text-xs text-gray-400 mt-0.5">질문 및 동료 답변</span>
+                <span className="text-3xl mb-1">🧑‍🎓</span>
+                <span className="text-base font-bold">학생</span>
+                <span className="text-xs text-gray-400 mt-1">질문 및 동료 답변</span>
               </button>
 
               <button
@@ -89,52 +78,22 @@ export default function SignupPage() {
                     : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                <span className="text-2xl mb-1">👨‍🏫</span>
-                <span className="text-sm font-bold">선생님</span>
-                <span className="text-xs text-gray-400 mt-0.5">수업 및 질문 관리</span>
+                <span className="text-3xl mb-1">👨‍🏫</span>
+                <span className="text-base font-bold">선생님</span>
+                <span className="text-xs text-gray-400 mt-1">수업 및 질문 관리</span>
               </button>
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1" htmlFor="name">
-              이름 (실명)
+              표시될 이름 (실명 권장)
             </label>
             <input
               id="name"
               name="name"
               type="text"
-              required
-              placeholder={role === 'teacher' ? '김선생' : '이학생'}
-              className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1" htmlFor="email">
-              이메일 주소
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              placeholder="user@school.edu"
-              className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1" htmlFor="password">
-              비밀번호 (6자 이상)
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              minLength={6}
-              placeholder="••••••••"
+              placeholder="이름을 입력하세요"
               className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -144,18 +103,10 @@ export default function SignupPage() {
             disabled={loading}
             className="w-full rounded-xl bg-blue-600 py-3.5 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? '가입 처리 중...' : `${role === 'teacher' ? '선생님' : '학생'}으로 회원가입`}
+            {loading ? '저장 중...' : `${role === 'teacher' ? '선생님' : '학생'}으로 시작하기`}
           </button>
         </form>
-
-        <div className="mt-6 text-center text-sm text-gray-500">
-          이미 계정이 있으신가요?{' '}
-          <Link href="/login" className="font-semibold text-blue-600 hover:underline">
-            로그인
-          </Link>
-        </div>
       </div>
     </div>
   );
 }
-

@@ -7,3 +7,4 @@ export interface Profile {
   avatar_url: string | null;
   created_at: string;
 }
+

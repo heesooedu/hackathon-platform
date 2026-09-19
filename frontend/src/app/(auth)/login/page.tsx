@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { login } from '../actions';
+import GoogleSignInButton from '@/components/GoogleSignInButton';
 
 export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -46,6 +47,14 @@ export default function LoginPage() {
             {errorMessage}
           </div>
         )}
+
+        <div className="mb-6">
+          <GoogleSignInButton text="Google 계정으로 로그인" />
+          <div className="relative my-6 flex items-center justify-center">
+            <div className="w-full border-t border-gray-200" />
+            <span className="absolute bg-white px-3 text-xs text-gray-400">또는 이메일로 로그인</span>
+          </div>
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
@@ -95,3 +104,4 @@ export default function LoginPage() {
     </div>
   );
 }
+
