@@ -173,3 +173,4 @@ CREATE POLICY "answers_delete_policy"
   FOR DELETE
   TO authenticated
   USING (author_id = auth.uid());
+

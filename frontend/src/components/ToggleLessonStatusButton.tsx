@@ -26,7 +26,7 @@ export default function ToggleLessonStatusButton({
       setLoading(true);
       const res = await toggleLessonStatus(lessonId, classId, status);
       if (res?.success && res.newStatus) {
-        setStatus(res.newStatus);
+        setStatus(res.newStatus as LessonStatus);
       }
     } catch (err) {
       console.error(err);

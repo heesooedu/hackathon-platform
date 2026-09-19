@@ -6,6 +6,8 @@ import StudentSubmissionForm from '@/components/StudentSubmissionForm';
 import TeacherSubmissionDashboard from '@/components/TeacherSubmissionDashboard';
 import QuestionBoard from '@/components/QuestionBoard';
 import RepresentativeQuestionSection from '@/components/RepresentativeQuestionSection';
+import TeacherReviewDashboard from '@/components/TeacherReviewDashboard';
+import LessonDetailTabs from '@/components/LessonDetailTabs';
 import { Lesson, Submission, QuestionGroup } from '@/types/database.types';
 
 interface LessonDetailPageProps {
@@ -48,7 +50,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   const isDeadlinePassed = lesson.deadline ? new Date(lesson.deadline) < new Date() : false;
   const isClosed = lesson.status === 'closed' || isDeadlinePassed;
 
-  // 3. 해당 레슨의 전체 제출물 조회 (질문 보드용)
+  // 3. 해당 레슨의 전체 제출물 조회
   const { data: allSubmissionsData } = await supabase
     .from('submissions')
     .select('*, student:student_id(id, name, avatar_url, role)')
@@ -57,7 +59,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
 
   const allSubmissions = (allSubmissionsData || []) as unknown as Submission[];
 
-  // 4. 대표 질문 그룹 목록 조회 (동료 답변 및 묶인 원본 질문 포함)
+  // 4. 대표 질문 그룹 목록 조회
   const { data: groupsData } = await supabase
     .from('question_groups')
     .select(`
@@ -177,43 +179,76 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </div>
       )}
 
-      {/* 4. 대표 질문 & 동료 답변 섹션 (6~7단계) */}
-      <RepresentativeQuestionSection
-        groups={questionGroups}
-        classId={classId}
-        lessonId={lessonId}
-        isTeacher={isTeacher}
-        currentUserId={user.id}
-      />
+      {/* 4. 본문 영역: 교사는 탭 전환 지원, 학생은 제출 폼 + 질문 보드 */}
+      {isTeacher ? (
+        <LessonDetailTabs
+          childrenQuestions={
+            <div className="space-y-10">
+              <RepresentativeQuestionSection
+                groups={questionGroups}
+                classId={classId}
+                lessonId={lessonId}
+                isTeacher={isTeacher}
+                currentUserId={user.id}
+              />
 
-      {/* 5. 상단 작업 영역: 교사 대시보드 OR 학생 제출 폼 */}
-      <div>
-        {isTeacher ? (
-          <TeacherSubmissionDashboard
-            totalStudents={totalClassStudents}
-            submissions={allSubmissions}
+              <TeacherSubmissionDashboard
+                totalStudents={totalClassStudents}
+                submissions={allSubmissions}
+              />
+
+              <div className="pt-2">
+                <QuestionBoard
+                  submissions={allSubmissions}
+                  currentUserId={user.id}
+                  isTeacher={isTeacher}
+                  lessonId={lessonId}
+                  classId={classId}
+                  learningObjective={lesson.learning_objective}
+                />
+              </div>
+            </div>
+          }
+          childrenReview={
+            <TeacherReviewDashboard
+              lessonId={lessonId}
+              lessonTitle={lesson.title}
+              learningObjective={lesson.learning_objective}
+              totalStudents={totalClassStudents}
+              submissions={allSubmissions}
+              groups={questionGroups}
+            />
+          }
+        />
+      ) : (
+        <div className="space-y-10">
+          <RepresentativeQuestionSection
+            groups={questionGroups}
+            classId={classId}
+            lessonId={lessonId}
+            isTeacher={isTeacher}
+            currentUserId={user.id}
           />
-        ) : (
+
           <StudentSubmissionForm
             lessonId={lessonId}
             classId={classId}
             isClosed={isClosed}
             existingSubmission={mySubmission}
           />
-        )}
-      </div>
 
-      {/* 6. 우리 반 질문 보드 (공통 영역) */}
-      <div className="pt-4">
-        <QuestionBoard
-          submissions={allSubmissions}
-          currentUserId={user.id}
-          isTeacher={isTeacher}
-          lessonId={lessonId}
-          classId={classId}
-          learningObjective={lesson.learning_objective}
-        />
-      </div>
+          <div className="pt-2">
+            <QuestionBoard
+              submissions={allSubmissions}
+              currentUserId={user.id}
+              isTeacher={isTeacher}
+              lessonId={lessonId}
+              classId={classId}
+              learningObjective={lesson.learning_objective}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
