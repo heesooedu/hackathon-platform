@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project Purpose
-Build a question-centered learning platform for teachers and students. Each lesson collects students' questions or understanding status, organizes related questions, supports peer answers, and helps the teacher decide what to revisit in the next lesson.
+Build a question-centered learning platform for teachers and students. Each lesson collects students' questions or understanding status, organizes related questions, supports peer answers, and directly empowers teachers to refine and improve their interactive lesson materials for subsequent classes.
 
 The first release is an MVP for validating the classroom learning loop. Prefer a small, reliable product over broad features.
 
@@ -52,6 +52,12 @@ Do not add these features without a direct request:
 - Complex analytics engines
 - Native mobile applications
 
+## Product Vision & Roadmap: Interactive Lesson Materials & In-App Editor
+- **Interactive Materials**: Lessons will support interactive, web-based instructional materials constructed with HTML, CSS, and JavaScript (e.g., simulations, interactive widgets, vibe-coded applets).
+- **In-App Editing & Vibe-Coding Uploads**: Teachers will be able to upload self-contained interactive web materials or edit lesson materials directly in an in-platform code/content editor.
+- **Closing the Feedback Loop**: Student questions collected in a lesson highlight misconceptions, directly informing the teacher which parts of the interactive material need revision or explanation before the next class.
+- **MVP Architectural Hook**: While full editor and sandbox rendering are targeted for subsequent phases, database schemas (e.g., `lessons`) should maintain an optional payload slot (such as `material_html` or metadata) to allow frictionless extension.
+
 ## Product Principles
 - Optimize for the teacher's next instructional decision, not for engagement metrics.
 - Do not force students to invent low-quality questions. Allow an understanding-status submission as an alternative.
@@ -82,7 +88,7 @@ Do not add these features without a direct request:
 - `profiles`: `id` (references auth.users), `role` (`'teacher'` | `'student'`), `name`, `avatar_url`, `created_at`
 - `classes`: `id`, `teacher_id`, `name`, `join_code` (unique, 6-char), `created_at`
 - `class_members`: `class_id`, `student_id`, `joined_at`
-- `lessons`: `id`, `class_id`, `title`, `learning_objective`, `deadline`, `status` (`'open'` | `'closed'`), `created_at`
+- `lessons`: `id`, `class_id`, `title`, `learning_objective`, `deadline`, `status` (`'open'` | `'closed'`), `material_html` (optional, for interactive materials), `created_at`
 - `submissions`: `id`, `lesson_id`, `student_id`, `type` (`'question'` | `'confusion'` | `'understood'` | `'explore'`), `content`, `created_at` (immutable)
 - `question_groups`: `id`, `lesson_id`, `representative_title`, `representative_content`, `is_published`, `is_resolved`, `created_at`
 - `question_group_members`: `group_id`, `submission_id`
@@ -106,3 +112,4 @@ Do not add these features without a direct request:
 6. **Manual question grouping**: Teacher groups related submissions into representative questions.
 7. **Peer answers and teacher verification**: Students answer; teacher verifies.
 8. **Minimal teacher dashboard**: High-level review for next-lesson preparation.
+
