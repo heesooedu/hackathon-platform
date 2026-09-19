@@ -102,3 +102,4 @@ export async function joinClass(formData: FormData) {
   revalidatePath('/', 'layout');
   redirect(`/classes/${result.class_id}`);
 }
+

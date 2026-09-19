@@ -20,3 +20,4 @@ export default function CopyCodeButton({ code }: { code: string }) {
     </button>
   );
 }
+

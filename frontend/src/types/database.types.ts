@@ -25,3 +25,16 @@ export interface ClassMember {
   joined_at: string;
   student?: Profile;
 }
+
+export type LessonStatus = 'open' | 'closed';
+
+export interface Lesson {
+  id: string;
+  class_id: string;
+  title: string;
+  learning_objective: string;
+  deadline: string | null;
+  status: LessonStatus;
+  material_html: string | null;
+  created_at: string;
+}

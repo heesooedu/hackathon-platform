@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import CopyCodeButton from '@/components/CopyCodeButton';
-import { Profile } from '@/types/database.types';
+import CreateLessonModal from '@/components/CreateLessonModal';
+import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
+import { Profile, Lesson } from '@/types/database.types';
 
 interface ClassDetailPageProps {
   params: Promise<{ id: string }>;
@@ -17,13 +19,6 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
     redirect('/login');
   }
 
-  // 사용자 프로필 조회
-  const { data: userProfile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
-
   // 클래스 정보 조회
   const { data: classData, error: classError } = await supabase
     .from('classes')
@@ -36,6 +31,13 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
   }
 
   const isTeacher = classData.teacher_id === user.id;
+
+  // 레슨 목록 조회
+  const { data: lessons } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('class_id', classId)
+    .order('created_at', { ascending: false });
 
   // 참여 학생 목록 조회
   const { data: members } = await supabase
@@ -74,13 +76,8 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
           </div>
 
           {isTeacher && (
-            <div className="flex items-center gap-2">
-              <button
-                disabled
-                className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-400 cursor-not-allowed"
-              >
-                + 새 레슨 개설 (3단계에서 오픈)
-              </button>
+            <div>
+              <CreateLessonModal classId={classId} />
             </div>
           )}
         </div>
@@ -118,18 +115,101 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between border-b border-gray-200 pb-3">
             <h2 className="text-lg font-bold text-gray-900">수업 레슨 목록</h2>
-            <span className="text-xs text-gray-400">총 0개의 레슨</span>
+            <span className="text-xs text-gray-500">총 {lessons?.length || 0}개의 차시</span>
           </div>
 
-          <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
-            <div className="text-4xl mb-3">📖</div>
-            <h3 className="text-base font-bold text-gray-700">아직 등록된 레슨이 없습니다</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              {isTeacher
-                ? '다음 단계(Slice 3)에서 질문을 수집할 레슨을 개설할 수 있습니다.'
-                : '선생님이 레슨을 개설하면 여기에 질문 제출란이 나타납니다.'}
-            </p>
-          </div>
+          {lessons && lessons.length > 0 ? (
+            <div className="space-y-3">
+              {lessons.map((lesson: Lesson) => {
+                const isDeadlinePassed = lesson.deadline ? new Date(lesson.deadline) < new Date() : false;
+                const isClosed = lesson.status === 'closed' || isDeadlinePassed;
+
+                return (
+                  <div
+                    key={lesson.id}
+                    className="flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                              isClosed
+                                ? 'bg-gray-100 text-gray-600'
+                                : 'bg-emerald-100 text-emerald-700'
+                            }`}
+                          >
+                            {isClosed ? '🔴 마감됨' : '🟢 질문 접수 중'}
+                          </span>
+                          {lesson.material_html && (
+                            <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-semibold text-purple-700 border border-purple-100">
+                              ✨ 인터랙티브 교안
+                            </span>
+                          )}
+                        </div>
+
+                        <Link
+                          href={`/classes/${classId}/lessons/${lesson.id}`}
+                          className="text-lg font-bold text-gray-900 hover:text-blue-600 transition block"
+                        >
+                          {lesson.title}
+                        </Link>
+                        <p className="text-sm text-gray-500 leading-relaxed line-clamp-2">
+                          🎯 {lesson.learning_objective}
+                        </p>
+                      </div>
+
+                      {isTeacher && (
+                        <div className="shrink-0">
+                          <ToggleLessonStatusButton
+                            lessonId={lesson.id}
+                            classId={classId}
+                            initialStatus={lesson.status}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between text-xs text-gray-400 pt-3 border-t border-gray-50">
+                      <div>
+                        {lesson.deadline ? (
+                          <span>
+                            마감:{' '}
+                            {new Date(lesson.deadline).toLocaleString('ko-KR', {
+                              month: 'numeric',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        ) : (
+                          <span>마감 기한 없음</span>
+                        )}
+                      </div>
+
+                      <Link
+                        href={`/classes/${classId}/lessons/${lesson.id}`}
+                        className="font-semibold text-blue-600 hover:underline flex items-center gap-1"
+                      >
+                        <span>{isTeacher ? '질문 보드 보기' : '질문 제출하기'}</span>
+                        <span>→</span>
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
+              <div className="text-4xl mb-3">📖</div>
+              <h3 className="text-base font-bold text-gray-700">아직 등록된 레슨이 없습니다</h3>
+              <p className="mt-1 text-sm text-gray-400">
+                {isTeacher
+                  ? '상단의 [+ 새 레슨 개설] 버튼을 눌러 첫 차시를 만들어 보세요.'
+                  : '선생님이 레슨을 개설하면 여기에 질문 제출란이 나타납니다.'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* 오른쪽 1열: 참여 학생 명단 */}
