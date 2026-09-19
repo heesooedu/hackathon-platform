@@ -2,12 +2,25 @@
 
 import { useState } from 'react';
 import { createLesson } from '@/app/lessons/actions';
+import { QUADRATIC_FUNCTION_HTML } from '@/utils/sampleMaterials';
 
 export default function CreateLessonModal({ classId }: { classId: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showMaterial, setShowMaterial] = useState(false);
+
+  // 폼 입력 상태
+  const [title, setTitle] = useState('');
+  const [learningObjective, setLearningObjective] = useState('');
+  const [materialHtml, setMaterialHtml] = useState('');
+
+  function fillSampleMaterial() {
+    setTitle('3차시: 이차함수 y=ax²+bx+c의 그래프와 계수의 역할');
+    setLearningObjective('계수 a, b, c의 변화에 따른 포물선의 모양, 꼭짓점, 대칭축의 변화를 시뮬레이터로 관찰하고 설명할 수 있다.');
+    setMaterialHtml(QUADRATIC_FUNCTION_HTML);
+    setShowMaterial(true);
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -16,6 +29,9 @@ export default function CreateLessonModal({ classId }: { classId: string }) {
 
     const formData = new FormData(event.currentTarget);
     formData.set('class_id', classId);
+    formData.set('title', title);
+    formData.set('learning_objective', learningObjective);
+    formData.set('material_html', materialHtml);
 
     try {
       const result = await createLesson(formData);
@@ -63,6 +79,17 @@ export default function CreateLessonModal({ classId }: { classId: string }) {
               </button>
             </div>
 
+            {/* 원클릭 예시 채우기 버튼 */}
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={fillSampleMaterial}
+                className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100"
+              >
+                <span>💡 [이차함수 그래프] 예시 데이터 자동 입력</span>
+              </button>
+            </div>
+
             {errorMessage && (
               <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-600 border border-red-100">
                 {errorMessage}
@@ -79,6 +106,8 @@ export default function CreateLessonModal({ classId }: { classId: string }) {
                   name="title"
                   type="text"
                   required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
                   placeholder="예: 1차시: 알고리즘과 조건문의 기초"
                   className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
@@ -93,6 +122,8 @@ export default function CreateLessonModal({ classId }: { classId: string }) {
                   name="learning_objective"
                   required
                   rows={2}
+                  value={learningObjective}
+                  onChange={(e) => setLearningObjective(e.target.value)}
                   placeholder="예: 일상 속 선택 상황을 순서도로 표현하고 if 조건 분기를 이해한다."
                   className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
@@ -135,7 +166,9 @@ export default function CreateLessonModal({ classId }: { classId: string }) {
                     </p>
                     <textarea
                       name="material_html"
-                      rows={5}
+                      rows={6}
+                      value={materialHtml}
+                      onChange={(e) => setMaterialHtml(e.target.value)}
                       placeholder="<!DOCTYPE html><html>...</html> 또는 <style>...<script>..."
                       className="w-full font-mono text-xs rounded-xl border border-gray-200 bg-white p-3 text-gray-800 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                     />
@@ -166,4 +199,3 @@ export default function CreateLessonModal({ classId }: { classId: string }) {
     </>
   );
 }
-
