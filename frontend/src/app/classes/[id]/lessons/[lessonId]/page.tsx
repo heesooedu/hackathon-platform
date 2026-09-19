@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
-import { Profile, Lesson, ClassItem } from '@/types/database.types';
+import StudentSubmissionForm from '@/components/StudentSubmissionForm';
+import TeacherSubmissionDashboard from '@/components/TeacherSubmissionDashboard';
+import { Lesson, Submission } from '@/types/database.types';
 
 interface LessonDetailPageProps {
   params: Promise<{ id: string; lessonId: string }>;
@@ -17,7 +19,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     redirect('/login');
   }
 
-  // 클래스 조회
+  // 1. 클래스 정보 조회
   const { data: classData, error: classError } = await supabase
     .from('classes')
     .select('*, teacher:teacher_id(*)')
@@ -28,7 +30,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     notFound();
   }
 
-  // 레슨 조회
+  // 2. 레슨 정보 조회
   const { data: lessonData, error: lessonError } = await supabase
     .from('lessons')
     .select('*')
@@ -44,9 +46,42 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   const isDeadlinePassed = lesson.deadline ? new Date(lesson.deadline) < new Date() : false;
   const isClosed = lesson.status === 'closed' || isDeadlinePassed;
 
+  // 3. 교사/학생별 데이터 분기 조회
+  let teacherSubmissions: Submission[] = [];
+  let totalClassStudents = 0;
+  let mySubmission: Submission | null = null;
+
+  if (isTeacher) {
+    // (1) 전체 학생 수 카운트
+    const { count } = await supabase
+      .from('class_members')
+      .select('*', { count: 'exact', head: true })
+      .eq('class_id', classId);
+    totalClassStudents = count || 0;
+
+    // (2) 해당 레슨의 전체 제출물 조회 (학생 실명 포함)
+    const { data: subs } = await supabase
+      .from('submissions')
+      .select('*, student:student_id(id, name, avatar_url, role)')
+      .eq('lesson_id', lessonId)
+      .order('created_at', { ascending: false });
+
+    teacherSubmissions = (subs || []) as unknown as Submission[];
+  } else {
+    // (3) 학생 본인의 기존 제출물 조회
+    const { data: sub } = await supabase
+      .from('submissions')
+      .select('*')
+      .eq('lesson_id', lessonId)
+      .eq('student_id', user.id)
+      .maybeSingle();
+
+    mySubmission = sub as Submission | null;
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
-      {/* 상단 브레드크럼 */}
+      {/* 상단 브레드크럼 & 헤더 */}
       <div>
         <Link
           href={`/classes/${classId}`}
@@ -107,7 +142,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </p>
       </div>
 
-      {/* 인터랙티브 웹 교안 미리보기 (등록되어 있을 때) */}
+      {/* 인터랙티브 웹 교안 샌드박스 뷰 (등록되어 있을 때) */}
       {lesson.material_html && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -124,37 +159,29 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
             <iframe
               srcDoc={lesson.material_html}
               sandbox="allow-scripts"
-              className="h-[450px] w-full border-0"
+              className="h-[520px] w-full border-0"
               title="Interactive Lesson Material"
             />
           </div>
         </div>
       )}
 
-      {/* 4단계: 질문 제출 영역 (준비 상태 안내) */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between border-b border-gray-200 pb-3">
-          <h2 className="text-lg font-bold text-gray-900">
-            {isTeacher ? '학생 질문 현황' : '내 질문 & 이해도 제출'}
-          </h2>
-          <span className="text-xs text-blue-600 font-semibold bg-blue-50 px-2.5 py-1 rounded-lg">
-            4단계: Student Submission
-          </span>
-        </div>
-
-        <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center">
-          <div className="text-4xl mb-3">💬</div>
-          <h3 className="text-base font-bold text-gray-800">
-            {isTeacher
-              ? '학생들의 질문이 수집되면 여기에 보드가 나타납니다.'
-              : '질문, 혼란 지점, 또는 이해 상태를 제출할 수 있습니다.'}
-          </h3>
-          <p className="mt-1 text-sm text-gray-400">
-            다음 4단계(Student Submission)에서 4가지 유형(질문/혼란/이해/탐구)의 개별화된 제출 기능이 오픈됩니다.
-          </p>
-        </div>
+      {/* 4단계: 교사 대시보드 또는 학생 제출 폼 */}
+      <div>
+        {isTeacher ? (
+          <TeacherSubmissionDashboard
+            totalStudents={totalClassStudents}
+            submissions={teacherSubmissions}
+          />
+        ) : (
+          <StudentSubmissionForm
+            lessonId={lessonId}
+            classId={classId}
+            isClosed={isClosed}
+            existingSubmission={mySubmission}
+          />
+        )}
       </div>
     </div>
   );
 }
-

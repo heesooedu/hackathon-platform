@@ -38,3 +38,16 @@ export interface Lesson {
   material_html: string | null;
   created_at: string;
 }
+
+export type SubmissionType = 'question' | 'confusion' | 'understood' | 'explore';
+
+export interface Submission {
+  id: string;
+  lesson_id: string;
+  student_id: string;
+  type: SubmissionType;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  student?: Profile;
+}

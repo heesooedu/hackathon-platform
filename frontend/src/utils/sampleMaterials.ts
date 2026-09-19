@@ -349,3 +349,4 @@ export const QUADRATIC_FUNCTION_HTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>`;
+
