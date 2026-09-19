@@ -51,3 +51,28 @@ export interface Submission {
   updated_at: string;
   student?: Profile;
 }
+
+export interface Answer {
+  id: string;
+  group_id: string;
+  author_id: string;
+  content: string;
+  is_teacher_checked: boolean;
+  created_at: string;
+  author?: Profile;
+}
+
+export interface QuestionGroup {
+  id: string;
+  lesson_id: string;
+  representative_title: string;
+  representative_content: string;
+  is_published: boolean;
+  is_resolved: boolean;
+  created_at: string;
+  members?: {
+    id: string;
+    submission: Submission;
+  }[];
+  answers?: Answer[];
+}

@@ -5,7 +5,8 @@ import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
 import StudentSubmissionForm from '@/components/StudentSubmissionForm';
 import TeacherSubmissionDashboard from '@/components/TeacherSubmissionDashboard';
 import QuestionBoard from '@/components/QuestionBoard';
-import { Lesson, Submission } from '@/types/database.types';
+import RepresentativeQuestionSection from '@/components/RepresentativeQuestionSection';
+import { Lesson, Submission, QuestionGroup } from '@/types/database.types';
 
 interface LessonDetailPageProps {
   params: Promise<{ id: string; lessonId: string }>;
@@ -56,7 +57,26 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
 
   const allSubmissions = (allSubmissionsData || []) as unknown as Submission[];
 
-  // 4. 교사용 / 학생용 특화 데이터
+  // 4. 대표 질문 그룹 목록 조회 (동료 답변 및 묶인 원본 질문 포함)
+  const { data: groupsData } = await supabase
+    .from('question_groups')
+    .select(`
+      *,
+      members:question_group_members(
+        id,
+        submission:submissions(*)
+      ),
+      answers(
+        *,
+        author:profiles(*)
+      )
+    `)
+    .eq('lesson_id', lessonId)
+    .order('created_at', { ascending: false });
+
+  const questionGroups = (groupsData || []) as unknown as QuestionGroup[];
+
+  // 5. 교사용 / 학생용 특화 데이터
   let totalClassStudents = 0;
   let mySubmission: Submission | null = null;
 
@@ -157,7 +177,16 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </div>
       )}
 
-      {/* 4. 상단 작업 영역: 교사 대시보드 OR 학생 제출 폼 */}
+      {/* 4. 대표 질문 & 동료 답변 섹션 (6~7단계) */}
+      <RepresentativeQuestionSection
+        groups={questionGroups}
+        classId={classId}
+        lessonId={lessonId}
+        isTeacher={isTeacher}
+        currentUserId={user.id}
+      />
+
+      {/* 5. 상단 작업 영역: 교사 대시보드 OR 학생 제출 폼 */}
       <div>
         {isTeacher ? (
           <TeacherSubmissionDashboard
@@ -174,12 +203,15 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         )}
       </div>
 
-      {/* 5. 5단계: 우리 반 질문 보드 (공통 영역) */}
+      {/* 6. 우리 반 질문 보드 (공통 영역) */}
       <div className="pt-4">
         <QuestionBoard
           submissions={allSubmissions}
           currentUserId={user.id}
           isTeacher={isTeacher}
+          lessonId={lessonId}
+          classId={classId}
+          learningObjective={lesson.learning_objective}
         />
       </div>
     </div>
