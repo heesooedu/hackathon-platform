@@ -1,9 +1,8 @@
 -- ==============================================================================
--- 05_submissions.sql
--- 4~5단계: 학생 질문 제출 및 질문 보드(submissions) 테이블 및 RLS 정책
+-- 05_submissions.sql (수정본: DO 블록 제거 및 명시적 정책 관리)
 -- ==============================================================================
 
--- 1. submissions 테이블 생성
+-- 1. submissions 테이블 생성 (기존 테이블이 있으면 유지)
 CREATE TABLE IF NOT EXISTS public.submissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lesson_id UUID NOT NULL REFERENCES public.lessons(id) ON DELETE CASCADE,
@@ -23,26 +22,15 @@ CREATE INDEX IF NOT EXISTS idx_submissions_type ON public.submissions(type);
 -- 2. RLS 활성화
 ALTER TABLE public.submissions ENABLE ROW LEVEL SECURITY;
 
--- 3. 기존 submissions 관련 정책 정리
-DO $$ 
-DECLARE 
-    r RECORD;
-BEGIN
-    FOR r IN (
-      SELECT policyname, tablename 
-      FROM pg_policies 
-      WHERE schemaname = 'public' AND tablename IN ('submissions')
-    ) LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', r.policyname, r.tablename);
-    END LOOP;
-END $$;
+-- 3. 기존 정책 깔끔하게 제거
+DROP POLICY IF EXISTS "submissions_select_policy" ON public.submissions;
+DROP POLICY IF EXISTS "submissions_insert_policy" ON public.submissions;
+DROP POLICY IF EXISTS "submissions_update_policy" ON public.submissions;
+DROP POLICY IF EXISTS "submissions_delete_policy" ON public.submissions;
 
--- 4. submissions RLS 정책 (5단계 질문 보드 조회를 위한 확장)
+-- 4. submissions RLS 정책 (동료 학생 질문 보드 조회 지원)
 
--- (1) 조회:
--- - 학생 본인
--- - 또는 해당 클래스를 개설한 교사
--- - 또는 해당 클래스에 속한 동료 학생 (질문 보드 렌더링 목적)
+-- (1) 조회: 본인 또는 교사 또는 같은 반 학생
 CREATE POLICY "submissions_select_policy"
   ON public.submissions
   FOR SELECT
