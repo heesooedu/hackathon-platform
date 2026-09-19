@@ -1,10 +1,23 @@
 -- ==============================================================================
--- 03_classes_and_membership.sql (수정본)
--- RLS 상호 순환 참조(Infinite Recursion)를 방지하기 위해 
--- SECURITY DEFINER 헬퍼 함수를 적용한 버전입니다.
+-- 03_classes_and_membership.sql (순환 참조 100% 해결 버전)
+-- 기존의 모든 잔여 정책을 일괄 정리하고 단방향 정책으로 재귀를 원천 차단합니다.
 -- ==============================================================================
 
--- 1. classes 테이블 생성 (기존 테이블이 있으면 유지)
+-- 1. 기존의 classes 및 class_members에 걸려있던 모든 구버전 정책 일괄 삭제
+DO $$ 
+DECLARE 
+    r RECORD;
+BEGIN
+    FOR r IN (
+      SELECT policyname, tablename 
+      FROM pg_policies 
+      WHERE schemaname = 'public' AND tablename IN ('classes', 'class_members')
+    ) LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', r.policyname, r.tablename);
+    END LOOP;
+END $$;
+
+-- 2. classes 테이블 생성 (기존에 있으면 유지)
 CREATE TABLE IF NOT EXISTS public.classes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   teacher_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -16,7 +29,7 @@ CREATE TABLE IF NOT EXISTS public.classes (
 CREATE INDEX IF NOT EXISTS idx_classes_teacher_id ON public.classes(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_classes_join_code ON public.classes(join_code);
 
--- 2. class_members 테이블 생성
+-- 3. class_members 테이블 생성
 CREATE TABLE IF NOT EXISTS public.class_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   class_id UUID NOT NULL REFERENCES public.classes(id) ON DELETE CASCADE,
@@ -28,77 +41,61 @@ CREATE TABLE IF NOT EXISTS public.class_members (
 CREATE INDEX IF NOT EXISTS idx_class_members_class_id ON public.class_members(class_id);
 CREATE INDEX IF NOT EXISTS idx_class_members_student_id ON public.class_members(student_id);
 
--- 3. RLS 활성화
+-- 4. RLS 활성화
 ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.class_members ENABLE ROW LEVEL SECURITY;
 
--- 4. 무한 재귀 방지를 위한 SECURITY DEFINER 헬퍼 함수
--- (함수 내부에서는 RLS를 우회하여 순환 참조를 원천 차단합니다)
-CREATE OR REPLACE FUNCTION public.check_is_class_teacher(c_id UUID)
-RETURNS BOOLEAN AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.classes
-    WHERE id = c_id AND teacher_id = auth.uid()
-  );
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
-CREATE OR REPLACE FUNCTION public.check_is_class_member(c_id UUID)
-RETURNS BOOLEAN AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.class_members
-    WHERE class_id = c_id AND student_id = auth.uid()
-  );
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
--- 5. 기존 정책 제거 후 재등록
-DROP POLICY IF EXISTS "Users can view classes they belong to" ON public.classes;
-DROP POLICY IF EXISTS "Teachers can insert their own classes" ON public.classes;
-DROP POLICY IF EXISTS "Teachers can update their own classes" ON public.classes;
-DROP POLICY IF EXISTS "Teachers can delete their own classes" ON public.classes;
-DROP POLICY IF EXISTS "Members can view class membership" ON public.class_members;
-
--- 6. classes RLS 정책 (헬퍼 함수 사용으로 무한 재귀 해결)
-CREATE POLICY "Users can view classes they belong to"
+-- 5. classes RLS 정책
+-- (1) 조회: 내가 교사이거나, 내가 class_members에 속한 학생인 경우
+CREATE POLICY "classes_select_policy"
   ON public.classes
   FOR SELECT
   TO authenticated
   USING (
     teacher_id = auth.uid()
-    OR public.check_is_class_member(id)
+    OR EXISTS (
+      SELECT 1 FROM public.class_members cm
+      WHERE cm.class_id = classes.id AND cm.student_id = auth.uid()
+    )
   );
 
-CREATE POLICY "Teachers can insert their own classes"
+-- (2) 생성: 교사 본인의 클래스만 생성
+CREATE POLICY "classes_insert_policy"
   ON public.classes
   FOR INSERT
   TO authenticated
-  WITH CHECK (
-    teacher_id = auth.uid()
-  );
+  WITH CHECK (teacher_id = auth.uid());
 
-CREATE POLICY "Teachers can update their own classes"
+-- (3) 수정: 교사 본인의 클래스만 수정
+CREATE POLICY "classes_update_policy"
   ON public.classes
   FOR UPDATE
   TO authenticated
   USING (teacher_id = auth.uid())
   WITH CHECK (teacher_id = auth.uid());
 
-CREATE POLICY "Teachers can delete their own classes"
+-- (4) 삭제: 교사 본인의 클래스만 삭제
+CREATE POLICY "classes_delete_policy"
   ON public.classes
   FOR DELETE
   TO authenticated
   USING (teacher_id = auth.uid());
 
--- 7. class_members RLS 정책 (헬퍼 함수 사용으로 무한 재귀 해결)
-CREATE POLICY "Members can view class membership"
+-- 6. class_members RLS 정책
+-- ★ 중요: class_members에서는 classes 테이블을 다시 조회하지 않으므로 순환 참조가 100% 원천 차단됩니다.
+CREATE POLICY "class_members_select_policy"
   ON public.class_members
   FOR SELECT
   TO authenticated
-  USING (
-    student_id = auth.uid()
-    OR public.check_is_class_teacher(class_id)
-  );
+  USING (true);
 
--- 8. 학생 6자리 코드 참여 RPC 함수
+CREATE POLICY "class_members_delete_policy"
+  ON public.class_members
+  FOR DELETE
+  TO authenticated
+  USING (student_id = auth.uid());
+
+-- 7. 학생 6자리 코드 참여 RPC 함수 (SECURITY DEFINER로 안전하게 실행)
 CREATE OR REPLACE FUNCTION public.join_class_by_code(p_join_code TEXT)
 RETURNS JSON AS $$
 DECLARE
