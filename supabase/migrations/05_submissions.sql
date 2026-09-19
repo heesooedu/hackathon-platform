@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 05_submissions.sql
--- 4단계: 학생 질문 및 학습 상태 제출 (submissions) 테이블 및 RLS 정책
+-- 4~5단계: 학생 질문 제출 및 질문 보드(submissions) 테이블 및 RLS 정책
 -- ==============================================================================
 
 -- 1. submissions 테이블 생성
@@ -31,15 +31,18 @@ BEGIN
     FOR r IN (
       SELECT policyname, tablename 
       FROM pg_policies 
-      WHERE schemaname = 'public' AND tablename = 'submissions'
+      WHERE schemaname = 'public' AND tablename IN ('submissions')
     ) LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON %I', r.policyname, r.tablename);
     END LOOP;
 END $$;
 
--- 4. submissions RLS 정책 (순환 참조 없는 단방향 권한 검사)
+-- 4. submissions RLS 정책 (5단계 질문 보드 조회를 위한 확장)
 
--- (1) 조회: 학생 본인의 제출물이거나, 해당 클래스를 개설한 교사인 경우
+-- (1) 조회:
+-- - 학생 본인
+-- - 또는 해당 클래스를 개설한 교사
+-- - 또는 해당 클래스에 속한 동료 학생 (질문 보드 렌더링 목적)
 CREATE POLICY "submissions_select_policy"
   ON public.submissions
   FOR SELECT
@@ -51,6 +54,12 @@ CREATE POLICY "submissions_select_policy"
       FROM public.lessons l
       JOIN public.classes c ON c.id = l.class_id
       WHERE l.id = submissions.lesson_id AND c.teacher_id = auth.uid()
+    )
+    OR EXISTS (
+      SELECT 1 
+      FROM public.lessons l
+      JOIN public.class_members cm ON cm.class_id = l.class_id
+      WHERE l.id = submissions.lesson_id AND cm.student_id = auth.uid()
     )
   );
 
@@ -69,7 +78,7 @@ CREATE POLICY "submissions_insert_policy"
     )
   );
 
--- (3) 수정: 학생 본인만 수정 가능 (레슨이 open 상태일 때)
+-- (3) 수정: 학생 본인만 수정 가능
 CREATE POLICY "submissions_update_policy"
   ON public.submissions
   FOR UPDATE

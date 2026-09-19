@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server';
 import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
 import StudentSubmissionForm from '@/components/StudentSubmissionForm';
 import TeacherSubmissionDashboard from '@/components/TeacherSubmissionDashboard';
+import QuestionBoard from '@/components/QuestionBoard';
 import { Lesson, Submission } from '@/types/database.types';
 
 interface LessonDetailPageProps {
@@ -46,42 +47,32 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   const isDeadlinePassed = lesson.deadline ? new Date(lesson.deadline) < new Date() : false;
   const isClosed = lesson.status === 'closed' || isDeadlinePassed;
 
-  // 3. 교사/학생별 데이터 분기 조회
-  let teacherSubmissions: Submission[] = [];
+  // 3. 해당 레슨의 전체 제출물 조회 (질문 보드용)
+  const { data: allSubmissionsData } = await supabase
+    .from('submissions')
+    .select('*, student:student_id(id, name, avatar_url, role)')
+    .eq('lesson_id', lessonId)
+    .order('created_at', { ascending: false });
+
+  const allSubmissions = (allSubmissionsData || []) as unknown as Submission[];
+
+  // 4. 교사용 / 학생용 특화 데이터
   let totalClassStudents = 0;
   let mySubmission: Submission | null = null;
 
   if (isTeacher) {
-    // (1) 전체 학생 수 카운트
     const { count } = await supabase
       .from('class_members')
       .select('*', { count: 'exact', head: true })
       .eq('class_id', classId);
     totalClassStudents = count || 0;
-
-    // (2) 해당 레슨의 전체 제출물 조회 (학생 실명 포함)
-    const { data: subs } = await supabase
-      .from('submissions')
-      .select('*, student:student_id(id, name, avatar_url, role)')
-      .eq('lesson_id', lessonId)
-      .order('created_at', { ascending: false });
-
-    teacherSubmissions = (subs || []) as unknown as Submission[];
   } else {
-    // (3) 학생 본인의 기존 제출물 조회
-    const { data: sub } = await supabase
-      .from('submissions')
-      .select('*')
-      .eq('lesson_id', lessonId)
-      .eq('student_id', user.id)
-      .maybeSingle();
-
-    mySubmission = sub as Submission | null;
+    mySubmission = allSubmissions.find((s) => s.student_id === user.id) || null;
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
-      {/* 상단 브레드크럼 & 헤더 */}
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-10">
+      {/* 1. 상단 브레드크럼 & 헤더 */}
       <div>
         <Link
           href={`/classes/${classId}`}
@@ -132,7 +123,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </div>
       </div>
 
-      {/* 학습 목표 안내 카드 */}
+      {/* 2. 학습 목표 안내 카드 */}
       <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-6">
         <h2 className="text-xs font-bold uppercase tracking-wider text-blue-600 mb-1">
           🎯 이번 차시 학습 목표
@@ -142,7 +133,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </p>
       </div>
 
-      {/* 인터랙티브 웹 교안 샌드박스 뷰 (등록되어 있을 때) */}
+      {/* 3. 인터랙티브 웹 교안 샌드박스 (등록되어 있을 때) */}
       {lesson.material_html && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -166,12 +157,12 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </div>
       )}
 
-      {/* 4단계: 교사 대시보드 또는 학생 제출 폼 */}
+      {/* 4. 상단 작업 영역: 교사 대시보드 OR 학생 제출 폼 */}
       <div>
         {isTeacher ? (
           <TeacherSubmissionDashboard
             totalStudents={totalClassStudents}
-            submissions={teacherSubmissions}
+            submissions={allSubmissions}
           />
         ) : (
           <StudentSubmissionForm
@@ -181,6 +172,15 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
             existingSubmission={mySubmission}
           />
         )}
+      </div>
+
+      {/* 5. 5단계: 우리 반 질문 보드 (공통 영역) */}
+      <div className="pt-4">
+        <QuestionBoard
+          submissions={allSubmissions}
+          currentUserId={user.id}
+          isTeacher={isTeacher}
+        />
       </div>
     </div>
   );

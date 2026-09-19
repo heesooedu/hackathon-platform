@@ -66,3 +66,4 @@ export async function submitLearningStatus(formData: FormData) {
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
   return { success: true };
 }
+
