@@ -31,3 +31,4 @@ export async function GET(request: Request) {
   // 오류 시 로그인 화면으로 리다이렉트
   return NextResponse.redirect(`${origin}/login?error=auth_error`);
 }
+

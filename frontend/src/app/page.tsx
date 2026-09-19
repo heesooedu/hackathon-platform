@@ -1,28 +1,60 @@
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/server';
-import { Profile } from '@/types/database.types';
+import { Profile, ClassItem } from '@/types/database.types';
+import CreateClassModal from '@/components/CreateClassModal';
+import JoinClassModal from '@/components/JoinClassModal';
 
 export default async function HomePage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   let profile: Profile | null = null;
+  let teacherClasses: ClassItem[] = [];
+  let studentClasses: ClassItem[] = [];
+
   if (user) {
+    // 1. 프로필 조회
     const { data } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .single();
     profile = data as Profile | null;
+
+    // 2. 교사일 경우: 자신이 개설한 클래스 목록 조회
+    if (profile?.role === 'teacher') {
+      const { data: cData } = await supabase
+        .from('classes')
+        .select('*, class_members(count)')
+        .eq('teacher_id', user.id)
+        .order('created_at', { ascending: false });
+
+      teacherClasses = (cData || []).map((c: any) => ({
+        ...c,
+        member_count: c.class_members?.[0]?.count || 0,
+      }));
+    }
+
+    // 3. 학생일 경우: 자신이 참여한 클래스 목록 조회
+    if (profile?.role === 'student') {
+      const { data: mData } = await supabase
+        .from('class_members')
+        .select('class:class_id(*, teacher:teacher_id(name))')
+        .eq('student_id', user.id)
+        .order('joined_at', { ascending: false });
+
+      studentClasses = (mData || []).map((m: any) => m.class as ClassItem).filter(Boolean);
+    }
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
       {user ? (
         /* 로그인된 사용자 대시보드 뷰 */
         <div className="space-y-8">
-          <div className="rounded-2xl border border-blue-100 bg-white p-8 shadow-sm">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          {/* 환영 헤더 카드 */}
+          <div className="rounded-2xl border border-blue-100 bg-white p-6 sm:p-8 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <span className="text-sm font-semibold text-blue-600">
                   {profile?.role === 'teacher' ? '교사용 워크스페이스' : '학생 학습 공간'}
@@ -32,87 +64,105 @@ export default async function HomePage() {
                 </h1>
                 <p className="mt-1 text-sm text-gray-500">
                   {profile?.role === 'teacher'
-                    ? '오늘 수업의 학생 질문들을 확인하고 다음 인터랙티브 교안을 준비해 보세요.'
-                    : '수업에 참여하여 궁금한 점을 질문하고 친구들의 질문에 답변해 보세요.'}
+                    ? '오늘 수업의 학급을 관리하고 학생들의 질문을 수집해 보세요.'
+                    : '참여 중인 수업에 들어가 질문을 남기고 친구들의 질문을 확인해 보세요.'}
                 </p>
               </div>
 
-              <div className="mt-4 sm:mt-0">
-                <span
-                  className={`inline-flex rounded-xl px-4 py-2 text-sm font-bold ${
-                    profile?.role === 'teacher'
-                      ? 'bg-purple-100 text-purple-700'
-                      : 'bg-blue-100 text-blue-700'
-                  }`}
-                >
-                  {profile?.role === 'teacher' ? '👨‍🏫 선생님 계정' : '🧑‍🎓 학생 계정'}
-                </span>
+              <div>
+                {profile?.role === 'teacher' ? (
+                  <CreateClassModal />
+                ) : (
+                  <JoinClassModal />
+                )}
               </div>
             </div>
           </div>
 
-          {/* 다음 단계(Slice 2: 클래스 생성 및 참여) 준비 카드 */}
-          <div className="grid gap-6 sm:grid-cols-2">
+          {/* 내 클래스 섹션 */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">
+                {profile?.role === 'teacher' ? '내가 개설한 클래스' : '내가 참여 중인 클래스'}
+              </h2>
+              <span className="text-sm text-gray-500">
+                총 {profile?.role === 'teacher' ? teacherClasses.length : studentClasses.length}개
+              </span>
+            </div>
+
             {profile?.role === 'teacher' ? (
-              <>
-                <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="text-3xl mb-3">🏫</div>
-                  <h2 className="text-lg font-bold text-gray-900">내 클래스 관리</h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    새로운 학급을 개설하고 6자리 참여 코드를 발급하세요.
-                  </p>
-                  <button
-                    disabled
-                    className="mt-4 inline-flex items-center rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-400 cursor-not-allowed"
-                  >
-                    클래스 개설 (2단계에서 오픈)
-                  </button>
-                </div>
+              /* 교사 클래스 그리드 */
+              teacherClasses.length > 0 ? (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {teacherClasses.map((c) => (
+                    <Link
+                      key={c.id}
+                      href={`/classes/${c.id}`}
+                      className="group flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
+                          <span className="font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-bold">
+                            코드 {c.join_code}
+                          </span>
+                          <span>학생 {c.member_count || 0}명</span>
+                        </div>
+                        <h3 className="text-base font-bold text-gray-900 group-hover:text-blue-600 transition">
+                          {c.name}
+                        </h3>
+                      </div>
 
-                <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="text-3xl mb-3">📋</div>
-                  <h2 className="text-lg font-bold text-gray-900">레슨 질문 보드</h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    학생들의 질문을 그룹화하고 대표 질문을 선정합니다.
-                  </p>
-                  <button
-                    disabled
-                    className="mt-4 inline-flex items-center rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-400 cursor-not-allowed"
-                  >
-                    질문 보드 보기 (준비 중)
-                  </button>
+                      <div className="mt-4 flex items-center justify-between text-xs font-semibold text-blue-600 pt-3 border-t border-gray-50">
+                        <span>클래스 바로가기</span>
+                        <span className="transition group-hover:translate-x-1">→</span>
+                      </div>
+                    </Link>
+                  ))}
                 </div>
-              </>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
+                  <div className="text-4xl mb-3">🏫</div>
+                  <h3 className="text-base font-bold text-gray-700">개설된 클래스가 없습니다</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    우측 상단의 [새 클래스 만들기] 버튼을 눌러 첫 학급을 열어보세요.
+                  </p>
+                </div>
+              )
             ) : (
-              <>
-                <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="text-3xl mb-3">🔑</div>
-                  <h2 className="text-lg font-bold text-gray-900">수업 참여하기</h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    선생님께서 안내해주신 6자리 참여 코드로 수업에 입장하세요.
-                  </p>
-                  <button
-                    disabled
-                    className="mt-4 inline-flex items-center rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-400 cursor-not-allowed"
-                  >
-                    코드 입력 (2단계에서 오픈)
-                  </button>
-                </div>
+              /* 학생 클래스 그리드 */
+              studentClasses.length > 0 ? (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {studentClasses.map((c) => (
+                    <Link
+                      key={c.id}
+                      href={`/classes/${c.id}`}
+                      className="group flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                    >
+                      <div>
+                        <div className="text-xs text-gray-400 mb-2">
+                          담당: {(c.teacher as any)?.name || '선생님'}
+                        </div>
+                        <h3 className="text-base font-bold text-gray-900 group-hover:text-blue-600 transition">
+                          {c.name}
+                        </h3>
+                      </div>
 
-                <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                  <div className="text-3xl mb-3">💬</div>
-                  <h2 className="text-lg font-bold text-gray-900">내 질문 & 동료 답변</h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    제출한 질문과 내가 작성한 동료 답변 내역을 확인합니다.
-                  </p>
-                  <button
-                    disabled
-                    className="mt-4 inline-flex items-center rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-400 cursor-not-allowed"
-                  >
-                    내 활동 (준비 중)
-                  </button>
+                      <div className="mt-4 flex items-center justify-between text-xs font-semibold text-blue-600 pt-3 border-t border-gray-50">
+                        <span>수업 입장하기</span>
+                        <span className="transition group-hover:translate-x-1">→</span>
+                      </div>
+                    </Link>
+                  ))}
                 </div>
-              </>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
+                  <div className="text-4xl mb-3">🎒</div>
+                  <h3 className="text-base font-bold text-gray-700">참여 중인 수업이 없습니다</h3>
+                  <p className="mt-1 text-sm text-gray-400">
+                    선생님께 받은 6자리 코드를 [참여 코드로 수업 등록]에 입력해 보세요.
+                  </p>
+                </div>
+              )
             )}
           </div>
         </div>
