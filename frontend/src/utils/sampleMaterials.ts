@@ -437,4 +437,185 @@ vertex, status = find_vertex(1, -4, 3)
 print("꼭짓점:", vertex, "| 교점 상태:", status)
 \`\`\``;
 
+export const SAMPLE_PHYSICS_MARKDOWN = `> [!CALLOUT:🔬] **탐구 핵심 질문**: 비스듬히 던진 물체(포물선 운동)는 수평 방향과 연직 방향에서 각각 어떤 운동을 할까요? 아래 노션 교안 중간의 **JavaScript 운동 시뮬레이터**를 직접 조작하며 확인해 봅시다!
+
+# 1. 포물선 운동의 분해 (수평 vs 연직)
+
+## (1) 수평 방향: 등속도 운동 ($a_x = 0$)
+공기 저항을 무시할 때 수평 방향으로는 아무런 힘이 작용하지 않으므로 처음 속력 $v_{0x} = v_0 \\cos\\theta$가 끝까지 일정하게 유지됩니다.
+- 수평 이동 거리: $x = (v_0 \\cos\\theta) t$
+
+## (2) 연직 방향: 연직 상방 등가속도 운동 ($a_y = -g$)
+연직 방향으로는 아랫방향으로 **중력($mg$)**만 작용하므로 가속도가 $-g$인 등가속도 운동을 합니다.
+- 연직 속도: $v_y = v_0 \\sin\\theta - gt$
+- 최고점에서의 연직 속도: $v_y = 0$
+
+---
+
+# 2. [실험실] 포물선 운동 JavaScript 인터랙티브 시뮬레이션
+아래 슬라이더로 **초기 속력($v_0$)**, **발사 각도($\\theta$)**, **중력가속도($g$)**를 바꾸고 **[▶ 발사 / 재생]** 버튼을 눌러 파란색 수평 속도 벡터($v_x$)와 빨간색 연직 속도 벡터($v_y$)의 변화를 관찰해 보세요.
+
+\`\`\`simulation:포물선 운동(투사체) 속력·발사각·중력가속도 실험실
+<div style="font-family: system-ui, sans-serif; padding: 14px; background: #f8fafc; color: #0f172a; border-radius: 12px;">
+  <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+    <div>
+      <strong style="font-size: 15px; color: #1e3a8a;">🚀 포물선 운동 (투사체 궤적 및 속도 벡터) 실험실</strong>
+      <p style="font-size: 12px; color: #475569; margin: 2px 0 0;">초기 속력(v₀)과 발사각(θ)을 조절하며 수평 등속도 운동과 연직 등가속도 운동을 관찰하세요.</p>
+    </div>
+    <div style="display: flex; gap: 6px;">
+      <button id="fireBtn" style="background: #2563eb; color: white; border: none; border-radius: 8px; padding: 6px 14px; font-weight: 700; font-size: 12px; cursor: pointer;">▶ 발사 / 재생</button>
+      <button id="resetBtn" style="background: #e2e8f0; color: #334155; border: none; border-radius: 8px; padding: 6px 12px; font-weight: 700; font-size: 12px; cursor: pointer;">↺ 초기화</button>
+    </div>
+  </div>
+
+  <canvas id="simCanvas" width="680" height="240" style="width: 100%; height: 240px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; display: block;"></canvas>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 10px; font-size: 12px;">
+    <label style="background: white; padding: 8px 10px; border-radius: 8px; border: 1px solid #e2e8f0;">
+      <div style="display:flex; justify-content:space-between; font-weight:600;">
+        <span>초기 속력 v₀</span><span id="v0Val" style="color:#2563eb;">28 m/s</span>
+      </div>
+      <input id="v0Slider" type="range" min="10" max="45" value="28" style="width:100%; margin-top:4px;" />
+    </label>
+    <label style="background: white; padding: 8px 10px; border-radius: 8px; border: 1px solid #e2e8f0;">
+      <div style="display:flex; justify-content:space-between; font-weight:600;">
+        <span>발사 각도 θ</span><span id="angleVal" style="color:#2563eb;">45°</span>
+      </div>
+      <input id="angleSlider" type="range" min="15" max="80" value="45" style="width:100%; margin-top:4px;" />
+    </label>
+    <label style="background: white; padding: 8px 10px; border-radius: 8px; border: 1px solid #e2e8f0;">
+      <div style="display:flex; justify-content:space-between; font-weight:600;">
+        <span>중력가속도 g</span><span id="gVal" style="color:#dc2626;">9.8 m/s²</span>
+      </div>
+      <input id="gSlider" type="range" min="1.6" max="20" step="0.2" value="9.8" style="width:100%; margin-top:4px;" />
+    </label>
+    <div style="background: #eff6ff; padding: 8px 10px; border-radius: 8px; border: 1px solid #bfdbfe; display:flex; flex-direction:column; justify-content:center; gap:2px;">
+      <div>최고점 높이 H: <strong id="maxH" style="color:#1d4ed8;">0.0 m</strong></div>
+      <div>수평 도달 거리 R: <strong id="rangeR" style="color:#1d4ed8;">0.0 m</strong></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('simCanvas');
+  const ctx = canvas.getContext('2d');
+  const v0Slider = document.getElementById('v0Slider');
+  const angleSlider = document.getElementById('angleSlider');
+  const gSlider = document.getElementById('gSlider');
+
+  let t = 0;
+  let animId = null;
+  const scale = 5.2;
+  const originX = 40;
+  const originY = canvas.height - 28;
+
+  function getParams() {
+    const v0 = parseFloat(v0Slider.value);
+    const deg = parseFloat(angleSlider.value);
+    const g = parseFloat(gSlider.value);
+    const rad = (deg * Math.PI) / 180;
+    const vx = v0 * Math.cos(rad);
+    const vy0 = v0 * Math.sin(rad);
+    const totalT = (2 * vy0) / g;
+    const maxH = (vy0 * vy0) / (2 * g);
+    const rangeR = vx * totalT;
+    return { v0, deg, g, rad, vx, vy0, totalT, maxH, rangeR };
+  }
+
+  function render() {
+    const { v0, deg, g, vx, vy0, totalT, maxH, rangeR } = getParams();
+    document.getElementById('v0Val').textContent = v0 + ' m/s';
+    document.getElementById('angleVal').textContent = deg + '°';
+    document.getElementById('gVal').textContent = g.toFixed(1) + ' m/s²';
+    document.getElementById('maxH').textContent = maxH.toFixed(1) + ' m';
+    document.getElementById('rangeR').textContent = rangeR.toFixed(1) + ' m';
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, originY);
+    ctx.lineTo(canvas.width, originY);
+    ctx.stroke();
+
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#93c5fd';
+    ctx.beginPath();
+    for (let s = 0; s <= totalT; s += totalT / 60) {
+      const px = originX + vx * s * scale;
+      const py = originY - (vy0 * s - 0.5 * g * s * s) * scale;
+      if (s === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const curT = Math.min(t, totalT);
+    const x = vx * curT;
+    const y = Math.max(0, vy0 * curT - 0.5 * g * curT * curT);
+    const curVy = vy0 - g * curT;
+
+    const cx = originX + x * scale;
+    const cy = originY - y * scale;
+
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + vx * 1.1, cy);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx, cy - curVy * 1.1);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ea580c';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#334155';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('t = ' + curT.toFixed(2) + 's', cx - 18, cy - 12);
+  }
+
+  function step() {
+    const { totalT } = getParams();
+    t += 0.04;
+    render();
+    if (t < totalT) {
+      animId = requestAnimationFrame(step);
+    }
+  }
+
+  document.getElementById('fireBtn').onclick = () => {
+    if (animId) cancelAnimationFrame(animId);
+    t = 0;
+    step();
+  };
+  document.getElementById('resetBtn').onclick = () => {
+    if (animId) cancelAnimationFrame(animId);
+    t = 0;
+    render();
+  };
+  [v0Slider, angleSlider, gSlider].forEach(el => el.addEventListener('input', () => {
+    t = getParams().totalT * 0.45;
+    render();
+  }));
+
+  t = getParams().totalT * 0.45;
+  render();
+</script>
+\`\`\`
+
+---
+
+# 3. 실험 결과 정리 및 심화 생각거리
+> 최고점에서도 물체의 속력이 0이 아닌 이유를 수평 방향 속도 성분($v_x$)과 관련지어 설명해 보세요.
+
+- 발사각 $\\theta = 45^\\circ$일 때 수평 도달 거리($R$)가 최대가 되는 것을 위 시뮬레이터로 확인했나요?`;
+
 

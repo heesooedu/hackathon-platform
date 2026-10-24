@@ -14,6 +14,7 @@ import {
   QUADRATIC_FUNCTION_HTML,
   SAMPLE_GENERAL_MARKDOWN,
   SAMPLE_MATH_MARKDOWN,
+  SAMPLE_PHYSICS_MARKDOWN,
 } from '@/utils/sampleMaterials';
 import { MaterialType } from '@/types/database.types';
 
@@ -53,7 +54,7 @@ export default function NotionLessonStudio({
     setPageIcon(PAGE_ICONS[nextIdx]);
   }
 
-  function applySampleTemplate(type: 'general' | 'math' | 'html') {
+  function applySampleTemplate(type: 'general' | 'math' | 'physics' | 'html') {
     setErrorMessage(null);
     setPreviewMode(false);
     if (type === 'general') {
@@ -76,6 +77,16 @@ export default function NotionLessonStudio({
       setBlocks(markdownToBlocks(SAMPLE_MATH_MARKDOWN));
       setMaterialFileName('3차시_이차함수_핵심개념정리.docx');
       setUploadSuccessBadge('수학 개념 노션 교안 템플릿 로드됨');
+    } else if (type === 'physics') {
+      setPageIcon('🧪');
+      setTitle('4차시: 포물선 운동의 수평·연직 성분 분해와 투사체 실험');
+      setLearningObjective(
+        '포물선 운동을 수평 등속도 운동과 연직 등가속도 운동으로 분해하여 이해하고, 초기 속력과 발사각에 따른 운동 궤적을 시뮬레이션으로 탐구할 수 있다.'
+      );
+      setMaterialType('markdown');
+      setBlocks(markdownToBlocks(SAMPLE_PHYSICS_MARKDOWN));
+      setMaterialFileName('4차시_물리_포물선운동_노션실험교안.md');
+      setUploadSuccessBadge('물리 노션 교안(인라인 JS 운동 시뮬레이션 포함) 로드됨');
     } else {
       setPageIcon('⚡');
       setTitle('3차시: 이차함수 y=ax²+bx+c의 그래프와 계수의 역할 (시뮬레이터)');
@@ -295,6 +306,13 @@ export default function NotionLessonStudio({
                 className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-100 transition"
               >
                 <span>📐 수학 개념 노션 교안 예시</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applySampleTemplate('physics')}
+                className="inline-flex items-center gap-1 rounded-xl border border-teal-200 bg-teal-50/80 px-3 py-1.5 text-xs font-bold text-teal-800 hover:bg-teal-100 transition"
+              >
+                <span>🧪 물리 노션 교안 (JS 운동 시뮬레이션 블록 포함)</span>
               </button>
               <button
                 type="button"

@@ -8,6 +8,7 @@ export type NotionBlockType =
   | 'quote'
   | 'code'
   | 'mermaid'
+  | 'simulation'
   | 'image'
   | 'divider';
 
@@ -74,9 +75,10 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       continue;
     }
 
-    // 0. 멀티라인 펜스 코드블록 (```python ... ``` 또는 ```mermaid ... ```)
+    // 0. 멀티라인 펜스 코드블록 (```python ... ```, ```mermaid ... ```, ```simulation:제목 ... ```)
     if (line.startsWith('```')) {
-      const langRaw = line.slice(3).trim().toLowerCase();
+      const fenceHeader = line.slice(3).trim();
+      const langRaw = fenceHeader.toLowerCase();
       const codeLines: string[] = [];
       i++;
       while (i < lines.length && !lines[i].trim().startsWith('```')) {
@@ -92,6 +94,21 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         blocks.push({
           id: createBlockId(),
           type: 'mermaid',
+          content: codeLines.join('\n'),
+        });
+      } else if (
+        langRaw === 'simulation' ||
+        langRaw.startsWith('simulation:') ||
+        langRaw === 'html-sim' ||
+        langRaw.startsWith('html-sim:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const simCaption =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        blocks.push({
+          id: createBlockId(),
+          type: 'simulation',
+          caption: simCaption || '인터랙티브 실험 시뮬레이션',
           content: codeLines.join('\n'),
         });
       } else {
@@ -297,6 +314,13 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       case 'mermaid':
         if (b.content.trim()) {
           lines.push(`\`\`\`mermaid\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);
+        }
+        break;
+      case 'simulation':
+        if (b.content.trim()) {
+          const safeTitle = (b.caption || '').replace(/\n/g, ' ').trim();
+          const header = safeTitle ? `simulation:${safeTitle}` : 'simulation';
+          lines.push(`\`\`\`${header}\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);
         }
         break;
       case 'divider':

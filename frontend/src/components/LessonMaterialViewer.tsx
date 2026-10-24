@@ -9,6 +9,7 @@ import {
 } from '@/utils/notionBlocks';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
 import MermaidDiagram from '@/components/MermaidDiagram';
+import SimulationBlockPreview from '@/components/SimulationBlockPreview';
 import {
   updateLessonMaterialMarkdownAction,
   removeMaterialPatchAction,
@@ -179,6 +180,16 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
               </div>
               <MermaidDiagram chart={block.content} />
             </div>
+          );
+        }
+
+        if (block.type === 'simulation') {
+          return (
+            <SimulationBlockPreview
+              key={block.id}
+              code={block.content}
+              caption={block.caption}
+            />
           );
         }
 

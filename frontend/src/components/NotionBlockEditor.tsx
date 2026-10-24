@@ -9,6 +9,9 @@ import {
   createBlockId,
 } from '@/utils/notionBlocks';
 import MermaidDiagram from '@/components/MermaidDiagram';
+import SimulationBlockPreview, {
+  SIMULATION_TEMPLATES,
+} from '@/components/SimulationBlockPreview';
 
 interface NotionBlockEditorProps {
   blocks: NotionBlock[];
@@ -136,6 +139,26 @@ const BLOCK_TYPE_META: {
     keywords: ['mermaid', 'flowchart', 'diagram', '순서도', '다이어그램', '흐름도', '구조도'],
   },
   {
+    type: 'simulation',
+    label: '인터랙티브 시뮬레이션 (HTML/JS 실험실)',
+    desc: '물리 운동·수학 그래프 등 HTML/JS 시뮬레이션 코드를 교안 사이에 실행합니다',
+    badge: '🧪',
+    keywords: [
+      'simulation',
+      'sim',
+      'html',
+      'js',
+      'javascript',
+      'physics',
+      '시뮬레이션',
+      '실험',
+      '물리',
+      '운동',
+      '자바스크립트',
+      '인터랙티브',
+    ],
+  },
+  {
     type: 'image',
     label: '사진 / 이미지 블록',
     desc: '드래그 앤 드롭이나 파일 선택으로 사진을 넣습니다',
@@ -261,6 +284,9 @@ export default function NotionBlockEditor({
   const [uploadingImageBlockId, setUploadingImageBlockId] = useState<string | null>(
     null
   );
+  const [hiddenSimCodeBlockIds, setHiddenSimCodeBlockIds] = useState<
+    Record<string, boolean>
+  >({});
 
   const blockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -332,13 +358,20 @@ export default function NotionBlockEditor({
   function applyBlockTypeSelection(block: NotionBlock, targetType: NotionBlockType) {
     const cleanedContent = block.content.startsWith('/') ? '' : block.content;
     const defaultMermaid = MERMAID_TEMPLATES[0].code;
+    const defaultSimulation = SIMULATION_TEMPLATES[0].code;
 
     updateBlock(block.id, {
       type: targetType,
       content:
         targetType === 'mermaid' && !cleanedContent.trim()
           ? defaultMermaid
+          : targetType === 'simulation' && !cleanedContent.trim()
+          ? defaultSimulation
           : cleanedContent,
+      caption:
+        targetType === 'simulation'
+          ? block.caption || SIMULATION_TEMPLATES[0].caption
+          : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
     });
@@ -615,7 +648,15 @@ export default function NotionBlockEditor({
                     id: createBlockId(),
                     type: item.type,
                     content:
-                      item.type === 'mermaid' ? MERMAID_TEMPLATES[0].code : '',
+                      item.type === 'mermaid'
+                        ? MERMAID_TEMPLATES[0].code
+                        : item.type === 'simulation'
+                        ? SIMULATION_TEMPLATES[0].code
+                        : '',
+                    caption:
+                      item.type === 'simulation'
+                        ? SIMULATION_TEMPLATES[0].caption
+                        : undefined,
                     icon: item.type === 'callout' ? '💡' : undefined,
                     language: item.type === 'code' ? 'python' : undefined,
                   };
@@ -661,7 +702,11 @@ export default function NotionBlockEditor({
           return (
             <div
               key={block.id}
-              draggable={block.type !== 'code' && block.type !== 'mermaid'}
+              draggable={
+                block.type !== 'code' &&
+                block.type !== 'mermaid' &&
+                block.type !== 'simulation'
+              }
               onDragStart={(e) => {
                 setDraggedBlockIdx(idx);
                 e.dataTransfer.effectAllowed = 'move';
@@ -883,6 +928,27 @@ export default function NotionBlockEditor({
                             </option>
                           ))}
                         </select>
+
+                        {(block.language === 'html' ||
+                          block.language === 'javascript') && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateBlock(block.id, {
+                                type: 'simulation',
+                                caption:
+                                  block.caption ||
+                                  '인터랙티브 HTML/JS 실험 시뮬레이션',
+                                content:
+                                  block.content.trim() ||
+                                  SIMULATION_TEMPLATES[0].code,
+                              })
+                            }
+                            className="rounded-lg bg-teal-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-teal-500 transition cursor-pointer"
+                          >
+                            🧪 이 코드를 교안 내 시뮬레이션으로 실행하기
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-3 text-[11px] text-slate-400">
@@ -991,6 +1057,110 @@ export default function NotionBlockEditor({
                           👁️ 실시간 순서도 미리보기 (학생 화면 표시 모습)
                         </div>
                         <MermaidDiagram chart={block.content} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 9-2. 인터랙티브 시뮬레이션 블록 (HTML / JavaScript 실시간 실행 실험실) */}
+                {block.type === 'simulation' && (
+                  <div className="my-2 overflow-hidden rounded-2xl border-2 border-teal-300 bg-teal-50/20 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/80 bg-teal-50/80 px-4 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
+                        <span className="rounded-md bg-teal-600 px-2 py-0.5 text-[11px] font-extrabold text-white shrink-0">
+                          🧪 HTML / JS 인터랙티브 시뮬레이션
+                        </span>
+                        <input
+                          type="text"
+                          value={block.caption || ''}
+                          onChange={(e) =>
+                            updateBlock(block.id, { caption: e.target.value })
+                          }
+                          placeholder="시뮬레이션 실험 제목 입력 (예: 포물선 운동 속력·발사각 실험기)..."
+                          className="flex-1 min-w-[200px] rounded-lg border border-teal-200 bg-white px-2.5 py-1 text-xs font-bold text-teal-950 placeholder:text-teal-400 focus:border-teal-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-teal-800 mr-0.5">
+                          물리·교과 실험 템플릿:
+                        </span>
+                        {SIMULATION_TEMPLATES.map((tpl) => (
+                          <button
+                            key={tpl.id}
+                            type="button"
+                            onClick={() =>
+                              updateBlock(block.id, {
+                                content: tpl.code,
+                                caption: tpl.caption,
+                              })
+                            }
+                            className="rounded-lg border border-teal-200 bg-white px-2.5 py-1 text-[11px] font-bold text-teal-800 hover:bg-teal-100 transition cursor-pointer"
+                          >
+                            {tpl.label}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setHiddenSimCodeBlockIds((prev) => ({
+                              ...prev,
+                              [block.id]: !prev[block.id],
+                            }))
+                          }
+                          className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${
+                            hiddenSimCodeBlockIds[block.id]
+                              ? 'border-teal-600 bg-teal-600 text-white'
+                              : 'border-slate-300 bg-slate-800 text-white hover:bg-slate-700'
+                          }`}
+                        >
+                          {hiddenSimCodeBlockIds[block.id]
+                            ? '</> JS/HTML 코드 편집창 열기'
+                            : '👁️ 코드 접고 시뮬레이션만 크게 보기'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      className={`grid grid-cols-1 ${
+                        hiddenSimCodeBlockIds[block.id]
+                          ? 'lg:grid-cols-1'
+                          : 'lg:grid-cols-2'
+                      } gap-4 p-4`}
+                    >
+                      {/* 좌측: HTML/JS 시뮬레이션 코드 에디터 */}
+                      {!hiddenSimCodeBlockIds[block.id] && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-slate-100">
+                          <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
+                            <span className="font-bold text-teal-300">
+                              💻 HTML + JavaScript 시뮬레이션 코드 (Enter 자동 들여쓰기)
+                            </span>
+                            <span>Shift+Enter로 다음 블록 이동</span>
+                          </div>
+                          <AutoResizeTextarea
+                            value={block.content}
+                            spellCheck={false}
+                            inputRef={(el) => {
+                              blockRefs.current[block.id] = el;
+                            }}
+                            onChange={(val) =>
+                              updateBlock(block.id, { content: val })
+                            }
+                            onKeyDown={(e) =>
+                              handleCodeOrMermaidKeyDown(e, block, idx)
+                            }
+                            placeholder={`<canvas id="sim" width="600" height="240"></canvas>\n<script>\n  // 물리 운동·그래프 시뮬레이션 JavaScript 코드를 작성하세요\n</script>`}
+                            className="font-mono text-xs text-emerald-300 leading-relaxed placeholder:text-slate-600"
+                          />
+                        </div>
+                      )}
+
+                      {/* 우측(또는 전체): 실시간 인터랙티브 시뮬레이션 실행 화면 */}
+                      <div>
+                        <SimulationBlockPreview
+                          code={block.content}
+                          caption={block.caption}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1196,6 +1366,7 @@ export default function NotionBlockEditor({
                   <option value="quote">인용/지문</option>
                   <option value="code">코드블록</option>
                   <option value="mermaid">순서도(Mermaid)</option>
+                  <option value="simulation">시뮬레이션(HTML/JS)</option>
                   <option value="image">사진</option>
                   <option value="divider">구분선</option>
                 </select>
