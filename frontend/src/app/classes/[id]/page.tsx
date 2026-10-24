@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import CopyCodeButton from '@/components/CopyCodeButton';
 import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
+import LessonManageActions from '@/components/LessonManageActions';
 import { Profile, Lesson } from '@/types/database.types';
 
 interface ClassDetailPageProps {
@@ -165,7 +166,13 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
                       </div>
 
                       {isTeacher && (
-                        <div className="shrink-0">
+                        <div className="shrink-0 flex flex-wrap items-center gap-2">
+                          <LessonManageActions
+                            lessonId={lesson.id}
+                            classId={classId}
+                            lessonTitle={lesson.title}
+                            compact
+                          />
                           <ToggleLessonStatusButton
                             lessonId={lesson.id}
                             classId={classId}

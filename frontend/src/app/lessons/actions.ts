@@ -118,6 +118,123 @@ export async function createLesson(formData: FormData) {
 }
 
 /**
+ * 2-1. 기존 레슨 및 교안 통합 수정 (노션 스튜디오 전체 화면 수정용)
+ */
+export async function updateLessonAction(formData: FormData) {
+  const lessonId = formData.get('lesson_id') as string;
+  const classId = formData.get('class_id') as string;
+  const title = formData.get('title') as string;
+  const learningObjective = formData.get('learning_objective') as string;
+  const deadlineStr = formData.get('deadline') as string;
+
+  const materialType = ((formData.get('material_type') as string) || 'markdown') as MaterialType;
+  const materialMarkdown = ((formData.get('material_markdown') as string) || '').trim();
+  const materialHtml = ((formData.get('material_html') as string) || '').trim();
+  const materialFileName = ((formData.get('material_file_name') as string) || '').trim() || null;
+
+  if (!lessonId || !classId || !title?.trim() || !learningObjective?.trim()) {
+    return { error: '레슨 제목과 학습 목표를 모두 입력해 주세요.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  // 교사 권한 확인
+  const { data: classData, error: classError } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (classError || !classData || classData.teacher_id !== user.id) {
+    return { error: '이 레슨을 수정할 권한이 없습니다.' };
+  }
+
+  const { data: existingLesson } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', lessonId)
+    .single();
+
+  const existingParsed = parseLessonMaterial((existingLesson as Lesson) || null);
+  const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
+
+  const serializedMaterial = serializeLessonMaterial({
+    materialType,
+    markdownContent: materialMarkdown,
+    htmlContent: materialHtml,
+    fileName: materialFileName,
+    appliedPatches: existingParsed.appliedPatches || [],
+    aiAnalysis: existingParsed.aiAnalysis || null,
+  });
+
+  const { error: updateError } = await supabase
+    .from('lessons')
+    .update({
+      title: title.trim(),
+      learning_objective: learningObjective.trim(),
+      deadline,
+      material_html: serializedMaterial || null,
+    })
+    .eq('id', lessonId);
+
+  if (updateError) {
+    return { error: '레슨 수정 중 오류가 발생했습니다: ' + updateError.message };
+  }
+
+  revalidatePath(`/classes/${classId}`);
+  revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
+  redirect(`/classes/${classId}/lessons/${lessonId}`);
+}
+
+/**
+ * 2-2. 레슨(교안 포함) 완전 삭제
+ */
+export async function deleteLessonAction(
+  lessonId: string,
+  classId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: '로그인이 필요합니다.' };
+  }
+
+  // 교사 권한 확인
+  const { data: classData, error: classError } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (classError || !classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '이 레슨을 삭제할 권한이 없습니다.' };
+  }
+
+  const { error: deleteError } = await supabase
+    .from('lessons')
+    .delete()
+    .eq('id', lessonId)
+    .eq('class_id', classId);
+
+  if (deleteError) {
+    return { success: false, error: '레슨 삭제 중 오류가 발생했습니다: ' + deleteError.message };
+  }
+
+  revalidatePath(`/classes/${classId}`);
+  return { success: true };
+}
+
+/**
  * 3. 레슨 상태(open / closed) 토글
  */
 export async function toggleLessonStatus(
@@ -337,6 +454,27 @@ export async function updateLessonMaterialMarkdownAction(
   newMarkdown: string,
   newFileName?: string | null
 ): Promise<{ success: boolean; error?: string }> {
+  return updateLessonMaterialAction(
+    lessonId,
+    classId,
+    'markdown',
+    newMarkdown,
+    '',
+    newFileName
+  );
+}
+
+/**
+ * 7-1. 교안 본문(노션 블록 마크다운 또는 HTML 시뮬레이터) 직접 수정 및 업데이트
+ */
+export async function updateLessonMaterialAction(
+  lessonId: string,
+  classId: string,
+  materialType: MaterialType,
+  newMarkdown: string,
+  newHtml: string,
+  newFileName?: string | null
+): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -356,8 +494,9 @@ export async function updateLessonMaterialMarkdownAction(
   const parsed = parseLessonMaterial(lessonData as Lesson);
   const updatedSerialized = serializeLessonMaterial({
     ...parsed,
-    materialType: 'markdown',
-    markdownContent: newMarkdown.trim(),
+    materialType,
+    markdownContent: materialType === 'markdown' ? newMarkdown.trim() : parsed.markdownContent,
+    htmlContent: materialType === 'html' ? newHtml.trim() : parsed.htmlContent,
     fileName: newFileName !== undefined ? newFileName : parsed.fileName,
   });
 
@@ -370,6 +509,34 @@ export async function updateLessonMaterialMarkdownAction(
     return { success: false, error: '교안 수정 중 오류가 발생했습니다: ' + error.message };
   }
 
+  revalidatePath(`/classes/${classId}`);
+  revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
+  return { success: true };
+}
+
+/**
+ * 7-2. 교안 본문만 삭제(비우기) — 학생 질문·제출물은 그대로 유지
+ */
+export async function clearLessonMaterialAction(
+  lessonId: string,
+  classId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { error } = await supabase
+    .from('lessons')
+    .update({ material_html: null })
+    .eq('id', lessonId);
+
+  if (error) {
+    return { success: false, error: '교안 본문 삭제 중 오류가 발생했습니다: ' + error.message };
+  }
+
+  revalidatePath(`/classes/${classId}`);
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
   return { success: true };
 }

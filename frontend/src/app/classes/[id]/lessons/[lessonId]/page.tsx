@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
+import LessonManageActions from '@/components/LessonManageActions';
 import StudentSubmissionForm from '@/components/StudentSubmissionForm';
 import TeacherSubmissionDashboard from '@/components/TeacherSubmissionDashboard';
 import QuestionBoard from '@/components/QuestionBoard';
@@ -146,7 +147,13 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
           </div>
 
           {isTeacher && (
-            <div className="shrink-0">
+            <div className="shrink-0 flex flex-wrap items-center gap-2">
+              <LessonManageActions
+                lessonId={lesson.id}
+                classId={classId}
+                lessonTitle={lesson.title}
+                redirectAfterDelete
+              />
               <ToggleLessonStatusButton
                 lessonId={lesson.id}
                 classId={classId}

@@ -2,7 +2,13 @@
 
 import { useState, useRef } from 'react';
 import Link from 'next/link';
-import { createLesson, parseMaterialFileAction } from '@/app/lessons/actions';
+import { useRouter } from 'next/navigation';
+import {
+  createLesson,
+  updateLessonAction,
+  deleteLessonAction,
+  parseMaterialFileAction,
+} from '@/app/lessons/actions';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
 import {
   markdownToBlocks,
@@ -16,35 +22,68 @@ import {
   SAMPLE_MATH_MARKDOWN,
   SAMPLE_PHYSICS_MARKDOWN,
 } from '@/utils/sampleMaterials';
-import { MaterialType } from '@/types/database.types';
+import { parseLessonMaterial } from '@/utils/materialPayload';
+import { Lesson, MaterialType } from '@/types/database.types';
 
 const PAGE_ICONS = ['📖', '📘', '📐', '🧪', '🌍', '🏛️', '🎨', '💻', '📝', '🎓'];
 
 interface NotionLessonStudioProps {
   classId: string;
   className: string;
+  mode?: 'create' | 'edit';
+  initialLesson?: Lesson;
+}
+
+function toDatetimeLocalValue(isoString: string | null | undefined): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    const tzOffsetMs = d.getTimezoneOffset() * 60000;
+    const localISOTime = new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 16);
+    return localISOTime;
+  } catch {
+    return '';
+  }
 }
 
 export default function NotionLessonStudio({
   classId,
   className,
+  mode = 'create',
+  initialLesson,
 }: NotionLessonStudioProps) {
+  const router = useRouter();
+  const isEditMode = mode === 'edit' && !!initialLesson;
+  const initialParsed = initialLesson ? parseLessonMaterial(initialLesson) : null;
+
   const [pageIcon, setPageIcon] = useState('📖');
-  const [title, setTitle] = useState('');
-  const [learningObjective, setLearningObjective] = useState('');
-  const [deadline, setDeadline] = useState('');
-  const [materialType, setMaterialType] = useState<MaterialType>('markdown');
-  const [blocks, setBlocks] = useState<NotionBlock[]>(() =>
-    markdownToBlocks('')
+  const [title, setTitle] = useState(initialLesson?.title || '');
+  const [learningObjective, setLearningObjective] = useState(
+    initialLesson?.learning_objective || ''
   );
-  const [materialHtml, setMaterialHtml] = useState('');
-  const [materialFileName, setMaterialFileName] = useState<string | null>(null);
+  const [deadline, setDeadline] = useState(() =>
+    toDatetimeLocalValue(initialLesson?.deadline)
+  );
+  const [materialType, setMaterialType] = useState<MaterialType>(
+    initialParsed?.materialType || 'markdown'
+  );
+  const [blocks, setBlocks] = useState<NotionBlock[]>(() =>
+    markdownToBlocks(initialParsed?.markdownContent || '')
+  );
+  const [materialHtml, setMaterialHtml] = useState(
+    initialParsed?.htmlContent || ''
+  );
+  const [materialFileName, setMaterialFileName] = useState<string | null>(
+    initialParsed?.fileName || null
+  );
   const [uploadSuccessBadge, setUploadSuccessBadge] = useState<string | null>(null);
 
   const [previewMode, setPreviewMode] = useState(false);
   const [isFullWidth, setIsFullWidth] = useState(true);
   const [fileParsing, setFileParsing] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -154,6 +193,9 @@ export default function NotionLessonStudio({
 
     const formData = new FormData();
     formData.set('class_id', classId);
+    if (isEditMode && initialLesson) {
+      formData.set('lesson_id', initialLesson.id);
+    }
     formData.set('title', title.trim());
     formData.set('learning_objective', learningObjective.trim());
     formData.set('deadline', deadline);
@@ -163,7 +205,9 @@ export default function NotionLessonStudio({
     formData.set('material_file_name', materialFileName || '');
 
     try {
-      const result = await createLesson(formData);
+      const result = isEditMode
+        ? await updateLessonAction(formData)
+        : await createLesson(formData);
       if (result?.error) {
         setErrorMessage(result.error);
         setLoading(false);
@@ -172,10 +216,43 @@ export default function NotionLessonStudio({
       if (err instanceof Error && err.message.includes('NEXT_REDIRECT')) {
         return;
       }
-      setErrorMessage('레슨 개설 중 오류가 발생했습니다.');
+      setErrorMessage(
+        isEditMode
+          ? '교안 및 레슨 수정 중 오류가 발생했습니다.'
+          : '레슨 개설 중 오류가 발생했습니다.'
+      );
       setLoading(false);
     }
   }
+
+  async function handleDeleteLesson() {
+    if (!isEditMode || !initialLesson) return;
+    const confirmed = window.confirm(
+      `정말 "${initialLesson.title}" 레슨과 수업 교안을 삭제하시겠습니까?\n(해당 레슨에 제출된 학생 질문과 답변도 함께 삭제됩니다.)`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setErrorMessage(null);
+    try {
+      const res = await deleteLessonAction(initialLesson.id, classId);
+      if (!res.success) {
+        setErrorMessage(res.error || '레슨 삭제에 실패했습니다.');
+        setDeleting(false);
+        return;
+      }
+      router.push(`/classes/${classId}`);
+      router.refresh();
+    } catch {
+      setErrorMessage('레슨 삭제 중 오류가 발생했습니다.');
+      setDeleting(false);
+    }
+  }
+
+  const backHref =
+    isEditMode && initialLesson
+      ? `/classes/${classId}/lessons/${initialLesson.id}`
+      : `/classes/${classId}`;
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] pb-28">
@@ -189,16 +266,21 @@ export default function NotionLessonStudio({
           {/* 좌측 브레드크럼 */}
           <div className="flex items-center gap-2 text-xs sm:text-sm">
             <Link
-              href={`/classes/${classId}`}
+              href={backHref}
               className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition"
             >
               <span>←</span>
-              <span>{className}</span>
+              <span>{isEditMode ? '레슨 화면으로' : className}</span>
             </Link>
             <span className="text-gray-300">/</span>
             <span className="inline-flex items-center gap-1.5 font-bold text-gray-800 truncate max-w-[220px] sm:max-w-md">
               <span>{pageIcon}</span>
               <span className="truncate">{title.trim() || '제목 없는 수업 교안'}</span>
+              {isEditMode && (
+                <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-extrabold text-amber-800">
+                  수정 모드
+                </span>
+              )}
             </span>
           </div>
 
@@ -233,8 +315,20 @@ export default function NotionLessonStudio({
               </button>
             )}
 
+            {isEditMode && (
+              <button
+                type="button"
+                disabled={deleting || loading}
+                onClick={handleDeleteLesson}
+                className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-50 transition"
+              >
+                <span>🗑️</span>
+                <span>{deleting ? '삭제 중...' : '레슨·교안 삭제'}</span>
+              </button>
+            )}
+
             <Link
-              href={`/classes/${classId}`}
+              href={backHref}
               className="rounded-xl px-3 py-2 text-xs font-semibold text-gray-500 hover:bg-gray-100"
             >
               취소
@@ -242,12 +336,20 @@ export default function NotionLessonStudio({
 
             <button
               type="button"
-              disabled={loading || fileParsing}
+              disabled={loading || deleting || fileParsing}
               onClick={handlePublish}
               className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition"
             >
-              <span>🚀</span>
-              <span>{loading ? '개설 중...' : '수업 교안 발행 & 레슨 개설'}</span>
+              <span>{isEditMode ? '💾' : '🚀'}</span>
+              <span>
+                {loading
+                  ? isEditMode
+                    ? '저장 중...'
+                    : '개설 중...'
+                  : isEditMode
+                  ? '교안·레슨 수정사항 저장'
+                  : '수업 교안 발행 & 레슨 개설'}
+              </span>
             </button>
           </div>
         </div>

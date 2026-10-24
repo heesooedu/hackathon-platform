@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import Link from 'next/link';
 import { ParsedLessonMaterial } from '@/utils/materialPayload';
 import {
   markdownToBlocks,
@@ -11,10 +12,12 @@ import NotionBlockEditor from '@/components/NotionBlockEditor';
 import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview from '@/components/SimulationBlockPreview';
 import {
-  updateLessonMaterialMarkdownAction,
+  updateLessonMaterialAction,
+  clearLessonMaterialAction,
   removeMaterialPatchAction,
   parseMaterialFileAction,
 } from '@/app/lessons/actions';
+import { MaterialType } from '@/types/database.types';
 
 interface LessonMaterialViewerProps {
   lessonId: string;
@@ -245,11 +248,16 @@ export default function LessonMaterialViewer({
 }: LessonMaterialViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isExpandedWide, setIsExpandedWide] = useState(true);
+  const [draftMaterialType, setDraftMaterialType] = useState<MaterialType>(
+    material.materialType || 'markdown'
+  );
   const [draftBlocks, setDraftBlocks] = useState<NotionBlock[]>(() =>
     markdownToBlocks(material.markdownContent)
   );
+  const [draftHtml, setDraftHtml] = useState<string>(material.htmlContent || '');
   const [draftFileName, setDraftFileName] = useState<string | null>(material.fileName);
   const [saving, setSaving] = useState(false);
+  const [clearingMaterial, setClearingMaterial] = useState(false);
   const [fileUploading, setFileUploading] = useState(false);
   const [removingPatchId, setRemovingPatchId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -273,6 +281,7 @@ export default function LessonMaterialViewer({
       fd.set('file', file);
       const res = await parseMaterialFileAction(fd);
       if (res.success && 'markdown' in res) {
+        setDraftMaterialType('markdown');
         setDraftBlocks(markdownToBlocks(res.markdown || ''));
         setDraftFileName(res.fileName || file.name);
       } else {
@@ -284,14 +293,16 @@ export default function LessonMaterialViewer({
     }
   }
 
-  async function handleSaveMarkdown() {
+  async function handleSaveMaterial() {
     setSaving(true);
     try {
       const serializedMd = blocksToMarkdown(draftBlocks);
-      const res = await updateLessonMaterialMarkdownAction(
+      const res = await updateLessonMaterialAction(
         lessonId,
         classId,
+        draftMaterialType,
         serializedMd,
+        draftHtml,
         draftFileName
       );
       if (res.success) {
@@ -301,6 +312,25 @@ export default function LessonMaterialViewer({
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleClearMaterial() {
+    const confirmed = window.confirm(
+      '현재 작성된 수업 교안 본문을 삭제(비우기)하시겠습니까?\n(학생들이 제출한 질문과 답변 데이터는 그대로 유지됩니다.)'
+    );
+    if (!confirmed) return;
+
+    setClearingMaterial(true);
+    try {
+      const res = await clearLessonMaterialAction(lessonId, classId);
+      if (res.success) {
+        setIsEditing(false);
+      } else {
+        alert(res.error || '교안 삭제 중 오류가 발생했습니다.');
+      }
+    } finally {
+      setClearingMaterial(false);
     }
   }
 
@@ -357,22 +387,45 @@ export default function LessonMaterialViewer({
           </button>
 
           {isTeacher && (
-            <button
-              type="button"
-              onClick={() => {
-                setDraftBlocks(markdownToBlocks(material.markdownContent));
-                setDraftFileName(material.fileName);
-                setIsEditing(!isEditing);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 shadow-2xs hover:bg-gray-50 transition"
-            >
-              <span>{isEditing ? '✕' : '📝'}</span>
-              <span>
-                {isEditing
-                  ? '노션 에디터 닫기'
-                  : '노션 스타일로 교안 편집 / 사진·문서 추가'}
-              </span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftMaterialType(material.materialType || 'markdown');
+                  setDraftBlocks(markdownToBlocks(material.markdownContent));
+                  setDraftHtml(material.htmlContent || '');
+                  setDraftFileName(material.fileName);
+                  setIsEditing(!isEditing);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2 text-xs font-bold text-indigo-700 shadow-2xs hover:bg-indigo-100 transition"
+              >
+                <span>{isEditing ? '✕' : '📝'}</span>
+                <span>
+                  {isEditing ? '빠른 편집 닫기' : '교안 바로 수정'}
+                </span>
+              </button>
+
+              <Link
+                href={`/classes/${classId}/lessons/${lessonId}/edit`}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 shadow-2xs hover:bg-gray-50 transition"
+              >
+                <span>✏️</span>
+                <span>스튜디오 전체 화면 수정</span>
+              </Link>
+
+              {(hasMainMaterial || hasPatches) && (
+                <button
+                  type="button"
+                  disabled={clearingMaterial}
+                  onClick={handleClearMaterial}
+                  className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50/70 px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-50 transition"
+                  title="학생 질문은 유지하고 교안 본문만 비웁니다"
+                >
+                  <span>🗑️</span>
+                  <span>{clearingMaterial ? '비우는 중...' : '교안 본문 삭제'}</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -387,15 +440,40 @@ export default function LessonMaterialViewer({
                   NOTION STUDIO
                 </span>
                 <h3 className="text-base font-extrabold text-gray-900">
-                  노션형 블록 에디터로 교안 꾸미기
+                  수업 교안 빠른 수정
                 </h3>
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                마크다운 문법 없이 블록을 클릭해 제목·콜아웃·인용구를 추가하고, 사진을 마우스로 드래그 앤 드롭하여 삽입하세요.
+                블록을 클릭하거나 <code className="rounded bg-gray-100 px-1">/</code>를 입력해 코드·순서도·시뮬레이션 블록을 수정하고 즉시 저장하세요.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl bg-gray-100 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setDraftMaterialType('markdown')}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                    draftMaterialType === 'markdown'
+                      ? 'bg-white text-gray-900 shadow-2xs'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  📝 노션 블록 교안
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraftMaterialType('html')}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                    draftMaterialType === 'html'
+                      ? 'bg-white text-indigo-700 shadow-2xs'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  ⚡ HTML 시뮬레이터
+                </button>
+              </div>
+
               <input
                 ref={fileInputRef}
                 type="file"
@@ -423,7 +501,7 @@ export default function LessonMaterialViewer({
               <button
                 type="button"
                 disabled={saving}
-                onClick={handleSaveMarkdown}
+                onClick={handleSaveMaterial}
                 className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
               >
                 {saving ? '저장 중...' : '💾 교안 변경사항 저장'}
@@ -431,10 +509,32 @@ export default function LessonMaterialViewer({
             </div>
           </div>
 
-          <NotionBlockEditor
-            blocks={draftBlocks}
-            onChange={(newBlocks) => setDraftBlocks(newBlocks)}
-          />
+          {draftMaterialType === 'markdown' ? (
+            <NotionBlockEditor
+              blocks={draftBlocks}
+              onChange={(newBlocks) => setDraftBlocks(newBlocks)}
+            />
+          ) : (
+            <div className="space-y-3">
+              <textarea
+                rows={12}
+                value={draftHtml}
+                onChange={(e) => setDraftHtml(e.target.value)}
+                placeholder="<!DOCTYPE html><html>...</html>"
+                className="w-full rounded-2xl border border-gray-200 bg-slate-950 p-4 font-mono text-xs text-emerald-300 leading-relaxed focus:border-indigo-500 focus:outline-none"
+              />
+              {draftHtml.trim() && (
+                <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                  <iframe
+                    srcDoc={draftHtml}
+                    sandbox="allow-scripts"
+                    className="h-[420px] w-full border-0"
+                    title="Interactive Simulator Draft Preview"
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
