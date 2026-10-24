@@ -48,7 +48,7 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
   const teacherProfile = classData.teacher as unknown as Profile;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+    <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-8">
       {/* 상단 네비게이션 & 헤더 */}
       <div>
         <Link

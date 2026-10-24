@@ -41,6 +41,7 @@ export default function NotionLessonStudio({
   const [uploadSuccessBadge, setUploadSuccessBadge] = useState<string | null>(null);
 
   const [previewMode, setPreviewMode] = useState(false);
+  const [isFullWidth, setIsFullWidth] = useState(true);
   const [fileParsing, setFileParsing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -169,7 +170,11 @@ export default function NotionLessonStudio({
     <div className="min-h-screen bg-[#fbfbfa] pb-28">
       {/* 1. 노션 스타일 상단 고정 네비게이션 & 액션 바 */}
       <div className="sticky top-0 z-30 border-b border-gray-200/80 bg-white/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+        <div
+          className={`mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8 transition-all duration-300 ${
+            isFullWidth ? 'max-w-[96vw]' : 'max-w-5xl'
+          }`}
+        >
           {/* 좌측 브레드크럼 */}
           <div className="flex items-center gap-2 text-xs sm:text-sm">
             <Link
@@ -180,14 +185,29 @@ export default function NotionLessonStudio({
               <span>{className}</span>
             </Link>
             <span className="text-gray-300">/</span>
-            <span className="inline-flex items-center gap-1.5 font-bold text-gray-800 truncate max-w-[220px] sm:max-w-xs">
+            <span className="inline-flex items-center gap-1.5 font-bold text-gray-800 truncate max-w-[220px] sm:max-w-md">
               <span>{pageIcon}</span>
               <span className="truncate">{title.trim() || '제목 없는 수업 교안'}</span>
             </span>
           </div>
 
           {/* 우측 컨트롤 버튼 */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 노션 스타일 전체 너비(Full Width) 토글 */}
+            <button
+              type="button"
+              onClick={() => setIsFullWidth(!isFullWidth)}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
+                isFullWidth
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              title="노션 페이지 가로 너비 전환"
+            >
+              <span>↔️</span>
+              <span>{isFullWidth ? '전체 화면 너비 켜짐 (광폭)' : '전체 화면 너비로 넓히기'}</span>
+            </button>
+
             {materialType === 'markdown' && (
               <button
                 type="button"
@@ -225,7 +245,11 @@ export default function NotionLessonStudio({
       {/* 2. 노션 커버 배너 */}
       <div className="relative h-36 sm:h-44 w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-teal-500 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(#ffffff33_1px,transparent_1px)] [background-size:20px_20px] opacity-40" />
-        <div className="mx-auto max-w-4xl px-6 h-full flex items-end pb-4 justify-between text-white/90 text-xs">
+        <div
+          className={`mx-auto px-6 h-full flex items-end pb-4 justify-between text-white/90 text-xs transition-all duration-300 ${
+            isFullWidth ? 'max-w-[96vw]' : 'max-w-4xl'
+          }`}
+        >
           <span className="inline-flex items-center gap-1.5 rounded-full bg-black/25 backdrop-blur-xs px-3 py-1 font-semibold">
             ✨ 노션형 수업 교안 스튜디오 — 마크다운 문법 없이 블록 클릭과 이미지 드래그로 교안을 완성하세요
           </span>
@@ -233,8 +257,12 @@ export default function NotionLessonStudio({
       </div>
 
       {/* 3. 노션 문서 본문 컨테이너 */}
-      <div className="mx-auto max-w-4xl px-4 sm:px-8 -mt-10 relative z-10">
-        <div className="rounded-3xl border border-gray-200/90 bg-white p-6 sm:p-12 shadow-sm space-y-8">
+      <div
+        className={`mx-auto px-3 sm:px-6 -mt-10 relative z-10 transition-all duration-300 ${
+          isFullWidth ? 'max-w-[96vw]' : 'max-w-4xl'
+        }`}
+      >
+        <div className="rounded-3xl border border-gray-200/90 bg-white p-6 sm:p-10 lg:p-14 shadow-sm space-y-8">
           {/* 페이지 아이콘 + 원클릭 샘플 템플릿 바 */}
           <div className="flex flex-wrap items-end justify-between gap-4">
             <button

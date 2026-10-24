@@ -180,6 +180,7 @@ export default function LessonMaterialViewer({
   material,
 }: LessonMaterialViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isExpandedWide, setIsExpandedWide] = useState(true);
   const [draftBlocks, setDraftBlocks] = useState<NotionBlock[]>(() =>
     markdownToBlocks(material.markdownContent)
   );
@@ -249,10 +250,16 @@ export default function LessonMaterialViewer({
   }
 
   return (
-    <div className="space-y-4">
+    <div
+      className={`space-y-4 transition-all duration-300 ${
+        isExpandedWide
+          ? 'relative left-1/2 right-1/2 -ml-[47vw] -mr-[47vw] w-[94vw] max-w-[1720px]'
+          : 'w-full'
+      }`}
+    >
       {/* 상단 헤더 */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <span>📖</span>
             <span>수업 교안 & 학습 자료</span>
@@ -270,24 +277,40 @@ export default function LessonMaterialViewer({
           )}
         </div>
 
-        {isTeacher && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => {
-              setDraftBlocks(markdownToBlocks(material.markdownContent));
-              setDraftFileName(material.fileName);
-              setIsEditing(!isEditing);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 shadow-2xs hover:bg-gray-50 transition"
+            onClick={() => setIsExpandedWide(!isExpandedWide)}
+            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition ${
+              isExpandedWide
+                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+            title="교안 가로 폭을 화면 전체로 넓히거나 기본 폭으로 줄입니다"
           >
-            <span>{isEditing ? '✕' : '📝'}</span>
-            <span>
-              {isEditing
-                ? '노션 에디터 닫기'
-                : '노션 스타일로 교안 편집 / 사진·문서 추가'}
-            </span>
+            <span>↔️</span>
+            <span>{isExpandedWide ? '전체 화면 가로 확장됨 (기본 폭으로)' : '교안 가로 전체 확장'}</span>
           </button>
-        )}
+
+          {isTeacher && (
+            <button
+              type="button"
+              onClick={() => {
+                setDraftBlocks(markdownToBlocks(material.markdownContent));
+                setDraftFileName(material.fileName);
+                setIsEditing(!isEditing);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 shadow-2xs hover:bg-gray-50 transition"
+            >
+              <span>{isEditing ? '✕' : '📝'}</span>
+              <span>
+                {isEditing
+                  ? '노션 에디터 닫기'
+                  : '노션 스타일로 교안 편집 / 사진·문서 추가'}
+              </span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 교사용 노션형 블록 에디터 패널 */}

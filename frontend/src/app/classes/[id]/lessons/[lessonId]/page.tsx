@@ -105,7 +105,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 space-y-10">
+    <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-10">
       {/* 1. 상단 브레드크럼 & 헤더 */}
       <div>
         <Link
