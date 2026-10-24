@@ -281,6 +281,9 @@ export default function NotionBlockEditor({
   const [isDraggingFileOverPage, setIsDraggingFileOverPage] = useState(false);
   const [draggedBlockIdx, setDraggedBlockIdx] = useState<number | null>(null);
   const [dragOverBlockIdx, setDragOverBlockIdx] = useState<number | null>(null);
+  const [dragHandleHoveredBlockId, setDragHandleHoveredBlockId] = useState<
+    string | null
+  >(null);
   const [uploadingImageBlockId, setUploadingImageBlockId] = useState<string | null>(
     null
   );
@@ -699,23 +702,32 @@ export default function NotionBlockEditor({
         {blocks.map((block, idx) => {
           const isSlashOpen = slashMenuBlockId === block.id;
 
+          const isBeingDragged = draggedBlockIdx === idx;
+          const isDropTarget = dragOverBlockIdx === idx && draggedBlockIdx !== idx;
+
           return (
             <div
               key={block.id}
               draggable={
-                block.type !== 'code' &&
-                block.type !== 'mermaid' &&
-                block.type !== 'simulation'
+                dragHandleHoveredBlockId === block.id ||
+                (block.type !== 'code' &&
+                  block.type !== 'mermaid' &&
+                  block.type !== 'simulation')
               }
               onDragStart={(e) => {
                 setDraggedBlockIdx(idx);
                 e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', block.id);
               }}
               onDragOver={(e) => {
                 e.preventDefault();
                 if (dragOverBlockIdx !== idx) {
                   setDragOverBlockIdx(idx);
                 }
+              }}
+              onDragEnd={() => {
+                setDraggedBlockIdx(null);
+                setDragOverBlockIdx(null);
               }}
               onDrop={(e) => {
                 if (
@@ -732,17 +744,19 @@ export default function NotionBlockEditor({
                 setDraggedBlockIdx(null);
                 setDragOverBlockIdx(null);
               }}
-              className={`group relative flex items-start gap-2 rounded-xl px-2 py-1 transition ${
-                dragOverBlockIdx === idx
-                  ? 'border-b-2 border-blue-500 bg-blue-50/30'
+              className={`group relative flex items-start gap-2 rounded-xl px-2 py-1 transition-all ${
+                isBeingDragged
+                  ? 'opacity-40 scale-[0.99] bg-blue-50/40 ring-1 ring-blue-300'
+                  : isDropTarget
+                  ? 'border-y-2 border-blue-500 bg-blue-50/40 shadow-xs'
                   : 'hover:bg-gray-50/80'
               }`}
             >
-              {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 추가 / ⋮⋮ 타입 전환 / 이동) */}
-              <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-40 group-hover:opacity-100 transition select-none">
+              {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 추가 / ⋮⋮ 드래그 순서 이동) */}
+              <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-55 group-hover:opacity-100 transition select-none">
                 <button
                   type="button"
-                  title="블록 타입 변경 또는 코드·순서도 선택"
+                  title="블록 타입 변경 또는 코드·순서도·시뮬레이션 선택"
                   onClick={() => {
                     if (isSlashOpen) {
                       setSlashMenuBlockId(null);
@@ -758,8 +772,15 @@ export default function NotionBlockEditor({
                   +
                 </button>
                 <div
-                  title="드래그하여 순서 이동"
-                  className="flex h-6 w-5 cursor-grab items-center justify-center rounded-md text-gray-400 hover:bg-gray-200 hover:text-gray-700 text-xs"
+                  title="마우스로 잡고 위아래로 드래그하여 블록 순서 변경"
+                  onMouseEnter={() => setDragHandleHoveredBlockId(block.id)}
+                  onMouseLeave={() => {
+                    if (draggedBlockIdx === null) {
+                      setDragHandleHoveredBlockId(null);
+                    }
+                  }}
+                  onMouseDown={() => setDragHandleHoveredBlockId(block.id)}
+                  className="flex h-6 w-6 cursor-grab active:cursor-grabbing items-center justify-center rounded-md text-gray-400 hover:bg-blue-100 hover:text-blue-700 text-xs font-bold transition"
                 >
                   ⋮⋮
                 </div>

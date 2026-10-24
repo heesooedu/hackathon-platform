@@ -12,6 +12,7 @@ export interface ParsedLessonMaterial {
   fileName: string | null;
   appliedPatches: AppliedPatchItem[];
   aiAnalysis: AiLessonAnalysisResult | null;
+  displayOrder?: number | null;
 }
 
 const META_PREFIX = '<!--__PEDAGOGY_V2_META__:';
@@ -25,6 +26,7 @@ interface EmbeddedMetaEnvelope {
   fileName: string | null;
   appliedPatches: AppliedPatchItem[];
   aiAnalysis: AiLessonAnalysisResult | null;
+  displayOrder?: number | null;
 }
 
 /**
@@ -53,6 +55,8 @@ export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
         fileName: parsed.fileName || lesson.material_file_name || null,
         appliedPatches: Array.isArray(parsed.appliedPatches) ? parsed.appliedPatches : [],
         aiAnalysis: parsed.aiAnalysis || lesson.ai_review_json || null,
+        displayOrder:
+          typeof parsed.displayOrder === 'number' ? parsed.displayOrder : null,
       };
     } catch (e) {
       console.error('Failed to parse embedded lesson material meta:', e);
@@ -127,7 +131,8 @@ export function serializeLessonMaterial(payload: ParsedLessonMaterial): string {
     payload.markdownContent.trim().length > 0 ||
     payload.htmlContent.trim().length > 0 ||
     payload.appliedPatches.length > 0 ||
-    payload.aiAnalysis !== null;
+    payload.aiAnalysis !== null ||
+    typeof payload.displayOrder === 'number';
 
   if (!hasContent) {
     return '';
@@ -141,6 +146,8 @@ export function serializeLessonMaterial(payload: ParsedLessonMaterial): string {
     fileName: payload.fileName,
     appliedPatches: payload.appliedPatches,
     aiAnalysis: payload.aiAnalysis,
+    displayOrder:
+      typeof payload.displayOrder === 'number' ? payload.displayOrder : null,
   };
 
   const jsonStr = JSON.stringify(envelope);
@@ -156,6 +163,39 @@ export function serializeLessonMaterial(payload: ParsedLessonMaterial): string {
   }
 
   return metaComment;
+}
+
+/**
+ * 레슨에 실제 교안 본문이나 패치가 포함되어 있는지 여부를 반환합니다.
+ */
+export function hasActualLessonMaterial(lesson: Lesson): boolean {
+  const parsed = parseLessonMaterial(lesson);
+  return (
+    parsed.markdownContent.trim().length > 0 ||
+    parsed.htmlContent.trim().length > 0 ||
+    parsed.appliedPatches.length > 0
+  );
+}
+
+/**
+ * 교사가 지정한 displayOrder 순서를 우선으로 하고, 지정되지 않은 레슨은 최신 생성순으로 정렬합니다.
+ */
+export function sortLessonsByOrder(lessons: Lesson[]): Lesson[] {
+  return [...lessons].sort((a, b) => {
+    const orderA = parseLessonMaterial(a).displayOrder;
+    const orderB = parseLessonMaterial(b).displayOrder;
+
+    const hasOrderA = typeof orderA === 'number';
+    const hasOrderB = typeof orderB === 'number';
+
+    if (hasOrderA && hasOrderB) {
+      return orderA - orderB;
+    }
+    if (hasOrderA && !hasOrderB) return -1;
+    if (!hasOrderA && hasOrderB) return 1;
+
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
 }
 
 /**

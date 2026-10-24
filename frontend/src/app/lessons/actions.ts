@@ -172,6 +172,7 @@ export async function updateLessonAction(formData: FormData) {
     fileName: materialFileName,
     appliedPatches: existingParsed.appliedPatches || [],
     aiAnalysis: existingParsed.aiAnalysis || null,
+    displayOrder: existingParsed.displayOrder ?? null,
   });
 
   const { error: updateError } = await supabase
@@ -228,6 +229,68 @@ export async function deleteLessonAction(
 
   if (deleteError) {
     return { success: false, error: '레슨 삭제 중 오류가 발생했습니다: ' + deleteError.message };
+  }
+
+  revalidatePath(`/classes/${classId}`);
+  return { success: true };
+}
+
+/**
+ * 2-3. 클래스 내 수업 교안(레슨) 목록 순서 변경 저장 (드래그 앤 드롭 재정렬)
+ */
+export async function reorderLessonsAction(
+  classId: string,
+  orderedLessonIds: string[]
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: '로그인이 필요합니다.' };
+  }
+
+  // 교사 권한 확인
+  const { data: classData, error: classError } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (classError || !classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '교안 순서를 변경할 권한이 없습니다.' };
+  }
+
+  const { data: lessonsData, error: fetchError } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('class_id', classId);
+
+  if (fetchError || !lessonsData) {
+    return { success: false, error: '레슨 목록을 불러올 수 없습니다.' };
+  }
+
+  const lessonMap = new Map<string, Lesson>(
+    (lessonsData as Lesson[]).map((l) => [l.id, l])
+  );
+
+  for (let i = 0; i < orderedLessonIds.length; i++) {
+    const lessonId = orderedLessonIds[i];
+    const lesson = lessonMap.get(lessonId);
+    if (!lesson) continue;
+
+    const parsed = parseLessonMaterial(lesson);
+    const updatedSerialized = serializeLessonMaterial({
+      ...parsed,
+      displayOrder: i,
+    });
+
+    await supabase
+      .from('lessons')
+      .update({ material_html: updatedSerialized || null })
+      .eq('id', lessonId)
+      .eq('class_id', classId);
   }
 
   revalidatePath(`/classes/${classId}`);
@@ -527,9 +590,26 @@ export async function clearLessonMaterialAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  const { data: lessonData } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', lessonId)
+    .single();
+
+  const existingParsed = lessonData ? parseLessonMaterial(lessonData as Lesson) : null;
+  const clearedSerialized = serializeLessonMaterial({
+    materialType: 'markdown',
+    markdownContent: '',
+    htmlContent: '',
+    fileName: null,
+    appliedPatches: [],
+    aiAnalysis: existingParsed?.aiAnalysis || null,
+    displayOrder: existingParsed?.displayOrder ?? null,
+  });
+
   const { error } = await supabase
     .from('lessons')
-    .update({ material_html: null })
+    .update({ material_html: clearedSerialized || null })
     .eq('id', lessonId);
 
   if (error) {
