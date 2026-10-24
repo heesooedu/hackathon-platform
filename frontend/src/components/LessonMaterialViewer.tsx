@@ -433,7 +433,7 @@ export default function LessonMaterialViewer({
       {/* 교사용 노션형 블록 에디터 패널 */}
       {isTeacher && isEditing && (
         <div className="rounded-3xl border-2 border-indigo-200 bg-white p-6 space-y-4 shadow-lg">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
+          <div className="sticky top-16 z-30 -mx-2 rounded-2xl bg-white/95 px-3 py-3 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 border-b border-gray-100">
             <div>
               <div className="flex items-center gap-2">
                 <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-extrabold text-white">
@@ -502,7 +502,7 @@ export default function LessonMaterialViewer({
                 type="button"
                 disabled={saving}
                 onClick={handleSaveMaterial}
-                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
               >
                 {saving ? '저장 중...' : '💾 교안 변경사항 저장'}
               </button>
@@ -535,6 +535,51 @@ export default function LessonMaterialViewer({
               )}
             </div>
           )}
+
+          {/* 에디터 하단 저장 액션 바 */}
+          <div className="pt-4 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs text-gray-500">
+              💡 교안 편집이 끝났다면 우측의 저장 버튼을 눌러 반영해 주세요.
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleSaveMaterial}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs sm:text-sm font-extrabold text-white shadow-md hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
+              >
+                <span>💾</span>
+                <span>{saving ? '저장 중...' : '교안 변경사항 저장하기'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 화면 우측 하단 플로팅 저장 버튼 */}
+          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-2xl border border-indigo-200 bg-white/95 p-2 shadow-xl backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => setIsEditing(false)}
+              className="rounded-xl px-3 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100"
+            >
+              취소
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleSaveMaterial}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs sm:text-sm font-extrabold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
+            >
+              <span>💾</span>
+              <span>{saving ? '저장 중...' : '교안 저장'}</span>
+            </button>
+          </div>
         </div>
       )}
 

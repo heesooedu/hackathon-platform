@@ -626,7 +626,7 @@ export default function NotionBlockEditor({
       />
 
       {/* 상단 고정 노션 블록 빠른 삽입 툴바 */}
-      <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
+      <div className="sticky top-[124px] z-20 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] font-bold text-gray-400 mr-1">
             블록 빠른 추가:

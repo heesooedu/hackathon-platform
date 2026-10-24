@@ -256,8 +256,8 @@ export default function NotionLessonStudio({
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] pb-28">
-      {/* 1. 노션 스타일 상단 고정 네비게이션 & 액션 바 */}
-      <div className="sticky top-0 z-30 border-b border-gray-200/80 bg-white/90 backdrop-blur-md">
+      {/* 1. 노션 스타일 상단 고정 네비게이션 & 액션 바 (전역 Navbar h-16 바로 아래 고정) */}
+      <div className="sticky top-16 z-40 border-b border-gray-200/80 bg-white/95 shadow-xs backdrop-blur-md">
         <div
           className={`mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8 transition-all duration-300 ${
             isFullWidth ? 'max-w-[96vw]' : 'max-w-5xl'
@@ -609,7 +609,56 @@ export default function NotionLessonStudio({
               )}
             </div>
           )}
+
+          {/* 5. 교안 하단 저장/발행 액션 바 (문서 끝에서도 바로 저장 가능) */}
+          <div className="pt-6 border-t border-gray-200 flex flex-wrap items-center justify-between gap-4">
+            <div className="text-xs text-gray-500">
+              💡 작성을 마쳤다면 우측의 <strong className="text-gray-800">저장 버튼</strong>을 눌러 수업 교안을 반영하세요.
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Link
+                href={backHref}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-xs sm:text-sm font-bold text-gray-600 hover:bg-gray-50 transition"
+              >
+                취소
+              </Link>
+              <button
+                type="button"
+                disabled={loading || deleting || fileParsing}
+                onClick={handlePublish}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-extrabold text-white shadow-md hover:bg-blue-700 disabled:opacity-50 transition cursor-pointer"
+              >
+                <span>💾</span>
+                <span>
+                  {loading
+                    ? '저장 중...'
+                    : isEditMode
+                    ? '교안·레슨 수정사항 저장하기'
+                    : '교안 저장 & 수업 레슨 개설하기'}
+                </span>
+              </button>
+            </div>
+          </div>
         </div>
+      </div>
+
+      {/* 6. 화면 우측 하단 플로팅 저장 버튼 (긴 교안 작성 중 언제든 즉시 클릭 가능) */}
+      <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-2xl border border-blue-200 bg-white/95 p-2 shadow-xl backdrop-blur-md">
+        <button
+          type="button"
+          disabled={loading || deleting || fileParsing}
+          onClick={handlePublish}
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs sm:text-sm font-extrabold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition cursor-pointer"
+        >
+          <span>💾</span>
+          <span>
+            {loading
+              ? '저장 중...'
+              : isEditMode
+              ? '교안 수정 저장'
+              : '교안 저장 & 발행'}
+          </span>
+        </button>
       </div>
     </div>
   );
