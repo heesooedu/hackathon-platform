@@ -8,6 +8,7 @@ import {
   NotionBlock,
 } from '@/utils/notionBlocks';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
+import MermaidDiagram from '@/components/MermaidDiagram';
 import {
   updateLessonMaterialMarkdownAction,
   removeMaterialPatchAction,
@@ -126,6 +127,58 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
             >
               {renderInlineMarkdown(block.content)}
             </blockquote>
+          );
+        }
+
+        if (block.type === 'code') {
+          const langLabel = (block.language || 'python').toUpperCase();
+          return (
+            <div
+              key={block.id}
+              className="my-3 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-sm"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-4 py-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500/80" />
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+                  <span className="ml-2 rounded-md bg-indigo-500/20 border border-indigo-400/30 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-300">
+                    {langLabel}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                      navigator.clipboard.writeText(block.content);
+                    }
+                  }}
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+                >
+                  📋 코드 복사
+                </button>
+              </div>
+              <pre className="overflow-x-auto p-4 font-mono text-xs leading-6 text-slate-100">
+                <code>{block.content}</code>
+              </pre>
+            </div>
+          );
+        }
+
+        if (block.type === 'mermaid') {
+          return (
+            <div
+              key={block.id}
+              className="my-4 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/30 to-white p-4 shadow-2xs"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
+                  <span>❖</span>
+                  <span>순서도 / 다이어그램</span>
+                </span>
+              </div>
+              <MermaidDiagram chart={block.content} />
+            </div>
           );
         }
 

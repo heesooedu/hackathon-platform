@@ -6,16 +6,31 @@ export type NotionBlockType =
   | 'bullet'
   | 'callout'
   | 'quote'
+  | 'code'
+  | 'mermaid'
   | 'image'
   | 'divider';
 
 export type ImageSizeOption = 'sm' | 'md' | 'full';
+
+export type CodeLanguage =
+  | 'python'
+  | 'javascript'
+  | 'typescript'
+  | 'html'
+  | 'css'
+  | 'sql'
+  | 'c'
+  | 'cpp'
+  | 'java'
+  | 'text';
 
 export interface NotionBlock {
   id: string;
   type: NotionBlockType;
   content: string;
   icon?: string; // callout 아이콘 (예: 💡, 📌, ⚠️)
+  language?: CodeLanguage; // code 블록의 프로그래밍 언어 (기본값: 'python')
   imageUrl?: string; // image 블록의 data URL 또는 외부 URL
   caption?: string; // image 블록의 캡션
   imageSize?: ImageSizeOption;
@@ -27,7 +42,8 @@ export function createBlockId(): string {
 
 /**
  * 마크다운 문자열을 노션 스타일 블록 배열(NotionBlock[])로 변환합니다.
- * 워드(.docx)나 한글(.hwp/.hwpx)에서 추출된 마크다운도 즉시 노션 블록들로 변환됩니다.
+ * 워드(.docx)나 한글(.hwp/.hwpx)에서 추출된 마크다운, 코드블록(```python ... ```),
+ * Mermaid 다이어그램(```mermaid ... ```)도 즉시 노션 블록들로 변환됩니다.
  */
 export function markdownToBlocks(markdown: string): NotionBlock[] {
   if (!markdown || !markdown.trim()) {
@@ -48,11 +64,68 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
   const lines = markdown.split('\n');
   const blocks: NotionBlock[] = [];
 
-  for (let i = 0; i < lines.length; i++) {
+  let i = 0;
+  while (i < lines.length) {
     const rawLine = lines[i];
     const line = rawLine.trim();
 
     if (!line) {
+      i++;
+      continue;
+    }
+
+    // 0. 멀티라인 펜스 코드블록 (```python ... ``` 또는 ```mermaid ... ```)
+    if (line.startsWith('```')) {
+      const langRaw = line.slice(3).trim().toLowerCase();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      // 닫는 ``` 스킵
+      if (i < lines.length && lines[i].trim().startsWith('```')) {
+        i++;
+      }
+
+      if (langRaw === 'mermaid') {
+        blocks.push({
+          id: createBlockId(),
+          type: 'mermaid',
+          content: codeLines.join('\n'),
+        });
+      } else {
+        const supportedLangs: CodeLanguage[] = [
+          'python',
+          'javascript',
+          'typescript',
+          'html',
+          'css',
+          'sql',
+          'c',
+          'cpp',
+          'java',
+          'text',
+        ];
+        const normalizedLang: CodeLanguage = supportedLangs.includes(
+          langRaw as CodeLanguage
+        )
+          ? (langRaw as CodeLanguage)
+          : langRaw === 'py'
+          ? 'python'
+          : langRaw === 'js'
+          ? 'javascript'
+          : langRaw === 'ts'
+          ? 'typescript'
+          : 'python';
+
+        blocks.push({
+          id: createBlockId(),
+          type: 'code',
+          language: normalizedLang,
+          content: codeLines.join('\n'),
+        });
+      }
       continue;
     }
 
@@ -63,6 +136,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         type: 'divider',
         content: '',
       });
+      i++;
       continue;
     }
 
@@ -93,6 +167,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         caption,
         imageSize,
       });
+      i++;
       continue;
     }
 
@@ -103,6 +178,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         type: 'h1',
         content: line.slice(2).trim(),
       });
+      i++;
       continue;
     }
 
@@ -112,6 +188,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         type: 'h2',
         content: line.slice(3).trim(),
       });
+      i++;
       continue;
     }
 
@@ -121,10 +198,11 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         type: 'h3',
         content: line.slice(4).trim(),
       });
+      i++;
       continue;
     }
 
-    // 4. 콜아웃 (> [!CALLOUT:💡] 내용) 또는 이모지로 시작하는 인용구
+    // 4. 콜아웃 (> [!CALLOUT:💡] 내용)
     const calloutMatch = line.match(/^>\s*\[!CALLOUT:([^\]]+)\]\s*(.*)$/);
     if (calloutMatch) {
       blocks.push({
@@ -133,6 +211,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         icon: calloutMatch[1] || '💡',
         content: calloutMatch[2] || '',
       });
+      i++;
       continue;
     }
 
@@ -143,6 +222,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         type: 'quote',
         content: line.slice(2).trim(),
       });
+      i++;
       continue;
     }
 
@@ -153,6 +233,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         type: 'bullet',
         content: line.slice(2).trim(),
       });
+      i++;
       continue;
     }
 
@@ -162,6 +243,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       type: 'p',
       content: rawLine,
     });
+    i++;
   }
 
   if (blocks.length === 0) {
@@ -204,6 +286,17 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       case 'quote':
         if (b.content.trim()) {
           lines.push(`> ${b.content.trim().replace(/\n/g, ' ')}`);
+        }
+        break;
+      case 'code':
+        if (b.content.trim()) {
+          const lang = b.language || 'python';
+          lines.push(`\`\`\`${lang}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``);
+        }
+        break;
+      case 'mermaid':
+        if (b.content.trim()) {
+          lines.push(`\`\`\`mermaid\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);
         }
         break;
       case 'divider':

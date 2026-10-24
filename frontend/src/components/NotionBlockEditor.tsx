@@ -5,8 +5,10 @@ import {
   NotionBlock,
   NotionBlockType,
   ImageSizeOption,
+  CodeLanguage,
   createBlockId,
 } from '@/utils/notionBlocks';
+import MermaidDiagram from '@/components/MermaidDiagram';
 
 interface NotionBlockEditorProps {
   blocks: NotionBlock[];
@@ -15,36 +17,138 @@ interface NotionBlockEditorProps {
 
 const CALLOUT_ICONS = ['💡', '📌', '🎯', '⚠️', '❓', '📖', '🔬', '🏛️', '✨'];
 
+const CODE_LANGUAGES: { value: CodeLanguage; label: string }[] = [
+  { value: 'python', label: '🐍 Python' },
+  { value: 'javascript', label: '🟨 JavaScript' },
+  { value: 'typescript', label: '🔷 TypeScript' },
+  { value: 'html', label: '🌐 HTML' },
+  { value: 'css', label: '🎨 CSS' },
+  { value: 'sql', label: '🗄️ SQL' },
+  { value: 'c', label: '⚙️ C' },
+  { value: 'cpp', label: '⚙️ C++' },
+  { value: 'java', label: '☕ Java' },
+  { value: 'text', label: '📄 Plain Text' },
+];
+
+const MERMAID_TEMPLATES: { label: string; code: string }[] = [
+  {
+    label: '📊 기본 순서도 (Flowchart)',
+    code: `flowchart TD
+    A["문제 상황 인식"] --> B{"조건을 만족하는가?"}
+    B -- "예 (Yes)" --> C["핵심 원리 적용"]
+    B -- "아니오 (No)" --> D["원인 재탐색 및 가설 수정"]
+    C --> E["결론 도출"]
+    D --> B`,
+  },
+  {
+    label: '➡️ 가로형 단계도 (Process)',
+    code: `flowchart LR
+    Step1["1단계: 개념 이해"] --> Step2["2단계: 사례 분석"]
+    Step2 --> Step3["3단계: 심화 적용"]
+    Step3 --> Step4["4단계: 형성평가 확인"]`,
+  },
+  {
+    label: '🔄 상호작용 시퀀스 (Sequence)',
+    code: `sequenceDiagram
+    participant S as 학생(클라이언트)
+    participant T as 교사(서버)
+    S->>T: 1. 수업 질문 제출
+    T->>T: 2. 핵심 오개념 분석 및 교안 패치
+    T-->>S: 3. 보충 설명 및 맞춤형 퀴즈 제공`,
+  },
+  {
+    label: '🗂️ 개념 구조도 (Class/Concept)',
+    code: `flowchart TD
+    Root["기본권의 종류"] --> A["자유권 (국가 권력 간섭 배제)"]
+    Root --> B["참정권 (정치 과정 참여)"]
+    Root --> C["사회권 (인간다운 생활 보장)"]`,
+  },
+];
+
 const BLOCK_TYPE_META: {
   type: NotionBlockType;
   label: string;
   desc: string;
   badge: string;
+  keywords: string[];
 }[] = [
-  { type: 'p', label: '본문 텍스트', desc: '일반 수업 설명 단락을 작성합니다', badge: 'T' },
-  { type: 'h1', label: '대제목 (제목 1)', desc: '단원의 가장 큰 제목입니다', badge: 'H1' },
-  { type: 'h2', label: '중제목 (제목 2)', desc: '주요 개념이나 소단원 제목입니다', badge: 'H2' },
-  { type: 'h3', label: '소제목 (제목 3)', desc: '세부 항목 제목입니다', badge: 'H3' },
-  { type: 'bullet', label: '글머리 기호 목록', desc: '핵심 내용을 리스트로 정리합니다', badge: '•' },
+  {
+    type: 'p',
+    label: '본문 텍스트',
+    desc: '일반 수업 설명 단락을 작성합니다',
+    badge: 'T',
+    keywords: ['p', 'text', '본문', '텍스트'],
+  },
+  {
+    type: 'h1',
+    label: '대제목 (제목 1)',
+    desc: '단원의 가장 큰 제목입니다',
+    badge: 'H1',
+    keywords: ['h1', 'heading1', '대제목', '제목1', '제목'],
+  },
+  {
+    type: 'h2',
+    label: '중제목 (제목 2)',
+    desc: '주요 개념이나 소단원 제목입니다',
+    badge: 'H2',
+    keywords: ['h2', 'heading2', '중제목', '제목2'],
+  },
+  {
+    type: 'h3',
+    label: '소제목 (제목 3)',
+    desc: '세부 항목 제목입니다',
+    badge: 'H3',
+    keywords: ['h3', 'heading3', '소제목', '제목3'],
+  },
+  {
+    type: 'bullet',
+    label: '글머리 기호 목록',
+    desc: '핵심 내용을 리스트로 정리합니다',
+    badge: '•',
+    keywords: ['bullet', 'list', '목록', '리스트'],
+  },
   {
     type: 'callout',
     label: '콜아웃 강조 박스',
     desc: '아이콘과 배경색이 있는 노션 강조 박스입니다',
     badge: '💡',
+    keywords: ['callout', '콜아웃', '강조', '박스'],
   },
   {
     type: 'quote',
     label: '인용구 / 지문 박스',
     desc: '국어·영어 지문이나 역사 사료, 정의를 인용합니다',
     badge: '❝',
+    keywords: ['quote', '인용', '지문', '사료'],
+  },
+  {
+    type: 'code',
+    label: '코드 블록 (Python 등 자동 들여쓰기)',
+    desc: 'Python·JS·SQL 코드 작성 (엔터 시 자동 들여쓰기 & Tab 지원)',
+    badge: '</>',
+    keywords: ['code', 'python', 'js', '코드', '파이썬', '프로그래밍'],
+  },
+  {
+    type: 'mermaid',
+    label: '순서도 / 다이어그램 (Mermaid)',
+    desc: '알고리즘 순서도, 개념 구조도, 흐름도를 실시간으로 그립니다',
+    badge: '❖',
+    keywords: ['mermaid', 'flowchart', 'diagram', '순서도', '다이어그램', '흐름도', '구조도'],
   },
   {
     type: 'image',
     label: '사진 / 이미지 블록',
     desc: '드래그 앤 드롭이나 파일 선택으로 사진을 넣습니다',
     badge: '🖼️',
+    keywords: ['image', 'photo', 'pic', '사진', '이미지', '그림'],
   },
-  { type: 'divider', label: '구분선', desc: '단락 사이를 시각적으로 나눕니다', badge: '―' },
+  {
+    type: 'divider',
+    label: '구분선',
+    desc: '단락 사이를 시각적으로 나눕니다',
+    badge: '―',
+    keywords: ['divider', 'hr', 'line', '구분선', '선'],
+  },
 ];
 
 /**
@@ -60,7 +164,6 @@ export async function compressImageFileToDataUrl(file: File): Promise<string> {
         return;
       }
 
-      // SVG나 GIF는 원본 유지
       if (file.type === 'image/svg+xml' || file.type === 'image/gif') {
         resolve(dataUrl);
         return;
@@ -105,6 +208,7 @@ function AutoResizeTextarea({
   placeholder,
   className,
   inputRef,
+  spellCheck = true,
 }: {
   value: string;
   onChange: (val: string) => void;
@@ -113,6 +217,7 @@ function AutoResizeTextarea({
   placeholder: string;
   className: string;
   inputRef?: (el: HTMLTextAreaElement | null) => void;
+  spellCheck?: boolean;
 }) {
   const internalRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -131,6 +236,7 @@ function AutoResizeTextarea({
         if (inputRef) inputRef(el);
       }}
       rows={1}
+      spellCheck={spellCheck}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
@@ -146,6 +252,9 @@ export default function NotionBlockEditor({
   onChange,
 }: NotionBlockEditorProps) {
   const [slashMenuBlockId, setSlashMenuBlockId] = useState<string | null>(null);
+  const [slashFilterQuery, setSlashFilterQuery] = useState('');
+  const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
+
   const [isDraggingFileOverPage, setIsDraggingFileOverPage] = useState(false);
   const [draggedBlockIdx, setDraggedBlockIdx] = useState<number | null>(null);
   const [dragOverBlockIdx, setDragOverBlockIdx] = useState<number | null>(null);
@@ -157,13 +266,13 @@ export default function NotionBlockEditor({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const targetImageBlockIdRef = useRef<string | null>(null);
 
-  function focusBlock(id: string) {
+  function focusBlock(id: string, cursorPos?: number) {
     setTimeout(() => {
       const el = blockRefs.current[id];
       if (el) {
         el.focus();
-        const len = el.value.length;
-        el.setSelectionRange(len, len);
+        const pos = cursorPos !== undefined ? cursorPos : el.value.length;
+        el.setSelectionRange(pos, pos);
       }
     }, 20);
   }
@@ -207,6 +316,173 @@ export default function NotionBlockEditor({
     const [moved] = next.splice(index, 1);
     next.splice(targetIdx, 0, moved);
     onChange(next);
+  }
+
+  function getFilteredSlashItems() {
+    const q = slashFilterQuery.trim().toLowerCase();
+    if (!q) return BLOCK_TYPE_META;
+    return BLOCK_TYPE_META.filter(
+      (item) =>
+        item.label.toLowerCase().includes(q) ||
+        item.desc.toLowerCase().includes(q) ||
+        item.keywords.some((k) => k.includes(q))
+    );
+  }
+
+  function applyBlockTypeSelection(block: NotionBlock, targetType: NotionBlockType) {
+    const cleanedContent = block.content.startsWith('/') ? '' : block.content;
+    const defaultMermaid = MERMAID_TEMPLATES[0].code;
+
+    updateBlock(block.id, {
+      type: targetType,
+      content:
+        targetType === 'mermaid' && !cleanedContent.trim()
+          ? defaultMermaid
+          : cleanedContent,
+      icon: targetType === 'callout' ? block.icon || '💡' : undefined,
+      language: targetType === 'code' ? block.language || 'python' : undefined,
+    });
+    setSlashMenuBlockId(null);
+    setSlashFilterQuery('');
+    setSlashSelectedIdx(0);
+
+    if (targetType !== 'image' && targetType !== 'divider') {
+      focusBlock(block.id);
+    }
+  }
+
+  /**
+   * 텍스트 입력 시 `/` 로 시작하면 슬래시 메뉴를 열고 검색어를 업데이트합니다.
+   */
+  function handleTextChangeWithSlash(block: NotionBlock, val: string) {
+    if (val.startsWith('/') && !val.includes('\n') && val.length <= 18) {
+      setSlashMenuBlockId(block.id);
+      setSlashFilterQuery(val.slice(1));
+      setSlashSelectedIdx(0);
+    } else if (slashMenuBlockId === block.id) {
+      setSlashMenuBlockId(null);
+      setSlashFilterQuery('');
+    }
+    updateBlock(block.id, { content: val });
+  }
+
+  /**
+   * 코드 블록 & Mermaid 블록 전용 키보드 핸들러:
+   * - Enter 입력 시: 이전 줄의 들여쓰기(공백)를 자동 계산하고, Python의 `:` 또는 `{`, `(` 로 끝나면 4칸 추가 들여쓰기!
+   * - Tab 입력 시: 4칸 스페이스 삽입
+   * - Backspace 입력 시: 커서 앞이 4칸 공백이면 한 번에 4칸 내어쓰기
+   * - Shift+Enter 입력 시: 코드 블록 아래에 새 일반 문단 블록 추가
+   */
+  function handleCodeOrMermaidKeyDown(
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+    block: NotionBlock,
+    idx: number
+  ) {
+    if (e.nativeEvent.isComposing) return;
+
+    const el = e.currentTarget;
+    const val = el.value;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const indentUnit = block.type === 'mermaid' ? '    ' : '    '; // 4 spaces
+
+    // 1. Shift + Enter -> 코드블록 바깥(아래)에 새 단락 블록 생성
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      insertBlockAfter(idx, {
+        id: createBlockId(),
+        type: 'p',
+        content: '',
+      });
+      return;
+    }
+
+    // 2. 일반 Enter -> 스마트 자동 들여쓰기(Auto-indent) 줄바꿈
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const beforeCursor = val.slice(0, start);
+      const afterCursor = val.slice(end);
+      const currentLine = beforeCursor.split('\n').pop() || '';
+      const leadingSpacesMatch = currentLine.match(/^(\s*)/);
+      let indent = leadingSpacesMatch ? leadingSpacesMatch[1] : '';
+
+      const trimmedLine = currentLine.trimEnd();
+      // Python의 콜론(:), 또는 중괄호/대괄호/소괄호 열림({, [, () 혹은 Mermaid의 subgraph 끝에서 자동 추가 들여쓰기
+      if (
+        trimmedLine.endsWith(':') ||
+        trimmedLine.endsWith('{') ||
+        trimmedLine.endsWith('(') ||
+        trimmedLine.endsWith('[') ||
+        (block.type === 'mermaid' && /^subgraph\b/.test(trimmedLine.trim()))
+      ) {
+        indent += indentUnit;
+      }
+
+      const insertion = '\n' + indent;
+      const newVal = beforeCursor + insertion + afterCursor;
+      const newCursorPos = start + insertion.length;
+
+      updateBlock(block.id, { content: newVal });
+      requestAnimationFrame(() => {
+        const targetEl = blockRefs.current[block.id];
+        if (targetEl) {
+          targetEl.focus();
+          targetEl.setSelectionRange(newCursorPos, newCursorPos);
+        }
+      });
+      return;
+    }
+
+    // 3. Tab 키 -> 4칸 들여쓰기 삽입
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const beforeCursor = val.slice(0, start);
+      const afterCursor = val.slice(end);
+      const newVal = beforeCursor + indentUnit + afterCursor;
+      const newCursorPos = start + indentUnit.length;
+
+      updateBlock(block.id, { content: newVal });
+      requestAnimationFrame(() => {
+        const targetEl = blockRefs.current[block.id];
+        if (targetEl) {
+          targetEl.focus();
+          targetEl.setSelectionRange(newCursorPos, newCursorPos);
+        }
+      });
+      return;
+    }
+
+    // 4. Backspace 키 -> 빈 코드 블록이면 일반 문단으로 전환, 아니면 4칸 공백 스마트 삭제
+    if (e.key === 'Backspace') {
+      if (val === '') {
+        e.preventDefault();
+        updateBlock(block.id, { type: 'p' });
+        return;
+      }
+
+      if (start === end && start >= 4) {
+        const beforeCursor = val.slice(0, start);
+        const currentLineBeforeCursor = beforeCursor.split('\n').pop() || '';
+        // 현재 줄의 커서 앞부분이 전부 공백이고 4의 배수이면 4칸 한꺼번에 지우기
+        if (
+          currentLineBeforeCursor.length >= 4 &&
+          /^\s+$/.test(currentLineBeforeCursor) &&
+          currentLineBeforeCursor.endsWith('    ')
+        ) {
+          e.preventDefault();
+          const newVal = val.slice(0, start - 4) + val.slice(end);
+          const newPos = start - 4;
+          updateBlock(block.id, { content: newVal });
+          requestAnimationFrame(() => {
+            const targetEl = blockRefs.current[block.id];
+            if (targetEl) {
+              targetEl.focus();
+              targetEl.setSelectionRange(newPos, newPos);
+            }
+          });
+        }
+      }
+    }
   }
 
   async function handleImageFilesDrop(
@@ -256,6 +532,8 @@ export default function NotionBlockEditor({
     next.splice(idx + 1, 0, ...newImageBlocks);
     onChange(next);
   }
+
+  const filteredSlashItems = getFilteredSlashItems();
 
   return (
     <div
@@ -311,7 +589,7 @@ export default function NotionBlockEditor({
         }}
       />
 
-      {/* 상단 고정 노션 블록 빠른 삽입 툴바 (마크다운 문법을 몰라도 원클릭 추가) */}
+      {/* 상단 고정 노션 블록 빠른 삽입 툴바 */}
       <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] font-bold text-gray-400 mr-1">
@@ -336,8 +614,10 @@ export default function NotionBlockEditor({
                   const newBlock: NotionBlock = {
                     id: createBlockId(),
                     type: item.type,
-                    content: '',
+                    content:
+                      item.type === 'mermaid' ? MERMAID_TEMPLATES[0].code : '',
                     icon: item.type === 'callout' ? '💡' : undefined,
+                    language: item.type === 'code' ? 'python' : undefined,
                   };
                   onChange([...blocks, newBlock]);
                   focusBlock(newBlock.id);
@@ -352,12 +632,9 @@ export default function NotionBlockEditor({
           ))}
         </div>
 
-        <span className="text-[11px] font-medium text-gray-400 hidden sm:inline">
-          💡 팁: 사진을 이 페이지 어디든 <strong>드래그 앤 드롭</strong>하거나 빈 줄에{' '}
-          <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">
-            /
-          </kbd>
-          를 입력해 보세요
+        <span className="text-[11px] font-medium text-gray-400 hidden xl:inline">
+          💡 빈 줄에 <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/</kbd>{' '}
+          입력 시 코드블록·순서도(Mermaid)·콜아웃·사진 즉시 선택
         </span>
       </div>
 
@@ -377,16 +654,15 @@ export default function NotionBlockEditor({
       )}
 
       {/* 노션 블록 리스트 렌더링 */}
-      <div className="space-y-1.5 pt-2">
+      <div className="space-y-2 pt-2">
         {blocks.map((block, idx) => {
           const isSlashOpen = slashMenuBlockId === block.id;
 
           return (
             <div
               key={block.id}
-              draggable
+              draggable={block.type !== 'code' && block.type !== 'mermaid'}
               onDragStart={(e) => {
-                // 텍스트 선택 중이 아닐 때 블록 순서 이동
                 setDraggedBlockIdx(idx);
                 e.dataTransfer.effectAllowed = 'move';
               }}
@@ -421,10 +697,17 @@ export default function NotionBlockEditor({
               <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-40 group-hover:opacity-100 transition select-none">
                 <button
                   type="button"
-                  title="아래에 블록 추가 또는 타입 변경"
-                  onClick={() =>
-                    setSlashMenuBlockId(isSlashOpen ? null : block.id)
-                  }
+                  title="블록 타입 변경 또는 코드·순서도 선택"
+                  onClick={() => {
+                    if (isSlashOpen) {
+                      setSlashMenuBlockId(null);
+                      setSlashFilterQuery('');
+                    } else {
+                      setSlashMenuBlockId(block.id);
+                      setSlashFilterQuery('');
+                      setSlashSelectedIdx(0);
+                    }
+                  }}
                   className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200 hover:text-gray-900 text-sm font-bold cursor-pointer"
                 >
                   +
@@ -446,11 +729,7 @@ export default function NotionBlockEditor({
                     inputRef={(el) => {
                       blockRefs.current[block.id] = el;
                     }}
-                    onChange={(val) => {
-                      if (val === '/') setSlashMenuBlockId(block.id);
-                      else if (isSlashOpen) setSlashMenuBlockId(null);
-                      updateBlock(block.id, { content: val });
-                    }}
+                    onChange={(val) => handleTextChangeWithSlash(block, val)}
                     onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                     onPaste={(e) => handleBlockPaste(e, idx)}
                     placeholder="단원 대제목 (제목 1)..."
@@ -467,11 +746,7 @@ export default function NotionBlockEditor({
                       inputRef={(el) => {
                         blockRefs.current[block.id] = el;
                       }}
-                      onChange={(val) => {
-                        if (val === '/') setSlashMenuBlockId(block.id);
-                        else if (isSlashOpen) setSlashMenuBlockId(null);
-                        updateBlock(block.id, { content: val });
-                      }}
+                      onChange={(val) => handleTextChangeWithSlash(block, val)}
                       onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                       onPaste={(e) => handleBlockPaste(e, idx)}
                       placeholder="소단원 중제목 (제목 2)..."
@@ -487,11 +762,7 @@ export default function NotionBlockEditor({
                     inputRef={(el) => {
                       blockRefs.current[block.id] = el;
                     }}
-                    onChange={(val) => {
-                      if (val === '/') setSlashMenuBlockId(block.id);
-                      else if (isSlashOpen) setSlashMenuBlockId(null);
-                      updateBlock(block.id, { content: val });
-                    }}
+                    onChange={(val) => handleTextChangeWithSlash(block, val)}
                     onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                     onPaste={(e) => handleBlockPaste(e, idx)}
                     placeholder="소제목 (제목 3)..."
@@ -506,14 +777,10 @@ export default function NotionBlockEditor({
                     inputRef={(el) => {
                       blockRefs.current[block.id] = el;
                     }}
-                    onChange={(val) => {
-                      if (val === '/') setSlashMenuBlockId(block.id);
-                      else if (isSlashOpen) setSlashMenuBlockId(null);
-                      updateBlock(block.id, { content: val });
-                    }}
+                    onChange={(val) => handleTextChangeWithSlash(block, val)}
                     onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                     onPaste={(e) => handleBlockPaste(e, idx)}
-                    placeholder="내용을 입력하거나 '/'를 눌러 블록(제목, 콜아웃, 사진 등)을 선택하세요..."
+                    placeholder="내용을 입력하거나 '/'를 눌러 블록(코드블록, 순서도, 콜아웃, 사진 등)을 선택하세요..."
                     className="text-sm text-gray-800 leading-relaxed placeholder:text-gray-300 py-0.5"
                   />
                 )}
@@ -529,11 +796,7 @@ export default function NotionBlockEditor({
                       inputRef={(el) => {
                         blockRefs.current[block.id] = el;
                       }}
-                      onChange={(val) => {
-                        if (val === '/') setSlashMenuBlockId(block.id);
-                        else if (isSlashOpen) setSlashMenuBlockId(null);
-                        updateBlock(block.id, { content: val });
-                      }}
+                      onChange={(val) => handleTextChangeWithSlash(block, val)}
                       onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                       onPaste={(e) => handleBlockPaste(e, idx)}
                       placeholder="목록 항목 입력..."
@@ -596,14 +859,151 @@ export default function NotionBlockEditor({
                   </div>
                 )}
 
-                {/* 8. 구분선 블록 (Divider) */}
+                {/* 8. 코드 블록 (Python 등 스마트 자동 들여쓰기 지원) */}
+                {block.type === 'code' && (
+                  <div className="my-2 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/80 px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-xs font-extrabold text-emerald-400">
+                          <span>&lt;/&gt;</span>
+                          <span>코드 블록</span>
+                        </span>
+                        <select
+                          value={block.language || 'python'}
+                          onChange={(e) =>
+                            updateBlock(block.id, {
+                              language: e.target.value as CodeLanguage,
+                            })
+                          }
+                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-bold text-slate-100 focus:border-emerald-400 focus:outline-none cursor-pointer"
+                        >
+                          {CODE_LANGUAGES.map((lang) => (
+                            <option key={lang.value} value={lang.value}>
+                              {lang.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                        <span>
+                          <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
+                            Enter
+                          </kbd>{' '}
+                          자동 들여쓰기 ·{' '}
+                          <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
+                            Tab
+                          </kbd>{' '}
+                          4칸 공백 ·{' '}
+                          <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
+                            Shift+Enter
+                          </kbd>{' '}
+                          다음 블록
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-4">
+                      <AutoResizeTextarea
+                        value={block.content}
+                        spellCheck={false}
+                        inputRef={(el) => {
+                          blockRefs.current[block.id] = el;
+                        }}
+                        onChange={(val) =>
+                          updateBlock(block.id, { content: val })
+                        }
+                        onKeyDown={(e) =>
+                          handleCodeOrMermaidKeyDown(e, block, idx)
+                        }
+                        placeholder={
+                          (block.language || 'python') === 'python'
+                            ? 'def solve(x):\n    if x > 0:\n        return x * 2\n# 콜론(:) 뒤에서 Enter를 누르면 자동으로 4칸 들여쓰기됩니다.'
+                            : '// 코드를 입력하세요 (Enter 시 자동 들여쓰기 지원)'
+                        }
+                        className="font-mono text-xs sm:text-sm text-emerald-300 leading-relaxed placeholder:text-slate-600"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 9. Mermaid 순서도 / 다이어그램 블록 (실시간 프리뷰 + 원클릭 템플릿) */}
+                {block.type === 'mermaid' && (
+                  <div className="my-2 overflow-hidden rounded-2xl border-2 border-indigo-200 bg-indigo-50/20 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-extrabold text-white">
+                          ❖ MERMAID 순서도 / 다이어그램
+                        </span>
+                        <span className="text-xs font-semibold text-indigo-950">
+                          코드를 수정하면 오른쪽(아래) 순서도가 실시간으로 바뀝니다
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-indigo-700 mr-1">
+                          예시 템플릿:
+                        </span>
+                        {MERMAID_TEMPLATES.map((tpl, tIdx) => (
+                          <button
+                            key={tIdx}
+                            type="button"
+                            onClick={() =>
+                              updateBlock(block.id, { content: tpl.code })
+                            }
+                            className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                          >
+                            {tpl.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+                      {/* 좌측: Mermaid 코드 에디터 */}
+                      <div className="rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-slate-100">
+                        <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
+                          <span className="font-bold text-indigo-300">
+                            ✏️ Mermaid 다이어그램 문법 (Enter 시 자동 들여쓰기)
+                          </span>
+                          <span>Shift+Enter로 다음 블록 이동</span>
+                        </div>
+                        <AutoResizeTextarea
+                          value={block.content}
+                          spellCheck={false}
+                          inputRef={(el) => {
+                            blockRefs.current[block.id] = el;
+                          }}
+                          onChange={(val) =>
+                            updateBlock(block.id, { content: val })
+                          }
+                          onKeyDown={(e) =>
+                            handleCodeOrMermaidKeyDown(e, block, idx)
+                          }
+                          placeholder={`flowchart TD\n    A["시작"] --> B["핵심 과정"]\n    B --> C["결과"]`}
+                          className="font-mono text-xs text-amber-200 leading-relaxed placeholder:text-slate-600"
+                        />
+                      </div>
+
+                      {/* 우측: 실시간 순서도 렌더링 프리뷰 */}
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-bold text-indigo-900 px-1">
+                          👁️ 실시간 순서도 미리보기 (학생 화면 표시 모습)
+                        </div>
+                        <MermaidDiagram chart={block.content} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 10. 구분선 블록 (Divider) */}
                 {block.type === 'divider' && (
                   <div className="py-3">
                     <hr className="border-gray-200" />
                   </div>
                 )}
 
-                {/* 9. 노션 스타일 이미지 블록 (드래그 앤 드롭 & 캡션 & 크기 조절) */}
+                {/* 11. 노션 스타일 이미지 블록 (드래그 앤 드롭 & 캡션 & 크기 조절) */}
                 {block.type === 'image' && (
                   <div className="my-2">
                     {block.imageUrl ? (
@@ -713,58 +1113,65 @@ export default function NotionBlockEditor({
                   </div>
                 )}
 
-                {/* 노션 슬래시(/) 또는 [+] 블록 선택 팝업 메뉴 */}
+                {/* 노션 슬래시(/) 또는 [+] 블록 선택 팝업 메뉴 (키보드 화살표 & 엔터 선택 지원) */}
                 {isSlashOpen && (
-                  <div className="mt-2 w-72 rounded-2xl border border-gray-200 bg-white p-2 shadow-xl z-30">
+                  <div className="mt-2 w-80 rounded-2xl border border-gray-200 bg-white p-2 shadow-xl z-30">
                     <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-bold text-gray-400 border-b border-gray-100 mb-1">
-                      <span>노션 블록 타입 선택 / 변환</span>
+                      <span>
+                        노션 블록 선택{' '}
+                        {slashFilterQuery && (
+                          <span className="text-blue-600">
+                            (&quot;/{slashFilterQuery}&quot; 검색 중)
+                          </span>
+                        )}
+                      </span>
                       <button
                         type="button"
-                        onClick={() => setSlashMenuBlockId(null)}
+                        onClick={() => {
+                          setSlashMenuBlockId(null);
+                          setSlashFilterQuery('');
+                        }}
                         className="text-gray-400 hover:text-gray-600"
                       >
                         ✕
                       </button>
                     </div>
-                    <div className="max-h-64 overflow-y-auto space-y-0.5">
-                      {BLOCK_TYPE_META.map((item) => (
-                        <button
-                          key={item.type}
-                          type="button"
-                          onClick={() => {
-                            const cleanedContent =
-                              block.content === '/' ? '' : block.content;
-                            updateBlock(block.id, {
-                              type: item.type,
-                              content: cleanedContent,
-                              icon:
-                                item.type === 'callout'
-                                  ? block.icon || '💡'
-                                  : undefined,
-                            });
-                            setSlashMenuBlockId(null);
-                            if (
-                              item.type !== 'image' &&
-                              item.type !== 'divider'
-                            ) {
-                              focusBlock(block.id);
-                            }
-                          }}
-                          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-blue-50 transition"
-                        >
-                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-xs font-extrabold text-blue-700 shadow-2xs">
-                            {item.badge}
-                          </span>
-                          <div>
-                            <div className="text-xs font-bold text-gray-900">
-                              {item.label}
-                            </div>
-                            <div className="text-[10px] text-gray-500">
-                              {item.desc}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
+                    <div className="max-h-72 overflow-y-auto space-y-0.5">
+                      {filteredSlashItems.length > 0 ? (
+                        filteredSlashItems.map((item, itemIdx) => {
+                          const isHighlighted = itemIdx === slashSelectedIdx;
+                          return (
+                            <button
+                              key={item.type}
+                              type="button"
+                              onClick={() =>
+                                applyBlockTypeSelection(block, item.type)
+                              }
+                              className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition ${
+                                isHighlighted
+                                  ? 'bg-blue-50 ring-1 ring-blue-200'
+                                  : 'hover:bg-blue-50/60'
+                              }`}
+                            >
+                              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-xs font-extrabold text-blue-700 shadow-2xs">
+                                {item.badge}
+                              </span>
+                              <div>
+                                <div className="text-xs font-bold text-gray-900">
+                                  {item.label}
+                                </div>
+                                <div className="text-[10px] text-gray-500">
+                                  {item.desc}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="py-4 text-center text-xs text-gray-400">
+                          일치하는 블록이 없습니다.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -774,15 +1181,10 @@ export default function NotionBlockEditor({
               <div className="flex shrink-0 items-center gap-1 pt-1 opacity-0 group-hover:opacity-100 transition">
                 <select
                   value={block.type}
-                  onChange={(e) =>
-                    updateBlock(block.id, {
-                      type: e.target.value as NotionBlockType,
-                      icon:
-                        e.target.value === 'callout'
-                          ? block.icon || '💡'
-                          : undefined,
-                    })
-                  }
+                  onChange={(e) => {
+                    const nextType = e.target.value as NotionBlockType;
+                    applyBlockTypeSelection(block, nextType);
+                  }}
                   className="rounded-lg border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-600 focus:outline-none cursor-pointer"
                 >
                   <option value="p">본문</option>
@@ -792,6 +1194,8 @@ export default function NotionBlockEditor({
                   <option value="bullet">목록</option>
                   <option value="callout">콜아웃</option>
                   <option value="quote">인용/지문</option>
+                  <option value="code">코드블록</option>
+                  <option value="mermaid">순서도(Mermaid)</option>
                   <option value="image">사진</option>
                   <option value="divider">구분선</option>
                 </select>
@@ -842,9 +1246,11 @@ export default function NotionBlockEditor({
             });
           }
         }}
-        className="mt-4 flex items-center justify-between rounded-xl border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-400 hover:border-blue-300 hover:bg-blue-50/20 hover:text-blue-600 cursor-text transition"
+        className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-400 hover:border-blue-300 hover:bg-blue-50/20 hover:text-blue-600 cursor-text transition"
       >
-        <span>+ 여기를 클릭하여 새 단락을 이어서 작성하거나 사진을 드래그하여 놓으세요...</span>
+        <span>
+          + 여기를 클릭해 새 단락을 작성하거나, <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/code</kbd> (파이썬 코드), <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/mermaid</kbd> (순서도)를 입력해 보세요
+        </span>
         <button
           type="button"
           onClick={(e) => {
@@ -865,9 +1271,31 @@ export default function NotionBlockEditor({
     block: NotionBlock,
     idx: number
   ) {
-    if (e.key === 'Escape' && slashMenuBlockId) {
-      setSlashMenuBlockId(null);
-      return;
+    // 슬래시 메뉴가 열려 있을 때 방향키/엔터로 바로 블록 선택
+    if (slashMenuBlockId === block.id) {
+      const items = getFilteredSlashItems();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashMenuBlockId(null);
+        setSlashFilterQuery('');
+        return;
+      }
+      if (e.key === 'ArrowDown' && items.length > 0) {
+        e.preventDefault();
+        setSlashSelectedIdx((prev) => (prev + 1) % items.length);
+        return;
+      }
+      if (e.key === 'ArrowUp' && items.length > 0) {
+        e.preventDefault();
+        setSlashSelectedIdx((prev) => (prev - 1 + items.length) % items.length);
+        return;
+      }
+      if (e.key === 'Enter' && !e.nativeEvent.isComposing && items.length > 0) {
+        e.preventDefault();
+        const chosen = items[slashSelectedIdx] || items[0];
+        applyBlockTypeSelection(block, chosen.type);
+        return;
+      }
     }
 
     // Shift+Enter는 줄바꿈 허용, 그냥 Enter는 다음 블록 생성 (노션 방식)
