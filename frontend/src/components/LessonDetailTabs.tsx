@@ -38,7 +38,7 @@ export default function LessonDetailTabs({
           }`}
         >
           <span>📊</span>
-          <span>수업 회고 & 교안 개선 리포트 (수업 후)</span>
+          <span>교안 취약점 패치 & 형성평가 스튜디오 (AI 수업 개선)</span>
         </button>
       </div>
 
@@ -47,3 +47,4 @@ export default function LessonDetailTabs({
     </div>
   );
 }
+

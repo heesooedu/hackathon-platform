@@ -8,6 +8,10 @@ import QuestionBoard from '@/components/QuestionBoard';
 import RepresentativeQuestionSection from '@/components/RepresentativeQuestionSection';
 import TeacherReviewDashboard from '@/components/TeacherReviewDashboard';
 import LessonDetailTabs from '@/components/LessonDetailTabs';
+import LessonMaterialViewer from '@/components/LessonMaterialViewer';
+import StudentFormativeQuizSection from '@/components/StudentFormativeQuizSection';
+import { parseLessonMaterial } from '@/utils/materialPayload';
+import { separateGroupsAndQuizzes } from '@/utils/quizHelper';
 import { Lesson, Submission, QuestionGroup } from '@/types/database.types';
 
 interface LessonDetailPageProps {
@@ -18,7 +22,9 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   const { id: classId, lessonId } = await params;
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     redirect('/login');
   }
@@ -46,8 +52,11 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   }
 
   const lesson = lessonData as Lesson;
+  const parsedMaterial = parseLessonMaterial(lesson);
   const isTeacher = classData.teacher_id === user.id;
-  const isDeadlinePassed = lesson.deadline ? new Date(lesson.deadline) < new Date() : false;
+  const isDeadlinePassed = lesson.deadline
+    ? new Date(lesson.deadline) < new Date()
+    : false;
   const isClosed = lesson.status === 'closed' || isDeadlinePassed;
 
   // 3. 해당 레슨의 전체 제출물 조회
@@ -59,10 +68,11 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
 
   const allSubmissions = (allSubmissionsData || []) as unknown as Submission[];
 
-  // 4. 대표 질문 그룹 목록 조회
+  // 4. 대표 질문 그룹 및 배포된 형성평가 목록 조회
   const { data: groupsData } = await supabase
     .from('question_groups')
-    .select(`
+    .select(
+      `
       *,
       members:question_group_members(
         id,
@@ -72,11 +82,13 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         *,
         author:profiles(*)
       )
-    `)
+    `
+    )
     .eq('lesson_id', lessonId)
     .order('created_at', { ascending: false });
 
-  const questionGroups = (groupsData || []) as unknown as QuestionGroup[];
+  const rawGroups = (groupsData || []) as unknown as QuestionGroup[];
+  const { normalGroups, publishedQuizzes } = separateGroupsAndQuizzes(rawGroups);
 
   // 5. 교사용 / 학생용 특화 데이터
   let totalClassStudents = 0;
@@ -155,37 +167,21 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         </p>
       </div>
 
-      {/* 3. 인터랙티브 웹 교안 샌드박스 (등록되어 있을 때) */}
-      {lesson.material_html && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <span>✨</span>
-              <span>인터랙티브 웹 교안</span>
-            </h2>
-            <span className="text-xs text-purple-600 font-semibold bg-purple-50 px-2.5 py-1 rounded-lg">
-              바이브 코딩 샌드박스
-            </span>
-          </div>
+      {/* 3. 범용 교안(마크다운 / 워드·한글 추출본 / 인터랙티브 HTML) 및 질문 기반 보충 패치 뷰어 */}
+      <LessonMaterialViewer
+        lessonId={lesson.id}
+        classId={classId}
+        isTeacher={isTeacher}
+        material={parsedMaterial}
+      />
 
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-            <iframe
-              srcDoc={lesson.material_html}
-              sandbox="allow-scripts"
-              className="h-[520px] w-full border-0"
-              title="Interactive Lesson Material"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* 4. 본문 영역: 교사는 탭 전환 지원, 학생은 제출 폼 + 질문 보드 */}
+      {/* 4. 본문 영역: 교사는 탭 전환 지원, 학생은 형성평가 + 제출 폼 + 질문 보드 */}
       {isTeacher ? (
         <LessonDetailTabs
           childrenQuestions={
             <div className="space-y-10">
               <RepresentativeQuestionSection
-                groups={questionGroups}
+                groups={normalGroups}
                 classId={classId}
                 lessonId={lessonId}
                 isTeacher={isTeacher}
@@ -212,18 +208,30 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
           childrenReview={
             <TeacherReviewDashboard
               lessonId={lessonId}
+              classId={classId}
               lessonTitle={lesson.title}
               learningObjective={lesson.learning_objective}
               totalStudents={totalClassStudents}
               submissions={allSubmissions}
-              groups={questionGroups}
+              groups={normalGroups}
+              initialAnalysis={parsedMaterial.aiAnalysis}
+              appliedPatches={parsedMaterial.appliedPatches}
+              publishedQuizzes={publishedQuizzes}
             />
           }
         />
       ) : (
         <div className="space-y-10">
+          {/* 교사가 배포한 오개념 타겟팅 형성평가가 있으면 최상단에 표시 */}
+          <StudentFormativeQuizSection
+            lessonId={lessonId}
+            classId={classId}
+            currentUserId={user.id}
+            quizzes={publishedQuizzes}
+          />
+
           <RepresentativeQuestionSection
-            groups={questionGroups}
+            groups={normalGroups}
             classId={classId}
             lessonId={lessonId}
             isTeacher={isTeacher}
