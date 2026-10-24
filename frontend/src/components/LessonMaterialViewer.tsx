@@ -61,7 +61,7 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
   const blocks = markdownToBlocks(content);
 
   return (
-    <div className="space-y-3 text-sm text-gray-800 leading-relaxed">
+    <div className="space-y-3.5 text-sm text-gray-800">
       {blocks.map((block) => {
         if (block.type === 'divider') {
           return <hr key={block.id} className="my-5 border-gray-200" />;
@@ -71,7 +71,7 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
           return (
             <h3
               key={block.id}
-              className="text-xl font-extrabold text-gray-900 pt-3 pb-1.5 border-b border-gray-100 tracking-tight"
+              className="text-xl font-extrabold text-gray-900 pt-3 pb-1.5 border-b border-gray-100 tracking-tight leading-snug whitespace-pre-wrap"
             >
               {renderInlineMarkdown(block.content)}
             </h3>
@@ -82,9 +82,9 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
           return (
             <h4
               key={block.id}
-              className="text-base font-bold text-indigo-950 pt-2 flex items-center gap-2"
+              className="text-base font-bold text-indigo-950 pt-2 flex items-start gap-2 leading-snug whitespace-pre-wrap"
             >
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0" />
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0 mt-1.5" />
               <span>{renderInlineMarkdown(block.content)}</span>
             </h4>
           );
@@ -92,7 +92,10 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
 
         if (block.type === 'h3') {
           return (
-            <h5 key={block.id} className="text-sm font-bold text-gray-900 pt-1">
+            <h5
+              key={block.id}
+              className="text-sm font-bold text-gray-900 pt-1 leading-snug whitespace-pre-wrap"
+            >
               {renderInlineMarkdown(block.content)}
             </h5>
           );
@@ -102,7 +105,9 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
           return (
             <div key={block.id} className="flex items-start gap-2.5 pl-2">
               <span className="text-blue-600 font-bold select-none mt-0.5">•</span>
-              <div className="flex-1 leading-relaxed">{renderInlineMarkdown(block.content)}</div>
+              <div className="flex-1 leading-snug whitespace-pre-wrap">
+                {renderInlineMarkdown(block.content)}
+              </div>
             </div>
           );
         }
@@ -116,7 +121,7 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
               <span className="text-xl select-none shrink-0 mt-0.5">
                 {block.icon || '💡'}
               </span>
-              <div className="flex-1 text-sm font-medium text-gray-900 leading-relaxed whitespace-pre-wrap">
+              <div className="flex-1 text-sm font-medium text-gray-900 leading-snug whitespace-pre-wrap">
                 {renderInlineMarkdown(block.content)}
               </div>
             </div>
@@ -127,7 +132,7 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
           return (
             <blockquote
               key={block.id}
-              className="border-l-4 border-indigo-400 bg-slate-50/80 pl-4 pr-4 py-2.5 my-2 rounded-r-xl text-sm text-gray-700 italic leading-relaxed whitespace-pre-wrap"
+              className="border-l-4 border-indigo-400 bg-slate-50/80 pl-4 pr-4 py-2.5 my-2 rounded-r-xl text-sm text-gray-700 italic leading-snug whitespace-pre-wrap"
             >
               {renderInlineMarkdown(block.content)}
             </blockquote>
@@ -227,11 +232,19 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
         }
 
         if (!block.content.trim()) {
-          return <div key={block.id} className="h-1" />;
+          return (
+            <div
+              key={block.id}
+              className="h-6 select-none"
+              aria-hidden="true"
+            >
+              &nbsp;
+            </div>
+          );
         }
 
         return (
-          <p key={block.id} className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+          <p key={block.id} className="text-gray-700 leading-snug whitespace-pre-wrap">
             {renderInlineMarkdown(block.content)}
           </p>
         );

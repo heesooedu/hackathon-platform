@@ -41,6 +41,42 @@ export function createBlockId(): string {
   return `blk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function encodeInlineNewlines(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
+}
+
+function decodeInlineNewlines(text: string): string {
+  return text.replace(/<br\s*\/?>/gi, '\n').replace(/\u200B/g, '');
+}
+
+function isEmptyBlockToken(trimmedLine: string): boolean {
+  return (
+    trimmedLine === '<br>' ||
+    trimmedLine === '<br/>' ||
+    trimmedLine === '<br />' ||
+    trimmedLine === '&nbsp;'
+  );
+}
+
+function isSpecialBlockLine(trimmedLine: string): boolean {
+  if (!trimmedLine) return true;
+  if (isEmptyBlockToken(trimmedLine)) return true;
+  if (trimmedLine.startsWith('```')) return true;
+  if (trimmedLine === '---' || trimmedLine === '***') return true;
+  if (/^!\[([^\]]*)\]\(([^)]+)\)$/.test(trimmedLine)) return true;
+  if (
+    trimmedLine.startsWith('# ') ||
+    trimmedLine.startsWith('## ') ||
+    trimmedLine.startsWith('### ')
+  ) {
+    return true;
+  }
+  if (/^>\s*\[!CALLOUT:([^\]]+)\]\s*(.*)$/.test(trimmedLine)) return true;
+  if (trimmedLine.startsWith('> ')) return true;
+  if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) return true;
+  return false;
+}
+
 /**
  * 마크다운 문자열을 노션 스타일 블록 배열(NotionBlock[])로 변환합니다.
  * 워드(.docx)나 한글(.hwp/.hwpx)에서 추출된 마크다운, 코드블록(```python ... ```),
@@ -62,7 +98,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
     ];
   }
 
-  const lines = markdown.split('\n');
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const blocks: NotionBlock[] = [];
 
   let i = 0;
@@ -75,7 +111,18 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       continue;
     }
 
-    // 0. 멀티라인 펜스 코드블록 (```python ... ```, ```mermaid ... ```, ```simulation:제목 ... ```)
+    // 0-a. 명시적 빈 블록 (<br>, &nbsp;)
+    if (isEmptyBlockToken(line)) {
+      blocks.push({
+        id: createBlockId(),
+        type: 'p',
+        content: '',
+      });
+      i++;
+      continue;
+    }
+
+    // 0-b. 멀티라인 펜스 코드블록 (```python ... ```, ```mermaid ... ```, ```simulation:제목 ... ```)
     if (line.startsWith('```')) {
       const fenceHeader = line.slice(3).trim();
       const langRaw = fenceHeader.toLowerCase();
@@ -193,7 +240,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       blocks.push({
         id: createBlockId(),
         type: 'h1',
-        content: line.slice(2).trim(),
+        content: decodeInlineNewlines(line.slice(2).trim()),
       });
       i++;
       continue;
@@ -203,7 +250,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       blocks.push({
         id: createBlockId(),
         type: 'h2',
-        content: line.slice(3).trim(),
+        content: decodeInlineNewlines(line.slice(3).trim()),
       });
       i++;
       continue;
@@ -213,7 +260,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       blocks.push({
         id: createBlockId(),
         type: 'h3',
-        content: line.slice(4).trim(),
+        content: decodeInlineNewlines(line.slice(4).trim()),
       });
       i++;
       continue;
@@ -226,7 +273,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         id: createBlockId(),
         type: 'callout',
         icon: calloutMatch[1] || '💡',
-        content: calloutMatch[2] || '',
+        content: decodeInlineNewlines(calloutMatch[2] || ''),
       });
       i++;
       continue;
@@ -237,7 +284,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       blocks.push({
         id: createBlockId(),
         type: 'quote',
-        content: line.slice(2).trim(),
+        content: decodeInlineNewlines(line.slice(2).trim()),
       });
       i++;
       continue;
@@ -248,19 +295,30 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       blocks.push({
         id: createBlockId(),
         type: 'bullet',
-        content: line.slice(2).trim(),
+        content: decodeInlineNewlines(line.slice(2).trim()),
       });
       i++;
       continue;
     }
 
-    // 7. 일반 본문 단락
+    // 7. 일반 본문 단락: 연속된 줄(Shift+Enter로 이어진 줄)을 하나의 블록으로 묶음
+    const paragraphLines: string[] = [decodeInlineNewlines(rawLine)];
+    i++;
+    while (i < lines.length) {
+      const nextRaw = lines[i];
+      const nextTrimmed = nextRaw.trim();
+      if (!nextTrimmed || isSpecialBlockLine(nextTrimmed)) {
+        break;
+      }
+      paragraphLines.push(decodeInlineNewlines(nextRaw));
+      i++;
+    }
+
     blocks.push({
       id: createBlockId(),
       type: 'p',
-      content: rawLine,
+      content: paragraphLines.join('\n'),
     });
-    i++;
   }
 
   if (blocks.length === 0) {
@@ -276,33 +334,68 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
 
 /**
  * 노션 블록 배열(NotionBlock[])을 마크다운 문자열로 직렬화합니다.
+ * - 빈 블록(공백 블록)은 `<br>`로 보존하여 저장 후에도 그대로 유지됩니다.
+ * - 블록 내부의 Shift+Enter 줄바꿈은 단일 개행(`\n` 또는 인라인 `<br>`)으로 보존되어
+ *   Enter로 만든 새 블록(`\n\n`)과 명확히 구분됩니다.
  */
 export function blocksToMarkdown(blocks: NotionBlock[]): string {
+  const hasAnyContent = blocks.some(
+    (b) =>
+      b.type === 'divider' ||
+      (b.type === 'image' && Boolean(b.imageUrl)) ||
+      b.content.trim().length > 0
+  );
+  if (!hasAnyContent) {
+    return '';
+  }
+
   const lines: string[] = [];
 
   for (const b of blocks) {
     switch (b.type) {
       case 'h1':
-        if (b.content.trim()) lines.push(`# ${b.content.trim()}`);
+        if (b.content.trim()) {
+          lines.push(`# ${encodeInlineNewlines(b.content.trim())}`);
+        } else {
+          lines.push('<br>');
+        }
         break;
       case 'h2':
-        if (b.content.trim()) lines.push(`## ${b.content.trim()}`);
+        if (b.content.trim()) {
+          lines.push(`## ${encodeInlineNewlines(b.content.trim())}`);
+        } else {
+          lines.push('<br>');
+        }
         break;
       case 'h3':
-        if (b.content.trim()) lines.push(`### ${b.content.trim()}`);
+        if (b.content.trim()) {
+          lines.push(`### ${encodeInlineNewlines(b.content.trim())}`);
+        } else {
+          lines.push('<br>');
+        }
         break;
       case 'bullet':
-        if (b.content.trim()) lines.push(`- ${b.content.trim()}`);
+        if (b.content.trim()) {
+          lines.push(`- ${encodeInlineNewlines(b.content.trim())}`);
+        } else {
+          lines.push('<br>');
+        }
         break;
       case 'callout':
         if (b.content.trim()) {
           const icon = b.icon || '💡';
-          lines.push(`> [!CALLOUT:${icon}] ${b.content.trim().replace(/\n/g, ' ')}`);
+          lines.push(
+            `> [!CALLOUT:${icon}] ${encodeInlineNewlines(b.content.trim())}`
+          );
+        } else {
+          lines.push('<br>');
         }
         break;
       case 'quote':
         if (b.content.trim()) {
-          lines.push(`> ${b.content.trim().replace(/\n/g, ' ')}`);
+          lines.push(`> ${encodeInlineNewlines(b.content.trim())}`);
+        } else {
+          lines.push('<br>');
         }
         break;
       case 'code':
@@ -336,7 +429,18 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       case 'p':
       default:
         if (b.content.trim()) {
-          lines.push(b.content);
+          const pLines = b.content
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .map((l) => {
+              const trimmed = l.trim();
+              if (!trimmed) return '\u200B';
+              if (isSpecialBlockLine(trimmed)) return `\u200B${l}`;
+              return l;
+            });
+          lines.push(pLines.join('\n'));
+        } else {
+          lines.push('<br>');
         }
         break;
     }

@@ -847,7 +847,7 @@ export default function NotionBlockEditor({
                     onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                     onPaste={(e) => handleBlockPaste(e, idx)}
                     placeholder="내용을 입력하거나 '/'를 눌러 블록(코드블록, 순서도, 콜아웃, 사진 등)을 선택하세요..."
-                    className="text-sm text-gray-800 leading-relaxed placeholder:text-gray-300 py-0.5"
+                    className="text-sm text-gray-800 leading-snug placeholder:text-gray-300 py-0.5"
                   />
                 )}
 
@@ -866,7 +866,7 @@ export default function NotionBlockEditor({
                       onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                       onPaste={(e) => handleBlockPaste(e, idx)}
                       placeholder="목록 항목 입력..."
-                      className="text-sm text-gray-800 leading-relaxed placeholder:text-gray-300"
+                      className="text-sm text-gray-800 leading-snug placeholder:text-gray-300"
                     />
                   </div>
                 )}
@@ -901,7 +901,7 @@ export default function NotionBlockEditor({
                       onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                       onPaste={(e) => handleBlockPaste(e, idx)}
                       placeholder="핵심 개념, 주의사항, 탐구 질문을 강조 박스에 작성하세요 (아이콘 클릭 시 변경)..."
-                      className="text-sm font-medium text-gray-900 leading-relaxed placeholder:text-amber-700/40"
+                      className="text-sm font-medium text-gray-900 leading-snug placeholder:text-amber-700/40"
                     />
                   </div>
                 )}
@@ -920,7 +920,7 @@ export default function NotionBlockEditor({
                       onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                       onPaste={(e) => handleBlockPaste(e, idx)}
                       placeholder="교과서 지문, 역사 사료, 명언 또는 핵심 정의를 입력하세요..."
-                      className="text-sm italic text-gray-700 leading-relaxed placeholder:text-gray-400"
+                      className="text-sm italic text-gray-700 leading-snug placeholder:text-gray-400"
                     />
                   </div>
                 )}
