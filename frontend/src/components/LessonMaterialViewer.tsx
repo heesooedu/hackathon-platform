@@ -3,6 +3,12 @@
 import { useState, useRef } from 'react';
 import { ParsedLessonMaterial } from '@/utils/materialPayload';
 import {
+  markdownToBlocks,
+  blocksToMarkdown,
+  NotionBlock,
+} from '@/utils/notionBlocks';
+import NotionBlockEditor from '@/components/NotionBlockEditor';
+import {
   updateLessonMaterialMarkdownAction,
   removeMaterialPatchAction,
   parseMaterialFileAction,
@@ -23,7 +29,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
   return parts.map((part, idx) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return (
-        <strong key={idx} className="font-bold text-gray-900 bg-yellow-50/80 px-0.5 rounded">
+        <strong key={idx} className="font-bold text-gray-900 bg-yellow-100/70 px-1 rounded">
           {part.slice(2, -2)}
         </strong>
       );
@@ -43,66 +49,123 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
 }
 
 /**
- * 교안 마크다운 블록 렌더러
+ * 노션 스타일 교안 블록 렌더러
+ * (제목 H1~H3, 콜아웃 박스, 인용구/제시문, 드래그 앤 드롭 이미지 및 캡션, 글머리 기호, 구분선 지원)
  */
 export function SimpleMarkdownRenderer({ content }: { content: string }) {
-  const lines = content.split('\n');
+  const blocks = markdownToBlocks(content);
 
   return (
-    <div className="space-y-2.5 text-sm text-gray-800 leading-relaxed">
-      {lines.map((rawLine, idx) => {
-        const line = rawLine.trim();
-        if (!line) {
-          return <div key={idx} className="h-1" />;
+    <div className="space-y-3 text-sm text-gray-800 leading-relaxed">
+      {blocks.map((block) => {
+        if (block.type === 'divider') {
+          return <hr key={block.id} className="my-5 border-gray-200" />;
         }
 
-        if (line === '---' || line === '***') {
-          return <hr key={idx} className="my-4 border-gray-200" />;
-        }
-
-        if (line.startsWith('# ')) {
+        if (block.type === 'h1') {
           return (
             <h3
-              key={idx}
-              className="text-lg font-extrabold text-gray-900 pt-2 pb-1 border-b border-gray-100"
+              key={block.id}
+              className="text-xl font-extrabold text-gray-900 pt-3 pb-1.5 border-b border-gray-100 tracking-tight"
             >
-              {renderInlineMarkdown(line.slice(2))}
+              {renderInlineMarkdown(block.content)}
             </h3>
           );
         }
 
-        if (line.startsWith('## ')) {
+        if (block.type === 'h2') {
           return (
             <h4
-              key={idx}
-              className="text-base font-bold text-indigo-950 pt-1.5 flex items-center gap-1.5"
+              key={block.id}
+              className="text-base font-bold text-indigo-950 pt-2 flex items-center gap-2"
             >
-              <span className="inline-block h-2 w-2 rounded-full bg-indigo-500" />
-              <span>{renderInlineMarkdown(line.slice(3))}</span>
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0" />
+              <span>{renderInlineMarkdown(block.content)}</span>
             </h4>
           );
         }
 
-        if (line.startsWith('### ')) {
+        if (block.type === 'h3') {
           return (
-            <h5 key={idx} className="text-sm font-bold text-gray-900 pt-1">
-              {renderInlineMarkdown(line.slice(4))}
+            <h5 key={block.id} className="text-sm font-bold text-gray-900 pt-1">
+              {renderInlineMarkdown(block.content)}
             </h5>
           );
         }
 
-        if (line.startsWith('- ') || line.startsWith('* ')) {
+        if (block.type === 'bullet') {
           return (
-            <div key={idx} className="flex items-start gap-2 pl-2">
-              <span className="text-blue-600 font-bold select-none">•</span>
-              <div className="flex-1">{renderInlineMarkdown(line.slice(2))}</div>
+            <div key={block.id} className="flex items-start gap-2.5 pl-2">
+              <span className="text-blue-600 font-bold select-none mt-0.5">•</span>
+              <div className="flex-1 leading-relaxed">{renderInlineMarkdown(block.content)}</div>
             </div>
           );
         }
 
+        if (block.type === 'callout') {
+          return (
+            <div
+              key={block.id}
+              className="flex items-start gap-3 rounded-2xl bg-amber-50/80 border border-amber-200/80 p-4 my-2 shadow-2xs"
+            >
+              <span className="text-xl select-none shrink-0 mt-0.5">
+                {block.icon || '💡'}
+              </span>
+              <div className="flex-1 text-sm font-medium text-gray-900 leading-relaxed whitespace-pre-wrap">
+                {renderInlineMarkdown(block.content)}
+              </div>
+            </div>
+          );
+        }
+
+        if (block.type === 'quote') {
+          return (
+            <blockquote
+              key={block.id}
+              className="border-l-4 border-indigo-400 bg-slate-50/80 pl-4 pr-4 py-2.5 my-2 rounded-r-xl text-sm text-gray-700 italic leading-relaxed whitespace-pre-wrap"
+            >
+              {renderInlineMarkdown(block.content)}
+            </blockquote>
+          );
+        }
+
+        if (block.type === 'image') {
+          if (!block.imageUrl) return null;
+          const widthClass =
+            block.imageSize === 'sm'
+              ? 'max-w-xs'
+              : block.imageSize === 'md'
+              ? 'max-w-lg'
+              : 'max-w-full';
+
+          return (
+            <figure key={block.id} className="my-4 flex flex-col items-center">
+              <div
+                className={`overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-xs ${widthClass}`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={block.imageUrl}
+                  alt={block.caption || '수업 교안 이미지'}
+                  className="w-full h-auto object-contain max-h-[520px]"
+                />
+              </div>
+              {block.caption && (
+                <figcaption className="mt-2 text-xs text-gray-500 font-medium text-center">
+                  ▲ {block.caption}
+                </figcaption>
+              )}
+            </figure>
+          );
+        }
+
+        if (!block.content.trim()) {
+          return <div key={block.id} className="h-1" />;
+        }
+
         return (
-          <p key={idx} className="text-gray-700 leading-relaxed">
-            {renderInlineMarkdown(line)}
+          <p key={block.id} className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+            {renderInlineMarkdown(block.content)}
           </p>
         );
       })}
@@ -117,7 +180,9 @@ export default function LessonMaterialViewer({
   material,
 }: LessonMaterialViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [draftMarkdown, setDraftMarkdown] = useState(material.markdownContent);
+  const [draftBlocks, setDraftBlocks] = useState<NotionBlock[]>(() =>
+    markdownToBlocks(material.markdownContent)
+  );
   const [draftFileName, setDraftFileName] = useState<string | null>(material.fileName);
   const [saving, setSaving] = useState(false);
   const [fileUploading, setFileUploading] = useState(false);
@@ -143,7 +208,7 @@ export default function LessonMaterialViewer({
       fd.set('file', file);
       const res = await parseMaterialFileAction(fd);
       if (res.success && 'markdown' in res) {
-        setDraftMarkdown(res.markdown || '');
+        setDraftBlocks(markdownToBlocks(res.markdown || ''));
         setDraftFileName(res.fileName || file.name);
       } else {
         alert(res.error || '문서 텍스트 추출에 실패했습니다.');
@@ -157,10 +222,11 @@ export default function LessonMaterialViewer({
   async function handleSaveMarkdown() {
     setSaving(true);
     try {
+      const serializedMd = blocksToMarkdown(draftBlocks);
       const res = await updateLessonMaterialMarkdownAction(
         lessonId,
         classId,
-        draftMarkdown,
+        serializedMd,
         draftFileName
       );
       if (res.success) {
@@ -208,32 +274,41 @@ export default function LessonMaterialViewer({
           <button
             type="button"
             onClick={() => {
-              setDraftMarkdown(material.markdownContent);
+              setDraftBlocks(markdownToBlocks(material.markdownContent));
               setDraftFileName(material.fileName);
               setIsEditing(!isEditing);
             }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 shadow-2xs hover:bg-gray-50 transition"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 shadow-2xs hover:bg-gray-50 transition"
           >
-            <span>✏️</span>
-            <span>{isEditing ? '편집 닫기' : '교안 수정 / 문서 업로드(.docx·.hwp)'}</span>
+            <span>{isEditing ? '✕' : '📝'}</span>
+            <span>
+              {isEditing
+                ? '노션 에디터 닫기'
+                : '노션 스타일로 교안 편집 / 사진·문서 추가'}
+            </span>
           </button>
         )}
       </div>
 
-      {/* 교사용 인플레이스 교안 편집 & 파일 업로드 패널 */}
+      {/* 교사용 노션형 블록 에디터 패널 */}
       {isTeacher && isEditing && (
-        <div className="rounded-2xl border border-blue-200 bg-blue-50/40 p-5 space-y-3 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="rounded-3xl border-2 border-indigo-200 bg-white p-6 space-y-4 shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
             <div>
-              <h3 className="text-sm font-bold text-blue-950">
-                교안 본문 직접 편집 또는 워드/한글 파일 업로드
-              </h3>
-              <p className="text-xs text-blue-700/80">
-                워드(.docx), 한글(.hwp, .hwpx), 마크다운(.md) 파일을 올리면 텍스트가 자동 추출됩니다.
+              <div className="flex items-center gap-2">
+                <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-extrabold text-white">
+                  NOTION STUDIO
+                </span>
+                <h3 className="text-base font-extrabold text-gray-900">
+                  노션형 블록 에디터로 교안 꾸미기
+                </h3>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                마크다운 문법 없이 블록을 클릭해 제목·콜아웃·인용구를 추가하고, 사진을 마우스로 드래그 앤 드롭하여 삽입하세요.
               </p>
             </div>
 
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -244,47 +319,46 @@ export default function LessonMaterialViewer({
               />
               <label
                 htmlFor="reupload-material-file"
-                className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-white border border-blue-300 px-3 py-1.5 text-xs font-bold text-blue-700 shadow-2xs hover:bg-blue-50 transition"
+                className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition"
               >
-                <span>📂 {fileUploading ? '파일 추출 중...' : '파일 불러오기 (.docx / .hwp / .md)'}</span>
+                <span>
+                  📂 {fileUploading ? '문서 변환 중...' : '워드(.docx)/한글(.hwp) 불러오기'}
+                </span>
               </label>
+
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="rounded-xl px-3.5 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleSaveMarkdown}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {saving ? '저장 중...' : '💾 교안 변경사항 저장'}
+              </button>
             </div>
           </div>
 
-          <textarea
-            rows={10}
-            value={draftMarkdown}
-            onChange={(e) => setDraftMarkdown(e.target.value)}
-            placeholder="# 수업 교안 본문을 입력하거나 워드/한글 파일을 업로드하세요."
-            className="w-full rounded-xl border border-gray-200 bg-white p-4 font-mono text-xs text-gray-800 leading-relaxed focus:border-blue-500 focus:outline-none"
+          <NotionBlockEditor
+            blocks={draftBlocks}
+            onChange={(newBlocks) => setDraftBlocks(newBlocks)}
           />
-
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setIsEditing(false)}
-              className="rounded-xl px-3.5 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-100"
-            >
-              취소
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={handleSaveMarkdown}
-              className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving ? '저장 중...' : '교안 변경사항 저장'}
-            </button>
-          </div>
         </div>
       )}
 
-      {/* 1. 마크다운/문서 교안 뷰어 */}
-      {material.markdownContent.trim() ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
+      {/* 1. 노션 페이지 스타일 교안 뷰어 */}
+      {!isEditing && material.markdownContent.trim() ? (
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 sm:p-8 shadow-xs">
           <SimpleMarkdownRenderer content={material.markdownContent} />
         </div>
-      ) : material.materialType === 'html' && material.htmlContent.trim() ? (
+      ) : !isEditing &&
+        material.materialType === 'html' &&
+        material.htmlContent.trim() ? (
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
           <iframe
             srcDoc={material.htmlContent}
@@ -299,7 +373,10 @@ export default function LessonMaterialViewer({
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50/60 p-6 text-center">
             <p className="text-xs text-gray-500">
               아직 등록된 수업 교안 본문이 없습니다. 우측 상단{' '}
-              <strong className="text-gray-700">[교안 수정 / 문서 업로드]</strong> 버튼을 눌러 워드(.docx), 한글(.hwp/.hwpx) 또는 마크다운 교안을 등록해 보세요.
+              <strong className="text-gray-700">
+                [노션 스타일로 교안 편집 / 사진·문서 추가]
+              </strong>{' '}
+              버튼을 눌러 노션처럼 교안을 작성하거나 사진을 드래그해 넣어보세요.
             </p>
           </div>
         )

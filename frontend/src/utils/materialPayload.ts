@@ -169,7 +169,13 @@ export function getReadableMaterialTextForAi(parsed: ParsedLessonMaterial): stri
   }
 
   if (parsed.markdownContent.trim()) {
-    parts.push(`[교안 본문 (마크다운/문서 내용)]\n${parsed.markdownContent.trim()}`);
+    const cleanMdForAi = parsed.markdownContent
+      .trim()
+      .replace(
+        /!\[([^\]]*)\]\(data:image\/[^)]+\)/g,
+        (_, caption) => `[교안 내 삽입된 이미지 자료: ${caption || '참고 사진'}]`
+      );
+    parts.push(`[교안 본문 (노션 페이지/문서 내용)]\n${cleanMdForAi}`);
   }
 
   if (parsed.htmlContent.trim()) {

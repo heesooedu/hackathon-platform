@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import CopyCodeButton from '@/components/CopyCodeButton';
-import CreateLessonModal from '@/components/CreateLessonModal';
 import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
 import { Profile, Lesson } from '@/types/database.types';
 
@@ -77,7 +76,13 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
 
           {isTeacher && (
             <div>
-              <CreateLessonModal classId={classId} />
+              <Link
+                href={`/classes/${classId}/lessons/new`}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+              >
+                <span className="text-base">📝</span>
+                <span>+ 새 레슨 & 노션형 교안 작성</span>
+              </Link>
             </div>
           )}
         </div>
@@ -142,8 +147,8 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
                             {isClosed ? '🔴 마감됨' : '🟢 질문 접수 중'}
                           </span>
                           {lesson.material_html && (
-                            <span className="inline-flex items-center rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-semibold text-purple-700 border border-purple-100">
-                              ✨ 인터랙티브 교안
+                            <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 border border-indigo-100">
+                              📖 수업 교안 포함
                             </span>
                           )}
                         </div>
