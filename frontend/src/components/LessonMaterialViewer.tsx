@@ -12,6 +12,8 @@ import {
 import NotionBlockEditor from '@/components/NotionBlockEditor';
 import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview from '@/components/SimulationBlockPreview';
+import ColabRunnerBlock from '@/components/ColabRunnerBlock';
+import VPythonRunnerBlock from '@/components/VPythonRunnerBlock';
 import {
   updateLessonMaterialAction,
   clearLessonMaterialAction,
@@ -240,6 +242,28 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
               key={block.id}
               code={block.content}
               caption={block.caption}
+            />
+          );
+        }
+
+        if (block.type === 'colab') {
+          return (
+            <ColabRunnerBlock
+              key={block.id}
+              code={block.content}
+              caption={block.caption}
+              externalUrl={block.externalUrl}
+            />
+          );
+        }
+
+        if (block.type === 'vpython') {
+          return (
+            <VPythonRunnerBlock
+              key={block.id}
+              initialCode={block.content}
+              title={block.caption}
+              externalUrl={block.externalUrl}
             />
           );
         }

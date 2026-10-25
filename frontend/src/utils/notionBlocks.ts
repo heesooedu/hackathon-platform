@@ -8,6 +8,8 @@ export type NotionBlockType =
   | 'quote'
   | 'table'
   | 'code'
+  | 'colab'
+  | 'vpython'
   | 'mermaid'
   | 'simulation'
   | 'image'
@@ -39,7 +41,8 @@ export interface NotionBlock {
   icon?: string; // callout 아이콘 (예: 💡, 📌, ⚠️)
   language?: CodeLanguage; // code 블록의 프로그래밍 언어 (기본값: 'python')
   imageUrl?: string; // 단일 image 블록의 data URL 또는 외부 URL (하위 호환)
-  caption?: string; // 단일 image 또는 simulation 블록의 캡션
+  caption?: string; // 단일 image, simulation, colab, vpython 블록의 제목/캡션
+  externalUrl?: string; // colab 노트북 공유 URL 또는 glowscript/trinket 외부 공유 링크
   imageSize?: ImageSizeOption;
   images?: NotionImageItem[]; // 가로 다단(여러 장) 이미지 배열
   tableRows?: string[][]; // 표(table) 블록의 2차원 셀 배열 (행 x 열)
@@ -226,6 +229,42 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
             images: parsedImages,
           });
         }
+      } else if (
+        langRaw === 'colab' ||
+        langRaw.startsWith('colab:') ||
+        langRaw === 'pyrun' ||
+        langRaw.startsWith('pyrun:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        blocks.push({
+          id: createBlockId(),
+          type: 'colab',
+          caption: (rawCaption || '').trim() || '파이썬 실습 셀 (Colab)',
+          externalUrl: (rawUrl || '').trim() || undefined,
+          content: codeLines.join('\n'),
+        });
+      } else if (
+        langRaw === 'vpython' ||
+        langRaw.startsWith('vpython:') ||
+        langRaw === 'glowscript' ||
+        langRaw.startsWith('glowscript:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        blocks.push({
+          id: createBlockId(),
+          type: 'vpython',
+          caption:
+            (rawCaption || '').trim() ||
+            'Web VPython (GlowScript) 3D 시뮬레이션',
+          externalUrl: (rawUrl || '').trim() || undefined,
+          content: codeLines.join('\n'),
+        });
       } else if (
         langRaw === 'simulation' ||
         langRaw.startsWith('simulation:') ||
@@ -556,6 +595,36 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         if (b.content.trim()) {
           const lang = b.language || 'python';
           lines.push(`\`\`\`${lang}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``);
+        }
+        break;
+      case 'colab':
+        if (b.content.trim()) {
+          const safeTitle = (b.caption || '')
+            .replace(/[\n|]/g, ' ')
+            .trim();
+          const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+          const meta =
+            safeTitle || safeUrl
+              ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+              : '';
+          lines.push(
+            `\`\`\`colab${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+          );
+        }
+        break;
+      case 'vpython':
+        if (b.content.trim()) {
+          const safeTitle = (b.caption || '')
+            .replace(/[\n|]/g, ' ')
+            .trim();
+          const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+          const meta =
+            safeTitle || safeUrl
+              ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+              : '';
+          lines.push(
+            `\`\`\`vpython${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+          );
         }
         break;
       case 'mermaid':

@@ -15,6 +15,12 @@ import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview, {
   SIMULATION_TEMPLATES,
 } from '@/components/SimulationBlockPreview';
+import ColabRunnerBlock, {
+  COLAB_TEMPLATES,
+} from '@/components/ColabRunnerBlock';
+import VPythonRunnerBlock, {
+  VPYTHON_TEMPLATES,
+} from '@/components/VPythonRunnerBlock';
 import { renderInlineMarkdown } from '@/components/LessonMaterialViewer';
 
 interface NotionBlockEditorProps {
@@ -141,6 +147,39 @@ const BLOCK_TYPE_META: {
     desc: 'Python·JS·SQL 코드 작성 (엔터 시 자동 들여쓰기 & Tab 지원)',
     badge: '</>',
     keywords: ['code', 'python', 'js', '코드', '파이썬', '프로그래밍'],
+  },
+  {
+    type: 'colab',
+    label: '파이썬 실행 셀 (Colab 스타일 실습)',
+    desc: '학생들이 교안 안에서 직접 Python 코드를 수정·실행하고 그래프까지 그리는 코랩 셀입니다',
+    badge: '🐍',
+    keywords: [
+      'colab',
+      'python',
+      'jupyter',
+      'pyodide',
+      '코랩',
+      '파이썬실행',
+      '정보',
+      '실습',
+      '주피터',
+    ],
+  },
+  {
+    type: 'vpython',
+    label: 'Web VPython 3D (GlowScript 시뮬레이션)',
+    desc: '정보·물리 수업용 GlowScript Web VPython 3.2 3D 시뮬레이션을 학생이 직접 수정·실행합니다',
+    badge: '🧊',
+    keywords: [
+      'vpython',
+      'glowscript',
+      '3d',
+      '글로우스크립트',
+      '브이파이썬',
+      '물리',
+      '정보',
+      '3d시뮬레이션',
+    ],
   },
   {
     type: 'mermaid',
@@ -429,6 +468,8 @@ export default function NotionBlockEditor({
     if (
       !block ||
       block.type === 'code' ||
+      block.type === 'colab' ||
+      block.type === 'vpython' ||
       block.type === 'mermaid' ||
       block.type === 'simulation' ||
       block.type === 'image' ||
@@ -518,6 +559,8 @@ export default function NotionBlockEditor({
     const cleanedContent = block.content.startsWith('/') ? '' : block.content;
     const defaultMermaid = MERMAID_TEMPLATES[0].code;
     const defaultSimulation = SIMULATION_TEMPLATES[0].code;
+    const defaultColab = COLAB_TEMPLATES[0].code;
+    const defaultVPython = VPYTHON_TEMPLATES[0].code;
 
     updateBlock(block.id, {
       type: targetType,
@@ -526,10 +569,18 @@ export default function NotionBlockEditor({
           ? defaultMermaid
           : targetType === 'simulation' && !cleanedContent.trim()
           ? defaultSimulation
+          : targetType === 'colab' && !cleanedContent.trim()
+          ? defaultColab
+          : targetType === 'vpython' && !cleanedContent.trim()
+          ? defaultVPython
           : cleanedContent,
       caption:
         targetType === 'simulation'
           ? block.caption || SIMULATION_TEMPLATES[0].caption
+          : targetType === 'colab'
+          ? block.caption || COLAB_TEMPLATES[0].caption
+          : targetType === 'vpython'
+          ? block.caption || VPYTHON_TEMPLATES[0].title
           : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
@@ -858,10 +909,18 @@ export default function NotionBlockEditor({
                           ? MERMAID_TEMPLATES[0].code
                           : item.type === 'simulation'
                           ? SIMULATION_TEMPLATES[0].code
+                          : item.type === 'colab'
+                          ? COLAB_TEMPLATES[0].code
+                          : item.type === 'vpython'
+                          ? VPYTHON_TEMPLATES[0].code
                           : '',
                       caption:
                         item.type === 'simulation'
                           ? SIMULATION_TEMPLATES[0].caption
+                          : item.type === 'colab'
+                          ? COLAB_TEMPLATES[0].caption
+                          : item.type === 'vpython'
+                          ? VPYTHON_TEMPLATES[0].title
                           : undefined,
                       icon: item.type === 'callout' ? '💡' : undefined,
                       language: item.type === 'code' ? 'python' : undefined,
@@ -1007,6 +1066,8 @@ export default function NotionBlockEditor({
               draggable={
                 dragHandleHoveredBlockId === block.id ||
                 (block.type !== 'code' &&
+                  block.type !== 'colab' &&
+                  block.type !== 'vpython' &&
                   block.type !== 'mermaid' &&
                   block.type !== 'simulation' &&
                   block.type !== 'table')
@@ -1453,6 +1514,45 @@ export default function NotionBlockEditor({
                           ))}
                         </select>
 
+                        {(block.language || 'python') === 'python' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateBlock(block.id, {
+                                  type: 'colab',
+                                  caption:
+                                    block.caption ||
+                                    COLAB_TEMPLATES[0].caption,
+                                  content:
+                                    block.content.trim() ||
+                                    COLAB_TEMPLATES[0].code,
+                                })
+                              }
+                              className="rounded-lg bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-slate-950 hover:bg-amber-400 transition cursor-pointer"
+                            >
+                              🐍 코랩(Colab) 실행 셀로 전환
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateBlock(block.id, {
+                                  type: 'vpython',
+                                  caption:
+                                    block.caption ||
+                                    VPYTHON_TEMPLATES[0].title,
+                                  content:
+                                    block.content.trim() ||
+                                    VPYTHON_TEMPLATES[0].code,
+                                })
+                              }
+                              className="rounded-lg bg-cyan-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-cyan-500 transition cursor-pointer"
+                            >
+                              🧊 Web VPython 3D로 전환
+                            </button>
+                          </>
+                        )}
+
                         {(block.language === 'html' ||
                           block.language === 'javascript') && (
                           <button
@@ -1684,6 +1784,195 @@ export default function NotionBlockEditor({
                         <SimulationBlockPreview
                           code={block.content}
                           caption={block.caption}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 9-2B. 🐍 파이썬 실행 셀 (Google Colab 스타일 브라우저 즉시 실행 & 실습) */}
+                {block.type === 'colab' && (
+                  <div className="my-2 overflow-hidden rounded-2xl border-2 border-amber-300 bg-amber-50/20 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/80 bg-amber-50/90 px-4 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                        <span className="rounded-md bg-amber-500 px-2.5 py-0.5 text-[11px] font-extrabold text-slate-950 shrink-0">
+                          🐍 파이썬 실행 셀 (Colab 실습)
+                        </span>
+                        <input
+                          type="text"
+                          value={block.caption || ''}
+                          onChange={(e) =>
+                            updateBlock(block.id, { caption: e.target.value })
+                          }
+                          placeholder="실습 셀 제목 (예: 리스트 정렬과 matplotlib 그래프 그리기)..."
+                          className="flex-1 min-w-[180px] rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-bold text-gray-900 placeholder:text-gray-400 focus:border-amber-500 focus:outline-none"
+                        />
+                        <input
+                          type="url"
+                          value={block.externalUrl || ''}
+                          onChange={(e) =>
+                            updateBlock(block.id, {
+                              externalUrl: e.target.value,
+                            })
+                          }
+                          placeholder="(선택) 공유할 Google Colab 노트북 URL 입력..."
+                          className="w-64 rounded-lg border border-amber-200 bg-white px-2.5 py-1 text-xs text-gray-700 placeholder:text-gray-400 focus:border-amber-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-amber-900 mr-0.5">
+                          정보 수업 예제:
+                        </span>
+                        {COLAB_TEMPLATES.map((tpl, tIdx) => (
+                          <button
+                            key={tIdx}
+                            type="button"
+                            onClick={() =>
+                              updateBlock(block.id, {
+                                content: tpl.code,
+                                caption: tpl.caption,
+                              })
+                            }
+                            className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:bg-amber-100 transition cursor-pointer"
+                          >
+                            {tpl.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+                      {/* 좌측: 교사용 기본 Python 코드 작성창 */}
+                      <div className="rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-slate-100">
+                        <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
+                          <span className="font-bold text-amber-300">
+                            ✏️ 학생에게 제공할 기본 Python 코드 (Enter 자동 들여쓰기)
+                          </span>
+                          <span>numpy · matplotlib 지원</span>
+                        </div>
+                        <AutoResizeTextarea
+                          value={block.content}
+                          spellCheck={false}
+                          inputRef={(el) => {
+                            blockRefs.current[block.id] = el;
+                          }}
+                          onChange={(val) =>
+                            updateBlock(block.id, { content: val })
+                          }
+                          onKeyDown={(e) =>
+                            handleCodeOrMermaidKeyDown(e, block, idx)
+                          }
+                          placeholder={`# 학생들이 교안에서 바로 [▶ 실행]을 눌러볼 수 있는 Python 코드를 작성하세요\nfor i in range(1, 6):\n    print(f"{i}번째 실행!")`}
+                          className="font-mono text-xs sm:text-sm text-amber-200 leading-relaxed placeholder:text-slate-600"
+                        />
+                      </div>
+
+                      {/* 우측: 학생 화면과 동일한 실시간 Colab 실행 셀 미리보기 */}
+                      <div>
+                        <div className="text-[11px] font-bold text-amber-900 px-1 mb-1">
+                          👁️ 학생 화면 미리보기 (▶ 버튼을 눌러 바로 테스트해보세요)
+                        </div>
+                        <ColabRunnerBlock
+                          key={`${block.id}_${block.content}`}
+                          code={block.content}
+                          caption={block.caption}
+                          externalUrl={block.externalUrl}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 9-2C. 🧊 Web VPython 3.2 (GlowScript 3D 물리·정보 시뮬레이션 블록) */}
+                {block.type === 'vpython' && (
+                  <div className="my-2 overflow-hidden rounded-2xl border-2 border-cyan-300 bg-cyan-50/20 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cyan-200/80 bg-cyan-50/90 px-4 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                        <span className="rounded-md bg-cyan-600 px-2.5 py-0.5 text-[11px] font-extrabold text-white shrink-0">
+                          🧊 Web VPython 3D (GlowScript)
+                        </span>
+                        <input
+                          type="text"
+                          value={block.caption || ''}
+                          onChange={(e) =>
+                            updateBlock(block.id, { caption: e.target.value })
+                          }
+                          placeholder="3D 시뮬레이션 제목 (예: 지구와 달 공전 3D 시뮬레이션)..."
+                          className="flex-1 min-w-[180px] rounded-lg border border-cyan-300 bg-white px-2.5 py-1 text-xs font-bold text-cyan-950 placeholder:text-gray-400 focus:border-cyan-500 focus:outline-none"
+                        />
+                        <input
+                          type="url"
+                          value={block.externalUrl || ''}
+                          onChange={(e) =>
+                            updateBlock(block.id, {
+                              externalUrl: e.target.value,
+                            })
+                          }
+                          placeholder="(선택) GlowScript / Trinket 공유 URL..."
+                          className="w-60 rounded-lg border border-cyan-200 bg-white px-2.5 py-1 text-xs text-gray-700 placeholder:text-gray-400 focus:border-cyan-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-cyan-900 mr-0.5">
+                          3D VPython 템플릿:
+                        </span>
+                        {VPYTHON_TEMPLATES.map((tpl, tIdx) => (
+                          <button
+                            key={tIdx}
+                            type="button"
+                            onClick={() =>
+                              updateBlock(block.id, {
+                                content: tpl.code,
+                                caption: tpl.title,
+                              })
+                            }
+                            className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1 text-[11px] font-bold text-cyan-900 hover:bg-cyan-100 transition cursor-pointer"
+                          >
+                            {tpl.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+                      {/* 좌측: Web VPython 코드 에디터 */}
+                      <div className="rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-slate-100">
+                        <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
+                          <span className="font-bold text-cyan-300">
+                            🧊 Web VPython 3.2 파이썬 코드 (sphere, box, arrow, vector, rate)
+                          </span>
+                          <span>Enter 자동 들여쓰기</span>
+                        </div>
+                        <AutoResizeTextarea
+                          value={block.content}
+                          spellCheck={false}
+                          inputRef={(el) => {
+                            blockRefs.current[block.id] = el;
+                          }}
+                          onChange={(val) =>
+                            updateBlock(block.id, { content: val })
+                          }
+                          onKeyDown={(e) =>
+                            handleCodeOrMermaidKeyDown(e, block, idx)
+                          }
+                          placeholder={`Web VPython 3.2\nsphere(pos=vector(0,0,0), radius=1, color=color.cyan)`}
+                          className="font-mono text-xs sm:text-sm text-cyan-200 leading-relaxed placeholder:text-slate-600"
+                        />
+                      </div>
+
+                      {/* 우측: 실시간 3D WebGL 렌더링 미리보기 */}
+                      <div>
+                        <div className="text-[11px] font-bold text-cyan-900 px-1 mb-1">
+                          👁️ 실시간 3D 시뮬레이션 미리보기 (우클릭 드래그로 회전, 휠로 확대/축소)
+                        </div>
+                        <VPythonRunnerBlock
+                          key={`${block.id}_${block.content}`}
+                          initialCode={block.content}
+                          title={block.caption}
+                          externalUrl={block.externalUrl}
+                          compact
                         />
                       </div>
                     </div>
@@ -2530,6 +2819,8 @@ export default function NotionBlockEditor({
                   <option value="quote">인용/지문</option>
                   <option value="table">표 (Table)</option>
                   <option value="code">코드블록</option>
+                  <option value="colab">파이썬 실행 셀(Colab)</option>
+                  <option value="vpython">Web VPython 3D</option>
                   <option value="mermaid">순서도(Mermaid)</option>
                   <option value="simulation">시뮬레이션(HTML/JS)</option>
                   <option value="image">사진</option>
