@@ -4,14 +4,18 @@ import { useState, useRef, useEffect } from 'react';
 import {
   NotionBlock,
   NotionBlockType,
+  NotionImageItem,
   ImageSizeOption,
   CodeLanguage,
   createBlockId,
+  getBlockImages,
+  createDefaultTableRows,
 } from '@/utils/notionBlocks';
 import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview, {
   SIMULATION_TEMPLATES,
 } from '@/components/SimulationBlockPreview';
+import { renderInlineMarkdown } from '@/components/LessonMaterialViewer';
 
 interface NotionBlockEditorProps {
   blocks: NotionBlock[];
@@ -125,6 +129,13 @@ const BLOCK_TYPE_META: {
     keywords: ['quote', '인용', '지문', '사료'],
   },
   {
+    type: 'table',
+    label: '표 (Table)',
+    desc: '비교표, 개념 정리표, 실험 데이터 표를 행·열로 작성합니다',
+    badge: '⊞',
+    keywords: ['table', 'grid', '표', '테이블', '비교표', '행열'],
+  },
+  {
     type: 'code',
     label: '코드 블록 (Python 등 자동 들여쓰기)',
     desc: 'Python·JS·SQL 코드 작성 (엔터 시 자동 들여쓰기 & Tab 지원)',
@@ -160,10 +171,10 @@ const BLOCK_TYPE_META: {
   },
   {
     type: 'image',
-    label: '사진 / 이미지 블록',
-    desc: '드래그 앤 드롭이나 파일 선택으로 사진을 넣습니다',
+    label: '사진 / 이미지 블록 (가로 다중 배치 지원)',
+    desc: '드래그 앤 드롭이나 파일 선택으로 사진을 1장 또는 가로로 여러 장 넣습니다',
     badge: '🖼️',
-    keywords: ['image', 'photo', 'pic', '사진', '이미지', '그림'],
+    keywords: ['image', 'photo', 'pic', '사진', '이미지', '그림', '가로'],
   },
   {
     type: 'divider',
@@ -173,6 +184,84 @@ const BLOCK_TYPE_META: {
     keywords: ['divider', 'hr', 'line', '구분선', '선'],
   },
 ];
+
+/**
+ * 텍스트 내에 인라인 서식(**진하게**, ==형광펜==, ++밑줄++, *기울임*, `코드`)이 포함되어 있는지 확인합니다.
+ */
+function hasInlineFormatting(text: string): boolean {
+  if (!text) return false;
+  return /(\*\*[^*]+\*\*|==[^=]+==|\+\+[^+]+\+\+|`[^`]+`|\*[^*\s][^*]*\*)/.test(
+    text
+  );
+}
+
+/**
+ * 선택된 텍스트 영역(또는 커서 위치)에 마크다운 래퍼(** / == / ++ / * / `)를 토글합니다.
+ */
+function toggleInlineFormatSelection(
+  val: string,
+  selectionStart: number,
+  selectionEnd: number,
+  marker: string
+): { newValue: string; newStart: number; newEnd: number } {
+  const mLen = marker.length;
+  const before = val.slice(0, selectionStart);
+  const selected = val.slice(selectionStart, selectionEnd);
+  const after = val.slice(selectionEnd);
+
+  // 1) 이미 선택 영역 바깥에 marker가 감싸져 있는 경우 -> 해제
+  if (before.endsWith(marker) && after.startsWith(marker)) {
+    const newValue =
+      before.slice(0, before.length - mLen) + selected + after.slice(mLen);
+    return {
+      newValue,
+      newStart: selectionStart - mLen,
+      newEnd: selectionEnd - mLen,
+    };
+  }
+
+  // 2) 선택된 텍스트 자체가 marker로 시작하고 끝나는 경우 -> 해제
+  if (
+    selected.length >= mLen * 2 &&
+    selected.startsWith(marker) &&
+    selected.endsWith(marker)
+  ) {
+    const unwrapped = selected.slice(mLen, selected.length - mLen);
+    const newValue = before + unwrapped + after;
+    return {
+      newValue,
+      newStart: selectionStart,
+      newEnd: selectionStart + unwrapped.length,
+    };
+  }
+
+  // 3) 선택 영역이 없을 때(커서만 있을 때): marker + marker를 넣고 커서를 가운데로 이동
+  if (selectionStart === selectionEnd) {
+    const placeholder =
+      marker === '**'
+        ? '진하게'
+        : marker === '=='
+        ? '형광펜 강조'
+        : marker === '++'
+        ? '밑줄'
+        : '강조';
+    const wrapped = `${marker}${placeholder}${marker}`;
+    const newValue = before + wrapped + after;
+    return {
+      newValue,
+      newStart: selectionStart + mLen,
+      newEnd: selectionStart + mLen + placeholder.length,
+    };
+  }
+
+  // 4) 일반 선택 영역 감싸기
+  const newValue = `${before}${marker}${selected}${marker}${after}`;
+  return {
+    newValue,
+    newStart: selectionStart + mLen,
+    newEnd: selectionEnd + mLen,
+  };
+}
 
 /**
  * 이미지 파일을 클라이언트 Canvas에서 적절한 해상도(최대 가로 1000px)로 리사이즈 및 압축하여 Data URL로 변환합니다.
@@ -228,6 +317,8 @@ function AutoResizeTextarea({
   onChange,
   onKeyDown,
   onPaste,
+  onFocus,
+  onBlur,
   placeholder,
   className,
   inputRef,
@@ -237,6 +328,8 @@ function AutoResizeTextarea({
   onChange: (val: string) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
   placeholder: string;
   className: string;
   inputRef?: (el: HTMLTextAreaElement | null) => void;
@@ -264,6 +357,8 @@ function AutoResizeTextarea({
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
       onPaste={onPaste}
+      onFocus={onFocus}
+      onBlur={onBlur}
       placeholder={placeholder}
       className={`w-full resize-none overflow-hidden bg-transparent focus:outline-none ${className}`}
     />
@@ -277,6 +372,7 @@ export default function NotionBlockEditor({
   const [slashMenuBlockId, setSlashMenuBlockId] = useState<string | null>(null);
   const [slashFilterQuery, setSlashFilterQuery] = useState('');
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
+  const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
 
   const [isDraggingFileOverPage, setIsDraggingFileOverPage] = useState(false);
   const [draggedBlockIdx, setDraggedBlockIdx] = useState<number | null>(null);
@@ -292,10 +388,13 @@ export default function NotionBlockEditor({
   >({});
 
   const blockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const tableCellRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const targetImageBlockIdRef = useRef<string | null>(null);
+  const imageUploadModeRef = useRef<'replace' | 'append'>('replace');
 
   function focusBlock(id: string, cursorPos?: number) {
+    setFocusedBlockId(id);
     setTimeout(() => {
       const el = blockRefs.current[id];
       if (el) {
@@ -306,16 +405,73 @@ export default function NotionBlockEditor({
     }, 20);
   }
 
+  function focusTableCell(blockId: string, rIdx: number, cIdx: number) {
+    setTimeout(() => {
+      const el = tableCellRefs.current[`${blockId}_${rIdx}_${cIdx}`];
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }, 20);
+  }
+
   function updateBlock(id: string, patch: Partial<NotionBlock>) {
     onChange(blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  }
+
+  /**
+   * 현재 포커스된 텍스트 블록에 인라인 서식(**진하게**, ==형광펜==, ++밑줄++, *기울임*, `코드`)을 적용합니다.
+   */
+  function applyFormatToFocusedBlock(marker: string) {
+    const activeId = focusedBlockId || blocks[0]?.id;
+    if (!activeId) return;
+    const block = blocks.find((b) => b.id === activeId);
+    if (
+      !block ||
+      block.type === 'code' ||
+      block.type === 'mermaid' ||
+      block.type === 'simulation' ||
+      block.type === 'image' ||
+      block.type === 'divider' ||
+      block.type === 'table'
+    ) {
+      return;
+    }
+
+    const el = blockRefs.current[activeId];
+    const start = el ? el.selectionStart : block.content.length;
+    const end = el ? el.selectionEnd : block.content.length;
+
+    const { newValue, newStart, newEnd } = toggleInlineFormatSelection(
+      block.content,
+      start,
+      end,
+      marker
+    );
+
+    updateBlock(activeId, { content: newValue });
+    setFocusedBlockId(activeId);
+    requestAnimationFrame(() => {
+      const targetEl = blockRefs.current[activeId];
+      if (targetEl) {
+        targetEl.focus();
+        targetEl.setSelectionRange(newStart, newEnd);
+      }
+    });
   }
 
   function insertBlockAfter(index: number, newBlock: NotionBlock) {
     const next = [...blocks];
     next.splice(index + 1, 0, newBlock);
     onChange(next);
-    if (newBlock.type !== 'image' && newBlock.type !== 'divider') {
+    if (
+      newBlock.type !== 'image' &&
+      newBlock.type !== 'divider' &&
+      newBlock.type !== 'table'
+    ) {
       focusBlock(newBlock.id);
+    } else if (newBlock.type === 'table') {
+      focusTableCell(newBlock.id, 0, 0);
     }
   }
 
@@ -377,13 +533,27 @@ export default function NotionBlockEditor({
           : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
+      tableRows:
+        targetType === 'table'
+          ? block.tableRows && block.tableRows.length > 0
+            ? block.tableRows
+            : createDefaultTableRows(3, 3)
+          : block.tableRows,
+      hasTableHeader:
+        targetType === 'table' ? block.hasTableHeader ?? true : block.hasTableHeader,
     });
     setSlashMenuBlockId(null);
     setSlashFilterQuery('');
     setSlashSelectedIdx(0);
 
-    if (targetType !== 'image' && targetType !== 'divider') {
+    if (
+      targetType !== 'image' &&
+      targetType !== 'divider' &&
+      targetType !== 'table'
+    ) {
       focusBlock(block.id);
+    } else if (targetType === 'table') {
+      focusTableCell(block.id, 0, 0);
     }
   }
 
@@ -521,51 +691,69 @@ export default function NotionBlockEditor({
     }
   }
 
+  /**
+   * 이미지 파일들을 업로드하거나 드롭했을 때 처리:
+   * - 여러 장을 동시에 선택/드롭하면 하나의 이미지 블록 안에 가로(Horizontal Row)로 나란히 배치합니다.
+   * - 기존 이미지 블록에서 '+ 옆에 사진 가로로 추가'(mode === 'append')를 누른 경우 기존 이미지 옆에 추가합니다.
+   */
   async function handleImageFilesDrop(
     files: FileList | File[],
     insertAtIdx?: number,
-    replaceBlockId?: string
+    targetBlockId?: string,
+    mode: 'replace' | 'append' = 'replace'
   ) {
     const imageFiles = Array.from(files).filter((f) =>
       f.type.startsWith('image/')
     );
     if (imageFiles.length === 0) return;
 
-    const newImageBlocks: NotionBlock[] = [];
+    const uploadedItems: NotionImageItem[] = [];
     for (const file of imageFiles) {
       const dataUrl = await compressImageFileToDataUrl(file);
       const defaultCaption = file.name.replace(/\.[^.]+$/, '');
-      newImageBlocks.push({
-        id: createBlockId(),
-        type: 'image',
-        content: '',
-        imageUrl: dataUrl,
+      uploadedItems.push({
+        url: dataUrl,
         caption: defaultCaption,
-        imageSize: 'md',
       });
     }
 
-    if (replaceBlockId && newImageBlocks.length > 0) {
-      const first = newImageBlocks[0];
-      const updated = blocks.map((b) =>
-        b.id === replaceBlockId
-          ? {
-              ...b,
-              type: 'image' as NotionBlockType,
-              imageUrl: first.imageUrl,
-              caption: b.caption || first.caption,
-              imageSize: b.imageSize || 'md',
-            }
-          : b
-      );
+    if (targetBlockId && uploadedItems.length > 0) {
+      const updated = blocks.map((b) => {
+        if (b.id !== targetBlockId) return b;
+        const existingImages = getBlockImages(b);
+        const nextImages =
+          mode === 'append' && existingImages.length > 0
+            ? [...existingImages, ...uploadedItems]
+            : uploadedItems;
+        const first = nextImages[0];
+        return {
+          ...b,
+          type: 'image' as NotionBlockType,
+          imageUrl: first.url,
+          caption: first.caption || b.caption || '',
+          images: nextImages,
+          imageSize: b.imageSize || 'md',
+        };
+      });
       onChange(updated);
       return;
     }
 
+    const first = uploadedItems[0];
+    const newImageBlock: NotionBlock = {
+      id: createBlockId(),
+      type: 'image',
+      content: '',
+      imageUrl: first.url,
+      caption: first.caption || '',
+      images: uploadedItems,
+      imageSize: 'md',
+    };
+
     const idx =
       insertAtIdx !== undefined ? insertAtIdx : Math.max(0, blocks.length - 1);
     const next = [...blocks];
-    next.splice(idx + 1, 0, ...newImageBlocks);
+    next.splice(idx + 1, 0, newImageBlock);
     onChange(next);
   }
 
@@ -602,21 +790,24 @@ export default function NotionBlockEditor({
       }}
       className="relative space-y-2"
     >
-      {/* 숨겨진 이미지 파일 선택 input */}
+      {/* 숨겨진 이미지 파일 선택 input (multiple 지원으로 여러 장 동시 가로 배치 가능) */}
       <input
         ref={imageInputRef}
         type="file"
         accept="image/*"
+        multiple
         className="hidden"
         onChange={async (e) => {
           const files = e.target.files;
           if (files && files.length > 0) {
             const targetId = targetImageBlockIdRef.current;
+            const mode = imageUploadModeRef.current;
             if (targetId) {
               setUploadingImageBlockId(targetId);
-              await handleImageFilesDrop(files, undefined, targetId);
+              await handleImageFilesDrop(files, undefined, targetId, mode);
               setUploadingImageBlockId(null);
               targetImageBlockIdRef.current = null;
+              imageUploadModeRef.current = 'replace';
             } else {
               await handleImageFilesDrop(files, blocks.length - 1);
             }
@@ -625,61 +816,166 @@ export default function NotionBlockEditor({
         }}
       />
 
-      {/* 상단 고정 노션 블록 빠른 삽입 툴바 */}
-      <div className="sticky top-[124px] z-20 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-bold text-gray-400 mr-1">
-            블록 빠른 추가:
+      {/* 상단 고정 노션 블록 빠른 삽입 & 텍스트 서식 단축키 툴바 */}
+      <div className="sticky top-[124px] z-20 space-y-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-gray-400 mr-1">
+              블록 빠른 추가:
+            </span>
+            {BLOCK_TYPE_META.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                onClick={() => {
+                  if (item.type === 'image') {
+                    const newImgBlock: NotionBlock = {
+                      id: createBlockId(),
+                      type: 'image',
+                      content: '',
+                      imageUrl: '',
+                      caption: '',
+                      images: [],
+                      imageSize: 'md',
+                    };
+                    onChange([...blocks, newImgBlock]);
+                  } else if (item.type === 'table') {
+                    const newTableBlock: NotionBlock = {
+                      id: createBlockId(),
+                      type: 'table',
+                      content: '',
+                      tableRows: createDefaultTableRows(3, 3),
+                      hasTableHeader: true,
+                    };
+                    onChange([...blocks, newTableBlock]);
+                    focusTableCell(newTableBlock.id, 0, 0);
+                  } else {
+                    const newBlock: NotionBlock = {
+                      id: createBlockId(),
+                      type: item.type,
+                      content:
+                        item.type === 'mermaid'
+                          ? MERMAID_TEMPLATES[0].code
+                          : item.type === 'simulation'
+                          ? SIMULATION_TEMPLATES[0].code
+                          : '',
+                      caption:
+                        item.type === 'simulation'
+                          ? SIMULATION_TEMPLATES[0].caption
+                          : undefined,
+                      icon: item.type === 'callout' ? '💡' : undefined,
+                      language: item.type === 'code' ? 'python' : undefined,
+                    };
+                    onChange([...blocks, newBlock]);
+                    focusBlock(newBlock.id);
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50/80 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
+                title={item.desc}
+              >
+                <span className="text-blue-600">{item.badge}</span>
+                <span>{item.label.split(' ')[0]}</span>
+              </button>
+            ))}
+          </div>
+
+          <span className="text-[11px] font-medium text-gray-400 hidden 2xl:inline">
+            💡 빈 줄에 <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/</kbd>{' '}
+            입력 시 표·코드블록·순서도·시뮬레이션·사진 즉시 선택
           </span>
-          {BLOCK_TYPE_META.map((item) => (
-            <button
-              key={item.type}
-              type="button"
-              onClick={() => {
-                if (item.type === 'image') {
-                  const newImgBlock: NotionBlock = {
-                    id: createBlockId(),
-                    type: 'image',
-                    content: '',
-                    imageUrl: '',
-                    caption: '',
-                    imageSize: 'md',
-                  };
-                  onChange([...blocks, newImgBlock]);
-                } else {
-                  const newBlock: NotionBlock = {
-                    id: createBlockId(),
-                    type: item.type,
-                    content:
-                      item.type === 'mermaid'
-                        ? MERMAID_TEMPLATES[0].code
-                        : item.type === 'simulation'
-                        ? SIMULATION_TEMPLATES[0].code
-                        : '',
-                    caption:
-                      item.type === 'simulation'
-                        ? SIMULATION_TEMPLATES[0].caption
-                        : undefined,
-                    icon: item.type === 'callout' ? '💡' : undefined,
-                    language: item.type === 'code' ? 'python' : undefined,
-                  };
-                  onChange([...blocks, newBlock]);
-                  focusBlock(newBlock.id);
-                }
-              }}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50/80 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
-              title={item.desc}
-            >
-              <span className="text-blue-600">{item.badge}</span>
-              <span>{item.label.split(' ')[0]}</span>
-            </button>
-          ))}
         </div>
 
-        <span className="text-[11px] font-medium text-gray-400 hidden xl:inline">
-          💡 빈 줄에 <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/</kbd>{' '}
-          입력 시 코드블록·순서도(Mermaid)·콜아웃·사진 즉시 선택
-        </span>
+        {/* 노션 스타일 인라인 서식 단축키 바 (Ctrl+B 진하게 / Ctrl+E 형광펜 / Ctrl+U 밑줄 등) */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-gray-400 mr-1">
+              글자 강조 단축키:
+            </span>
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyFormatToFocusedBlock('**');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+              title="드래그한 텍스트를 진하게 표시합니다 (단축키: Ctrl + B)"
+            >
+              <span className="font-black text-gray-950">B</span>
+              <span>진하게</span>
+              <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
+                Ctrl+B
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyFormatToFocusedBlock('==');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50/80 px-2.5 py-1 text-xs font-bold text-amber-950 hover:bg-amber-100 transition cursor-pointer shadow-2xs"
+              title="드래그한 텍스트에 형광펜 강조 표시를 합니다 (단축키: Ctrl + E)"
+            >
+              <span className="rounded bg-yellow-300/90 px-1 text-[11px] font-extrabold text-gray-900">
+                🖍️ 형광펜
+              </span>
+              <kbd className="rounded bg-white/90 px-1 py-0.5 font-mono text-[10px] font-semibold text-amber-800">
+                Ctrl+E
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyFormatToFocusedBlock('++');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+              title="드래그한 텍스트에 밑줄을 긋습니다 (단축키: Ctrl + U)"
+            >
+              <span className="underline decoration-2 underline-offset-2 font-bold">
+                U 밑줄
+              </span>
+              <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
+                Ctrl+U
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyFormatToFocusedBlock('*');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+              title="드래그한 텍스트를 기울임꼴로 표시합니다 (단축키: Ctrl + I)"
+            >
+              <span className="italic font-serif font-bold">I 기울임</span>
+              <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
+                Ctrl+I
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyFormatToFocusedBlock('`');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 transition cursor-pointer shadow-2xs"
+              title="드래그한 텍스트를 인라인 코드 배지로 감쌉니다"
+            >
+              <span className="font-mono text-[11px] bg-gray-100 px-1 rounded">
+                `코드`
+              </span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-gray-500">
+            ✨ 텍스트를 드래그한 뒤 <strong className="text-gray-700">Ctrl+B</strong>(진하게) 또는{' '}
+            <strong className="text-amber-700">Ctrl+E</strong>(형광펜)를 누르면 다른 줄로 이동 시 기호 없이 바로 적용됩니다
+          </span>
+        </div>
       </div>
 
       {/* 파일 드래그 오버 시 표시되는 노션 스타일 안내 오버레이 */}
@@ -712,7 +1008,8 @@ export default function NotionBlockEditor({
                 dragHandleHoveredBlockId === block.id ||
                 (block.type !== 'code' &&
                   block.type !== 'mermaid' &&
-                  block.type !== 'simulation')
+                  block.type !== 'simulation' &&
+                  block.type !== 'table')
               }
               onDragStart={(e) => {
                 setDraggedBlockIdx(idx);
@@ -790,65 +1087,182 @@ export default function NotionBlockEditor({
               <div className="flex-1 min-w-0">
                 {/* 1. 대제목 (H1) */}
                 {block.type === 'h1' && (
-                  <AutoResizeTextarea
-                    value={block.content}
-                    inputRef={(el) => {
-                      blockRefs.current[block.id] = el;
-                    }}
-                    onChange={(val) => handleTextChangeWithSlash(block, val)}
-                    onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                    onPaste={(e) => handleBlockPaste(e, idx)}
-                    placeholder="단원 대제목 (제목 1)..."
-                    className="text-2xl font-extrabold text-gray-900 placeholder:text-gray-300 pt-2 pb-1 border-b border-gray-100"
-                  />
+                  <div>
+                    {focusedBlockId !== block.id &&
+                    hasInlineFormatting(block.content) ? (
+                      <div
+                        onClick={() => focusBlock(block.id)}
+                        className="cursor-text text-2xl font-extrabold text-gray-900 pt-2 pb-1 border-b border-gray-100 whitespace-pre-wrap"
+                      >
+                        {renderInlineMarkdown(block.content)}
+                      </div>
+                    ) : null}
+                    <div
+                      className={
+                        focusedBlockId !== block.id &&
+                        hasInlineFormatting(block.content)
+                          ? 'hidden'
+                          : ''
+                      }
+                    >
+                      <AutoResizeTextarea
+                        value={block.content}
+                        inputRef={(el) => {
+                          blockRefs.current[block.id] = el;
+                        }}
+                        onFocus={() => setFocusedBlockId(block.id)}
+                        onBlur={() =>
+                          setFocusedBlockId((prev) =>
+                            prev === block.id ? null : prev
+                          )
+                        }
+                        onChange={(val) => handleTextChangeWithSlash(block, val)}
+                        onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                        onPaste={(e) => handleBlockPaste(e, idx)}
+                        placeholder="단원 대제목 (제목 1)..."
+                        className="text-2xl font-extrabold text-gray-900 placeholder:text-gray-300 pt-2 pb-1 border-b border-gray-100"
+                      />
+                    </div>
+                  </div>
                 )}
 
                 {/* 2. 중제목 (H2) */}
                 {block.type === 'h2' && (
                   <div className="flex items-center gap-2 pt-1.5">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-indigo-500" />
-                    <AutoResizeTextarea
-                      value={block.content}
-                      inputRef={(el) => {
-                        blockRefs.current[block.id] = el;
-                      }}
-                      onChange={(val) => handleTextChangeWithSlash(block, val)}
-                      onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                      onPaste={(e) => handleBlockPaste(e, idx)}
-                      placeholder="소단원 중제목 (제목 2)..."
-                      className="text-lg font-bold text-indigo-950 placeholder:text-gray-300"
-                    />
+                    <div className="flex-1 min-w-0">
+                      {focusedBlockId !== block.id &&
+                      hasInlineFormatting(block.content) ? (
+                        <div
+                          onClick={() => focusBlock(block.id)}
+                          className="cursor-text text-lg font-bold text-indigo-950 whitespace-pre-wrap"
+                        >
+                          {renderInlineMarkdown(block.content)}
+                        </div>
+                      ) : null}
+                      <div
+                        className={
+                          focusedBlockId !== block.id &&
+                          hasInlineFormatting(block.content)
+                            ? 'hidden'
+                            : ''
+                        }
+                      >
+                        <AutoResizeTextarea
+                          value={block.content}
+                          inputRef={(el) => {
+                            blockRefs.current[block.id] = el;
+                          }}
+                          onFocus={() => setFocusedBlockId(block.id)}
+                          onBlur={() =>
+                            setFocusedBlockId((prev) =>
+                              prev === block.id ? null : prev
+                            )
+                          }
+                          onChange={(val) =>
+                            handleTextChangeWithSlash(block, val)
+                          }
+                          onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                          onPaste={(e) => handleBlockPaste(e, idx)}
+                          placeholder="소단원 중제목 (제목 2)..."
+                          className="text-lg font-bold text-indigo-950 placeholder:text-gray-300"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
 
                 {/* 3. 소제목 (H3) */}
                 {block.type === 'h3' && (
-                  <AutoResizeTextarea
-                    value={block.content}
-                    inputRef={(el) => {
-                      blockRefs.current[block.id] = el;
-                    }}
-                    onChange={(val) => handleTextChangeWithSlash(block, val)}
-                    onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                    onPaste={(e) => handleBlockPaste(e, idx)}
-                    placeholder="소제목 (제목 3)..."
-                    className="text-base font-bold text-gray-800 placeholder:text-gray-300 pt-1"
-                  />
+                  <div>
+                    {focusedBlockId !== block.id &&
+                    hasInlineFormatting(block.content) ? (
+                      <div
+                        onClick={() => focusBlock(block.id)}
+                        className="cursor-text text-base font-bold text-gray-800 pt-1 whitespace-pre-wrap"
+                      >
+                        {renderInlineMarkdown(block.content)}
+                      </div>
+                    ) : null}
+                    <div
+                      className={
+                        focusedBlockId !== block.id &&
+                        hasInlineFormatting(block.content)
+                          ? 'hidden'
+                          : ''
+                      }
+                    >
+                      <AutoResizeTextarea
+                        value={block.content}
+                        inputRef={(el) => {
+                          blockRefs.current[block.id] = el;
+                        }}
+                        onFocus={() => setFocusedBlockId(block.id)}
+                        onBlur={() =>
+                          setFocusedBlockId((prev) =>
+                            prev === block.id ? null : prev
+                          )
+                        }
+                        onChange={(val) => handleTextChangeWithSlash(block, val)}
+                        onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                        onPaste={(e) => handleBlockPaste(e, idx)}
+                        placeholder="소제목 (제목 3)..."
+                        className="text-base font-bold text-gray-800 placeholder:text-gray-300 pt-1"
+                      />
+                    </div>
+                  </div>
                 )}
 
                 {/* 4. 일반 본문 (Paragraph) */}
                 {block.type === 'p' && (
-                  <AutoResizeTextarea
-                    value={block.content}
-                    inputRef={(el) => {
-                      blockRefs.current[block.id] = el;
-                    }}
-                    onChange={(val) => handleTextChangeWithSlash(block, val)}
-                    onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                    onPaste={(e) => handleBlockPaste(e, idx)}
-                    placeholder="내용을 입력하거나 '/'를 눌러 블록(코드블록, 순서도, 콜아웃, 사진 등)을 선택하세요..."
-                    className="text-sm text-gray-800 leading-snug placeholder:text-gray-300 py-0.5"
-                  />
+                  <div>
+                    {focusedBlockId !== block.id &&
+                    hasInlineFormatting(block.content) ? (
+                      <div
+                        onClick={() => focusBlock(block.id)}
+                        className="cursor-text text-sm text-gray-800 leading-snug py-0.5 whitespace-pre-wrap"
+                      >
+                        {renderInlineMarkdown(block.content)}
+                      </div>
+                    ) : null}
+                    <div
+                      className={
+                        focusedBlockId !== block.id &&
+                        hasInlineFormatting(block.content)
+                          ? 'hidden'
+                          : ''
+                      }
+                    >
+                      <AutoResizeTextarea
+                        value={block.content}
+                        inputRef={(el) => {
+                          blockRefs.current[block.id] = el;
+                        }}
+                        onFocus={() => setFocusedBlockId(block.id)}
+                        onBlur={() =>
+                          setFocusedBlockId((prev) =>
+                            prev === block.id ? null : prev
+                          )
+                        }
+                        onChange={(val) => handleTextChangeWithSlash(block, val)}
+                        onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                        onPaste={(e) => handleBlockPaste(e, idx)}
+                        placeholder="내용을 입력하거나 '/'를 눌러 블록(표, 코드블록, 순서도, 시뮬레이션, 사진 등)을 선택하세요... (Ctrl+B 진하게, Ctrl+E 형광펜)"
+                        className="text-sm text-gray-800 leading-snug placeholder:text-gray-300 py-0.5"
+                      />
+                    </div>
+                    {focusedBlockId === block.id &&
+                      hasInlineFormatting(block.content) && (
+                        <div className="mt-1 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/40 px-2.5 py-1 text-xs text-gray-800">
+                          <span className="shrink-0 text-[10px] font-bold text-blue-600">
+                            ✨ 서식 미리보기:
+                          </span>
+                          <div className="whitespace-pre-wrap leading-snug">
+                            {renderInlineMarkdown(block.content)}
+                          </div>
+                        </div>
+                      )}
+                  </div>
                 )}
 
                 {/* 5. 글머리 기호 목록 (Bullet) */}
@@ -857,17 +1271,56 @@ export default function NotionBlockEditor({
                     <span className="text-blue-600 font-extrabold select-none pt-0.5">
                       •
                     </span>
-                    <AutoResizeTextarea
-                      value={block.content}
-                      inputRef={(el) => {
-                        blockRefs.current[block.id] = el;
-                      }}
-                      onChange={(val) => handleTextChangeWithSlash(block, val)}
-                      onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                      onPaste={(e) => handleBlockPaste(e, idx)}
-                      placeholder="목록 항목 입력..."
-                      className="text-sm text-gray-800 leading-snug placeholder:text-gray-300"
-                    />
+                    <div className="flex-1 min-w-0">
+                      {focusedBlockId !== block.id &&
+                      hasInlineFormatting(block.content) ? (
+                        <div
+                          onClick={() => focusBlock(block.id)}
+                          className="cursor-text text-sm text-gray-800 leading-snug whitespace-pre-wrap"
+                        >
+                          {renderInlineMarkdown(block.content)}
+                        </div>
+                      ) : null}
+                      <div
+                        className={
+                          focusedBlockId !== block.id &&
+                          hasInlineFormatting(block.content)
+                            ? 'hidden'
+                            : ''
+                        }
+                      >
+                        <AutoResizeTextarea
+                          value={block.content}
+                          inputRef={(el) => {
+                            blockRefs.current[block.id] = el;
+                          }}
+                          onFocus={() => setFocusedBlockId(block.id)}
+                          onBlur={() =>
+                            setFocusedBlockId((prev) =>
+                              prev === block.id ? null : prev
+                            )
+                          }
+                          onChange={(val) =>
+                            handleTextChangeWithSlash(block, val)
+                          }
+                          onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                          onPaste={(e) => handleBlockPaste(e, idx)}
+                          placeholder="목록 항목 입력... (Ctrl+B 진하게, Ctrl+E 형광펜)"
+                          className="text-sm text-gray-800 leading-snug placeholder:text-gray-300"
+                        />
+                      </div>
+                      {focusedBlockId === block.id &&
+                        hasInlineFormatting(block.content) && (
+                          <div className="mt-1 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/40 px-2.5 py-1 text-xs text-gray-800">
+                            <span className="shrink-0 text-[10px] font-bold text-blue-600">
+                              ✨ 서식 미리보기:
+                            </span>
+                            <div className="whitespace-pre-wrap leading-snug">
+                              {renderInlineMarkdown(block.content)}
+                            </div>
+                          </div>
+                        )}
+                    </div>
                   </div>
                 )}
 
@@ -890,38 +1343,88 @@ export default function NotionBlockEditor({
                     >
                       {block.icon || '💡'}
                     </button>
-                    <AutoResizeTextarea
-                      value={block.content}
-                      inputRef={(el) => {
-                        blockRefs.current[block.id] = el;
-                      }}
-                      onChange={(val) =>
-                        updateBlock(block.id, { content: val })
-                      }
-                      onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                      onPaste={(e) => handleBlockPaste(e, idx)}
-                      placeholder="핵심 개념, 주의사항, 탐구 질문을 강조 박스에 작성하세요 (아이콘 클릭 시 변경)..."
-                      className="text-sm font-medium text-gray-900 leading-snug placeholder:text-amber-700/40"
-                    />
+                    <div className="flex-1 min-w-0">
+                      {focusedBlockId !== block.id &&
+                      hasInlineFormatting(block.content) ? (
+                        <div
+                          onClick={() => focusBlock(block.id)}
+                          className="cursor-text text-sm font-medium text-gray-900 leading-snug whitespace-pre-wrap"
+                        >
+                          {renderInlineMarkdown(block.content)}
+                        </div>
+                      ) : null}
+                      <div
+                        className={
+                          focusedBlockId !== block.id &&
+                          hasInlineFormatting(block.content)
+                            ? 'hidden'
+                            : ''
+                        }
+                      >
+                        <AutoResizeTextarea
+                          value={block.content}
+                          inputRef={(el) => {
+                            blockRefs.current[block.id] = el;
+                          }}
+                          onFocus={() => setFocusedBlockId(block.id)}
+                          onBlur={() =>
+                            setFocusedBlockId((prev) =>
+                              prev === block.id ? null : prev
+                            )
+                          }
+                          onChange={(val) =>
+                            updateBlock(block.id, { content: val })
+                          }
+                          onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                          onPaste={(e) => handleBlockPaste(e, idx)}
+                          placeholder="핵심 개념, 주의사항, 탐구 질문을 강조 박스에 작성하세요 (아이콘 클릭 시 변경)..."
+                          className="text-sm font-medium text-gray-900 leading-snug placeholder:text-amber-700/40"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
 
                 {/* 7. 인용구 / 읽기 지문 블록 (Quote) */}
                 {block.type === 'quote' && (
                   <div className="border-l-4 border-indigo-500 bg-slate-50/80 pl-4 pr-3 py-2.5 rounded-r-xl">
-                    <AutoResizeTextarea
-                      value={block.content}
-                      inputRef={(el) => {
-                        blockRefs.current[block.id] = el;
-                      }}
-                      onChange={(val) =>
-                        updateBlock(block.id, { content: val })
+                    {focusedBlockId !== block.id &&
+                    hasInlineFormatting(block.content) ? (
+                      <div
+                        onClick={() => focusBlock(block.id)}
+                        className="cursor-text text-sm italic text-gray-700 leading-snug whitespace-pre-wrap"
+                      >
+                        {renderInlineMarkdown(block.content)}
+                      </div>
+                    ) : null}
+                    <div
+                      className={
+                        focusedBlockId !== block.id &&
+                        hasInlineFormatting(block.content)
+                          ? 'hidden'
+                          : ''
                       }
-                      onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                      onPaste={(e) => handleBlockPaste(e, idx)}
-                      placeholder="교과서 지문, 역사 사료, 명언 또는 핵심 정의를 입력하세요..."
-                      className="text-sm italic text-gray-700 leading-snug placeholder:text-gray-400"
-                    />
+                    >
+                      <AutoResizeTextarea
+                        value={block.content}
+                        inputRef={(el) => {
+                          blockRefs.current[block.id] = el;
+                        }}
+                        onFocus={() => setFocusedBlockId(block.id)}
+                        onBlur={() =>
+                          setFocusedBlockId((prev) =>
+                            prev === block.id ? null : prev
+                          )
+                        }
+                        onChange={(val) =>
+                          updateBlock(block.id, { content: val })
+                        }
+                        onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                        onPaste={(e) => handleBlockPaste(e, idx)}
+                        placeholder="교과서 지문, 역사 사료, 명언 또는 핵심 정의를 입력하세요..."
+                        className="text-sm italic text-gray-700 leading-snug placeholder:text-gray-400"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -1187,6 +1690,412 @@ export default function NotionBlockEditor({
                   </div>
                 )}
 
+                {/* 9-3. 노션 스타일 표 블록 (Table) */}
+                {block.type === 'table' && (() => {
+                  const rows =
+                    block.tableRows && block.tableRows.length > 0
+                      ? block.tableRows
+                      : createDefaultTableRows(3, 3);
+                  const colCount = Math.max(
+                    1,
+                    ...rows.map((r) => r.length)
+                  );
+                  const hasHeader = block.hasTableHeader !== false;
+
+                  const updateCell = (
+                    rIdx: number,
+                    cIdx: number,
+                    val: string
+                  ) => {
+                    const nextRows = rows.map((r, ri) => {
+                      const padded = Array.from(
+                        { length: colCount },
+                        (_, ci) => r[ci] ?? ''
+                      );
+                      if (ri === rIdx) {
+                        padded[cIdx] = val;
+                      }
+                      return padded;
+                    });
+                    updateBlock(block.id, { tableRows: nextRows });
+                  };
+
+                  const addRow = (afterRowIdx?: number) => {
+                    const newRow = Array.from({ length: colCount }, () => '');
+                    const nextRows = [...rows];
+                    const insertIdx =
+                      afterRowIdx !== undefined
+                        ? afterRowIdx + 1
+                        : nextRows.length;
+                    nextRows.splice(insertIdx, 0, newRow);
+                    updateBlock(block.id, { tableRows: nextRows });
+                    focusTableCell(block.id, insertIdx, 0);
+                  };
+
+                  const addColumn = () => {
+                    const nextRows = rows.map((r, ri) => {
+                      const padded = Array.from(
+                        { length: colCount },
+                        (_, ci) => r[ci] ?? ''
+                      );
+                      return [
+                        ...padded,
+                        ri === 0 && hasHeader ? `항목 ${colCount + 1}` : '',
+                      ];
+                    });
+                    updateBlock(block.id, { tableRows: nextRows });
+                    focusTableCell(block.id, 0, colCount);
+                  };
+
+                  const deleteRow = (rIdx: number) => {
+                    if (rows.length <= 1) return;
+                    const nextRows = rows.filter((_, ri) => ri !== rIdx);
+                    updateBlock(block.id, { tableRows: nextRows });
+                  };
+
+                  const deleteColumn = (cIdx: number) => {
+                    if (colCount <= 1) return;
+                    const nextRows = rows.map((r) =>
+                      Array.from(
+                        { length: colCount },
+                        (_, ci) => r[ci] ?? ''
+                      ).filter((_, ci) => ci !== cIdx)
+                    );
+                    updateBlock(block.id, { tableRows: nextRows });
+                  };
+
+                  return (
+                    <div className="my-2 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xs">
+                      {/* 표 상단 컨트롤 바 */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-slate-50 px-3.5 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-extrabold text-white">
+                            ⊞ 표 (Table)
+                          </span>
+                          <span className="text-[11px] font-semibold text-gray-500">
+                            {rows.length}행 × {colCount}열
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateBlock(block.id, {
+                                hasTableHeader: !hasHeader,
+                              })
+                            }
+                            className={`rounded-lg border px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                              hasHeader
+                                ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-100'
+                            }`}
+                          >
+                            {hasHeader ? '✓ 첫 줄 제목 행(Header) 사용 중' : '첫 줄 제목 행 켜기'}
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => addRow()}
+                            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
+                          >
+                            + 아래에 행 추가
+                          </button>
+                          <button
+                            type="button"
+                            onClick={addColumn}
+                            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
+                          >
+                            + 오른쪽에 열 추가
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 표 본문 그리드 */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-left text-sm">
+                          {colCount > 1 && (
+                            <thead>
+                              <tr className="bg-slate-100/70 border-b border-gray-200">
+                                {Array.from({ length: colCount }).map((_, cIdx) => (
+                                  <th
+                                    key={cIdx}
+                                    className="px-2 py-1 text-center border-r border-gray-200 last:border-r-0"
+                                  >
+                                    <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
+                                      <span>{cIdx + 1}열</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteColumn(cIdx)}
+                                        title={`${cIdx + 1}열 삭제`}
+                                        className="rounded px-1 text-gray-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
+                                      >
+                                        열 삭제 ✕
+                                      </button>
+                                    </div>
+                                  </th>
+                                ))}
+                                <th className="w-10 bg-slate-100/70" />
+                              </tr>
+                            </thead>
+                          )}
+                          <tbody>
+                            {rows.map((row, rIdx) => {
+                              const isHeaderRow = hasHeader && rIdx === 0;
+                              return (
+                                <tr
+                                  key={rIdx}
+                                  className={
+                                    isHeaderRow
+                                      ? 'bg-indigo-50/50 border-b-2 border-indigo-100'
+                                      : 'border-b border-gray-100 last:border-b-0 hover:bg-slate-50/60'
+                                  }
+                                >
+                                  {Array.from({ length: colCount }).map(
+                                    (_, cIdx) => {
+                                      const cellVal = row[cIdx] ?? '';
+                                      return (
+                                        <td
+                                          key={cIdx}
+                                          className="border-r border-gray-200 last:border-r-0 p-1.5 align-top min-w-[120px]"
+                                        >
+                                          <input
+                                            ref={(el) => {
+                                              tableCellRefs.current[
+                                                `${block.id}_${rIdx}_${cIdx}`
+                                              ] = el;
+                                            }}
+                                            type="text"
+                                            value={cellVal}
+                                            onChange={(e) =>
+                                              updateCell(
+                                                rIdx,
+                                                cIdx,
+                                                e.target.value
+                                              )
+                                            }
+                                            onPaste={(e) => {
+                                              const pasted =
+                                                e.clipboardData.getData(
+                                                  'text/plain'
+                                                );
+                                              // 엑셀/한글 등에서 탭(\t) 구분 표 데이터를 붙여넣은 경우 자동 분할 입력
+                                              if (
+                                                pasted &&
+                                                (pasted.includes('\t') ||
+                                                  pasted.includes('\n'))
+                                              ) {
+                                                e.preventDefault();
+                                                const pastedRows = pasted
+                                                  .replace(/\r\n/g, '\n')
+                                                  .trimEnd()
+                                                  .split('\n')
+                                                  .map((line) =>
+                                                    line.split('\t')
+                                                  );
+                                                const newRowCount = Math.max(
+                                                  rows.length,
+                                                  rIdx + pastedRows.length
+                                                );
+                                                const newColCount = Math.max(
+                                                  colCount,
+                                                  cIdx +
+                                                    Math.max(
+                                                      ...pastedRows.map(
+                                                        (pr) => pr.length
+                                                      )
+                                                    )
+                                                );
+                                                const nextRows = Array.from(
+                                                  { length: newRowCount },
+                                                  (_, ri) =>
+                                                    Array.from(
+                                                      { length: newColCount },
+                                                      (__, ci) =>
+                                                        rows[ri]?.[ci] ?? ''
+                                                    )
+                                                );
+                                                pastedRows.forEach(
+                                                  (pRow, pri) => {
+                                                    pRow.forEach(
+                                                      (pCell, pci) => {
+                                                        nextRows[rIdx + pri][
+                                                          cIdx + pci
+                                                        ] = pCell.trim();
+                                                      }
+                                                    );
+                                                  }
+                                                );
+                                                updateBlock(block.id, {
+                                                  tableRows: nextRows,
+                                                });
+                                              }
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.nativeEvent.isComposing)
+                                                return;
+                                              // 표 셀 안에서도 Ctrl+B(진하게), Ctrl+E(형광펜), Ctrl+U(밑줄), Ctrl+I(기울임) 단축키 작동
+                                              if (
+                                                (e.ctrlKey || e.metaKey) &&
+                                                !e.altKey
+                                              ) {
+                                                const key =
+                                                  e.key.toLowerCase();
+                                                const marker =
+                                                  key === 'b'
+                                                    ? '**'
+                                                    : key === 'e'
+                                                    ? '=='
+                                                    : key === 'u'
+                                                    ? '++'
+                                                    : key === 'i'
+                                                    ? '*'
+                                                    : null;
+                                                if (marker) {
+                                                  e.preventDefault();
+                                                  const inputEl =
+                                                    e.currentTarget;
+                                                  const s =
+                                                    inputEl.selectionStart ??
+                                                    cellVal.length;
+                                                  const endPos =
+                                                    inputEl.selectionEnd ??
+                                                    cellVal.length;
+                                                  const {
+                                                    newValue,
+                                                    newStart,
+                                                    newEnd,
+                                                  } =
+                                                    toggleInlineFormatSelection(
+                                                      cellVal,
+                                                      s,
+                                                      endPos,
+                                                      marker
+                                                    );
+                                                  updateCell(
+                                                    rIdx,
+                                                    cIdx,
+                                                    newValue
+                                                  );
+                                                  requestAnimationFrame(() => {
+                                                    inputEl.focus();
+                                                    inputEl.setSelectionRange(
+                                                      newStart,
+                                                      newEnd
+                                                    );
+                                                  });
+                                                  return;
+                                                }
+                                              }
+
+                                              // Tab / Shift+Tab 으로 셀 간 빠른 이동
+                                              if (e.key === 'Tab') {
+                                                e.preventDefault();
+                                                if (!e.shiftKey) {
+                                                  if (cIdx + 1 < colCount) {
+                                                    focusTableCell(
+                                                      block.id,
+                                                      rIdx,
+                                                      cIdx + 1
+                                                    );
+                                                  } else if (
+                                                    rIdx + 1 <
+                                                    rows.length
+                                                  ) {
+                                                    focusTableCell(
+                                                      block.id,
+                                                      rIdx + 1,
+                                                      0
+                                                    );
+                                                  } else {
+                                                    addRow(rows.length - 1);
+                                                  }
+                                                } else {
+                                                  if (cIdx - 1 >= 0) {
+                                                    focusTableCell(
+                                                      block.id,
+                                                      rIdx,
+                                                      cIdx - 1
+                                                    );
+                                                  } else if (rIdx - 1 >= 0) {
+                                                    focusTableCell(
+                                                      block.id,
+                                                      rIdx - 1,
+                                                      colCount - 1
+                                                    );
+                                                  }
+                                                }
+                                                return;
+                                              }
+
+                                              // Enter 입력 시 아래 행의 같은 열로 이동 (마지막 행이면 새 행 추가)
+                                              if (
+                                                e.key === 'Enter' &&
+                                                !e.shiftKey
+                                              ) {
+                                                e.preventDefault();
+                                                if (rIdx + 1 < rows.length) {
+                                                  focusTableCell(
+                                                    block.id,
+                                                    rIdx + 1,
+                                                    cIdx
+                                                  );
+                                                } else {
+                                                  addRow(rows.length - 1);
+                                                }
+                                              }
+                                            }}
+                                            placeholder={
+                                              isHeaderRow
+                                                ? `제목 ${cIdx + 1}`
+                                                : '내용 입력...'
+                                            }
+                                            className={`w-full rounded px-2 py-1 focus:bg-blue-50/40 focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                              isHeaderRow
+                                                ? 'font-extrabold text-indigo-950 placeholder:text-indigo-300'
+                                                : 'text-gray-800 placeholder:text-gray-300'
+                                            }`}
+                                          />
+                                          {hasInlineFormatting(cellVal) && (
+                                            <div className="mt-0.5 px-2 text-xs text-gray-700">
+                                              {renderInlineMarkdown(cellVal)}
+                                            </div>
+                                          )}
+                                        </td>
+                                      );
+                                    }
+                                  )}
+                                  <td className="w-10 px-1 text-center align-middle">
+                                    {rows.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteRow(rIdx)}
+                                        title={`${rIdx + 1}행 삭제`}
+                                        className="rounded p-1 text-[11px] text-gray-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-slate-50/50 px-3.5 py-1.5 text-[11px] text-gray-500">
+                        <span>
+                          💡 <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Tab</kbd> 다음 칸 ·{' '}
+                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Enter</kbd> 아래 칸(또는 행 추가) ·{' '}
+                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Ctrl+B</kbd> 진하게 ·{' '}
+                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Ctrl+E</kbd> 형광펜
+                        </span>
+                        <span>엑셀·한글 표 복사 후 셀에 붙여넣기(Ctrl+V) 지원</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 10. 구분선 블록 (Divider) */}
                 {block.type === 'divider' && (
                   <div className="py-3">
@@ -1194,115 +2103,349 @@ export default function NotionBlockEditor({
                   </div>
                 )}
 
-                {/* 11. 노션 스타일 이미지 블록 (드래그 앤 드롭 & 캡션 & 크기 조절) */}
-                {block.type === 'image' && (
-                  <div className="my-2">
-                    {block.imageUrl ? (
-                      <div className="space-y-2 rounded-2xl border border-gray-200 bg-slate-50/50 p-3">
-                        <div className="flex items-center justify-between gap-2 pb-1">
-                          <span className="text-[11px] font-bold text-gray-500">
-                            🖼️ 삽입된 교안 이미지
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {(
-                              [
-                                { key: 'sm', label: '작게 (50%)' },
-                                { key: 'md', label: '기본 (75%)' },
-                                { key: 'full', label: '가득 (100%)' },
-                              ] as { key: ImageSizeOption; label: string }[]
-                            ).map((sz) => (
-                              <button
-                                key={sz.key}
-                                type="button"
-                                onClick={() =>
-                                  updateBlock(block.id, { imageSize: sz.key })
-                                }
-                                className={`rounded-md px-2 py-0.5 text-[11px] font-bold transition ${
-                                  (block.imageSize || 'md') === sz.key
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
-                                }`}
-                              >
-                                {sz.label}
-                              </button>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                targetImageBlockIdRef.current = block.id;
-                                imageInputRef.current?.click();
-                              }}
-                              className="ml-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-100"
-                            >
-                              사진 변경
-                            </button>
-                          </div>
-                        </div>
+                {/* 11. 노션 스타일 이미지 블록 (단일 및 가로 다중 배치 지원) */}
+                {block.type === 'image' && (() => {
+                  const imgs = getBlockImages(block);
+                  const prevBlock = idx > 0 ? blocks[idx - 1] : null;
+                  const canMergeWithPrevImage =
+                    prevBlock &&
+                    prevBlock.type === 'image' &&
+                    getBlockImages(prevBlock).length > 0 &&
+                    imgs.length > 0;
 
-                        <div className="flex justify-center">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={block.imageUrl}
-                            alt={block.caption || '교안 이미지'}
-                            className={`rounded-xl border border-gray-200 object-contain shadow-xs ${
-                              block.imageSize === 'sm'
-                                ? 'max-w-xs'
-                                : block.imageSize === 'full'
-                                ? 'w-full'
-                                : 'max-w-xl w-full'
-                            }`}
-                          />
-                        </div>
+                  const syncBlockImages = (nextImgs: NotionImageItem[]) => {
+                    const first = nextImgs[0];
+                    updateBlock(block.id, {
+                      images: nextImgs,
+                      imageUrl: first ? first.url : '',
+                      caption: first ? first.caption || '' : '',
+                    });
+                  };
 
-                        <input
-                          type="text"
-                          value={block.caption || ''}
-                          onChange={(e) =>
-                            updateBlock(block.id, { caption: e.target.value })
-                          }
-                          placeholder="사진 아래에 들어갈 설명(캡션)을 입력하세요 (AI가 교안 분석 시 함께 참고합니다)..."
-                          className="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-center text-xs text-gray-600 placeholder:text-gray-400 focus:border-gray-200 focus:bg-white focus:outline-none"
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={async (e) => {
+                  return (
+                    <div
+                      className="my-2"
+                      onDragOver={(e) => {
+                        if (e.dataTransfer.types.includes('Files')) {
                           e.preventDefault();
-                          e.stopPropagation();
-                          setIsDraggingFileOverPage(false);
-                          if (
-                            e.dataTransfer.files &&
-                            e.dataTransfer.files.length > 0
-                          ) {
+                        }
+                      }}
+                      onDrop={async (e) => {
+                        if (
+                          e.dataTransfer.files &&
+                          e.dataTransfer.files.length > 0
+                        ) {
+                          const hasImg = Array.from(
+                            e.dataTransfer.files
+                          ).some((f) => f.type.startsWith('image/'));
+                          if (hasImg) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsDraggingFileOverPage(false);
                             setUploadingImageBlockId(block.id);
                             await handleImageFilesDrop(
                               e.dataTransfer.files,
                               undefined,
-                              block.id
+                              block.id,
+                              imgs.length > 0 ? 'append' : 'replace'
                             );
                             setUploadingImageBlockId(null);
                           }
-                        }}
-                        onClick={() => {
-                          targetImageBlockIdRef.current = block.id;
-                          imageInputRef.current?.click();
-                        }}
-                        className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/30 py-8 px-4 text-center transition hover:border-blue-400 hover:bg-blue-50/60"
-                      >
-                        <div className="text-3xl mb-1.5">🖼️</div>
-                        <p className="text-xs font-bold text-blue-900">
-                          {uploadingImageBlockId === block.id
-                            ? '사진 최적화 및 삽입 중...'
-                            : '이곳에 사진 파일을 드래그해서 놓거나 클릭하여 업로드하세요'}
-                        </p>
-                        <p className="text-[11px] text-gray-500 mt-0.5">
-                          PNG, JPG, GIF, WebP 지원 · 클립보드 이미지 붙여넣기(Ctrl+V) 가능
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                        }
+                      }}
+                    >
+                      {imgs.length > 0 ? (
+                        <div className="space-y-3 rounded-2xl border border-gray-200 bg-slate-50/50 p-3.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-gray-200/70">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-bold text-gray-700">
+                                🖼️ 교안 이미지{' '}
+                                {imgs.length > 1
+                                  ? `(가로 ${imgs.length}장 나란히 배치됨)`
+                                  : '(1장)'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  targetImageBlockIdRef.current = block.id;
+                                  imageUploadModeRef.current = 'append';
+                                  imageInputRef.current?.click();
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-extrabold text-white hover:bg-blue-700 transition cursor-pointer shadow-2xs"
+                              >
+                                <span>➕ 옆에 사진 가로로 추가</span>
+                              </button>
+
+                              {canMergeWithPrevImage && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!prevBlock) return;
+                                    const prevImgs = getBlockImages(prevBlock);
+                                    const merged = [...prevImgs, ...imgs];
+                                    const nextBlocks = blocks
+                                      .map((b) =>
+                                        b.id === prevBlock.id
+                                          ? {
+                                              ...b,
+                                              images: merged,
+                                              imageUrl: merged[0]?.url || '',
+                                              caption:
+                                                merged[0]?.caption ||
+                                                b.caption ||
+                                                '',
+                                            }
+                                          : b
+                                      )
+                                      .filter((b) => b.id !== block.id);
+                                    onChange(nextBlocks);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                                  title="바로 위에 있는 사진 블록과 합쳐서 가로로 나란히 배치합니다"
+                                >
+                                  ⬆️ 위 사진 옆에 가로로 합치기
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-1">
+                              {(
+                                [
+                                  {
+                                    key: 'sm',
+                                    label:
+                                      imgs.length > 1
+                                        ? '작게 (모아보기)'
+                                        : '작게 (50%)',
+                                  },
+                                  {
+                                    key: 'md',
+                                    label:
+                                      imgs.length > 1
+                                        ? '기본 크기'
+                                        : '기본 (75%)',
+                                  },
+                                  {
+                                    key: 'full',
+                                    label: '가득 (100%)',
+                                  },
+                                ] as { key: ImageSizeOption; label: string }[]
+                              ).map((sz) => (
+                                <button
+                                  key={sz.key}
+                                  type="button"
+                                  onClick={() =>
+                                    updateBlock(block.id, { imageSize: sz.key })
+                                  }
+                                  className={`rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                                    (block.imageSize || 'md') === sz.key
+                                      ? 'bg-blue-600 text-white'
+                                      : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  {sz.label}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  targetImageBlockIdRef.current = block.id;
+                                  imageUploadModeRef.current = 'replace';
+                                  imageInputRef.current?.click();
+                                }}
+                                className="ml-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer"
+                              >
+                                전체 교체
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 단일 이미지 vs 다중 이미지 가로 그리드 */}
+                          {imgs.length === 1 ? (
+                            <div className="space-y-2">
+                              <div className="flex justify-center">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={imgs[0].url}
+                                  alt={imgs[0].caption || '교안 이미지'}
+                                  className={`rounded-xl border border-gray-200 object-contain shadow-xs ${
+                                    block.imageSize === 'sm'
+                                      ? 'max-w-xs'
+                                      : block.imageSize === 'full'
+                                      ? 'w-full'
+                                      : 'max-w-xl w-full'
+                                  }`}
+                                />
+                              </div>
+                              <input
+                                type="text"
+                                value={imgs[0].caption || ''}
+                                onChange={(e) =>
+                                  syncBlockImages([
+                                    { ...imgs[0], caption: e.target.value },
+                                  ])
+                                }
+                                placeholder="사진 아래에 들어갈 설명(캡션)을 입력하세요..."
+                                className="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-center text-xs text-gray-600 placeholder:text-gray-400 focus:border-gray-200 focus:bg-white focus:outline-none"
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              className={`mx-auto grid gap-3 items-start ${
+                                imgs.length === 2
+                                  ? 'grid-cols-1 sm:grid-cols-2'
+                                  : imgs.length === 3
+                                  ? 'grid-cols-1 sm:grid-cols-3'
+                                  : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
+                              } ${
+                                block.imageSize === 'sm'
+                                  ? 'max-w-2xl'
+                                  : block.imageSize === 'full'
+                                  ? 'w-full'
+                                  : 'max-w-5xl'
+                              }`}
+                            >
+                              {imgs.map((imgItem, imgIdx) => (
+                                <div
+                                  key={imgIdx}
+                                  className="group/imgcard relative flex flex-col rounded-xl border border-gray-200 bg-white p-2 shadow-2xs"
+                                >
+                                  <div className="mb-1.5 flex items-center justify-between text-[10px] text-gray-400">
+                                    <span className="font-bold text-gray-500">
+                                      #{imgIdx + 1}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={imgIdx === 0}
+                                        onClick={() => {
+                                          const next = [...imgs];
+                                          const [moved] = next.splice(
+                                            imgIdx,
+                                            1
+                                          );
+                                          next.splice(imgIdx - 1, 0, moved);
+                                          syncBlockImages(next);
+                                        }}
+                                        title="왼쪽으로 순서 이동"
+                                        className="rounded px-1 py-0.5 hover:bg-gray-100 text-gray-600 disabled:opacity-25 cursor-pointer"
+                                      >
+                                        ◀
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={imgIdx === imgs.length - 1}
+                                        onClick={() => {
+                                          const next = [...imgs];
+                                          const [moved] = next.splice(
+                                            imgIdx,
+                                            1
+                                          );
+                                          next.splice(imgIdx + 1, 0, moved);
+                                          syncBlockImages(next);
+                                        }}
+                                        title="오른쪽으로 순서 이동"
+                                        className="rounded px-1 py-0.5 hover:bg-gray-100 text-gray-600 disabled:opacity-25 cursor-pointer"
+                                      >
+                                        ▶
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const next = imgs.filter(
+                                            (_, i) => i !== imgIdx
+                                          );
+                                          syncBlockImages(next);
+                                        }}
+                                        title="이 사진만 삭제"
+                                        className="rounded px-1 py-0.5 text-gray-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center justify-center overflow-hidden rounded-lg bg-slate-50">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={imgItem.url}
+                                      alt={
+                                        imgItem.caption ||
+                                        `교안 이미지 ${imgIdx + 1}`
+                                      }
+                                      className="max-h-72 w-full object-contain"
+                                    />
+                                  </div>
+
+                                  <input
+                                    type="text"
+                                    value={imgItem.caption || ''}
+                                    onChange={(e) => {
+                                      const next = imgs.map((it, i) =>
+                                        i === imgIdx
+                                          ? { ...it, caption: e.target.value }
+                                          : it
+                                      );
+                                      syncBlockImages(next);
+                                    }}
+                                    placeholder={`사진 ${imgIdx + 1} 설명(캡션)...`}
+                                    className="mt-1.5 w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-center text-xs text-gray-600 placeholder:text-gray-400 focus:border-gray-200 focus:bg-slate-50 focus:outline-none"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="text-center text-[11px] text-gray-400">
+                            💡 이 박스 위로 다른 사진 파일을 드래그해서 놓거나{' '}
+                            <strong className="text-blue-600">
+                              [+ 옆에 사진 가로로 추가]
+                            </strong>
+                            를 누르면 가로로 나란히 배치됩니다
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsDraggingFileOverPage(false);
+                            if (
+                              e.dataTransfer.files &&
+                              e.dataTransfer.files.length > 0
+                            ) {
+                              setUploadingImageBlockId(block.id);
+                              await handleImageFilesDrop(
+                                e.dataTransfer.files,
+                                undefined,
+                                block.id,
+                                'replace'
+                              );
+                              setUploadingImageBlockId(null);
+                            }
+                          }}
+                          onClick={() => {
+                            targetImageBlockIdRef.current = block.id;
+                            imageUploadModeRef.current = 'replace';
+                            imageInputRef.current?.click();
+                          }}
+                          className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/30 py-8 px-4 text-center transition hover:border-blue-400 hover:bg-blue-50/60"
+                        >
+                          <div className="text-3xl mb-1.5">🖼️</div>
+                          <p className="text-xs font-bold text-blue-900">
+                            {uploadingImageBlockId === block.id
+                              ? '사진 최적화 및 삽입 중...'
+                              : '이곳에 사진 파일(1장 또는 여러 장)을 드래그해서 놓거나 클릭하여 업로드하세요'}
+                          </p>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            여러 장을 한꺼번에 선택/드롭하면 자동으로 가로로 나란히 배치됩니다 · 클립보드 붙여넣기(Ctrl+V) 가능
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* 노션 슬래시(/) 또는 [+] 블록 선택 팝업 메뉴 (키보드 화살표 & 엔터 선택 지원) */}
                 {isSlashOpen && (
@@ -1385,6 +2528,7 @@ export default function NotionBlockEditor({
                   <option value="bullet">목록</option>
                   <option value="callout">콜아웃</option>
                   <option value="quote">인용/지문</option>
+                  <option value="table">표 (Table)</option>
                   <option value="code">코드블록</option>
                   <option value="mermaid">순서도(Mermaid)</option>
                   <option value="simulation">시뮬레이션(HTML/JS)</option>
@@ -1441,18 +2585,19 @@ export default function NotionBlockEditor({
         className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-400 hover:border-blue-300 hover:bg-blue-50/20 hover:text-blue-600 cursor-text transition"
       >
         <span>
-          + 여기를 클릭해 새 단락을 작성하거나, <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/code</kbd> (파이썬 코드), <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/mermaid</kbd> (순서도)를 입력해 보세요
+          + 여기를 클릭해 새 단락을 작성하거나, <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/표</kbd> (테이블), <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/code</kbd> (파이썬 코드), <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/mermaid</kbd> (순서도)를 입력해 보세요
         </span>
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
             targetImageBlockIdRef.current = null;
+            imageUploadModeRef.current = 'replace';
             imageInputRef.current?.click();
           }}
           className="rounded-lg bg-white border border-gray-200 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 shadow-2xs cursor-pointer"
         >
-          🖼️ 컴퓨터에서 사진 선택
+          🖼️ 컴퓨터에서 사진 선택 (여러 장 가로 배치 가능)
         </button>
       </div>
     </div>
@@ -1463,6 +2608,47 @@ export default function NotionBlockEditor({
     block: NotionBlock,
     idx: number
   ) {
+    // 0. 노션 스타일 인라인 서식 단축키:
+    // - Ctrl+B (또는 Cmd+B): **진하게** 토글
+    // - Ctrl+E (또는 Cmd+E): ==형광펜== 토글
+    // - Ctrl+U (또는 Cmd+U): ++밑줄++ 토글
+    // - Ctrl+I (또는 Cmd+I): *기울임* 토글
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.nativeEvent.isComposing) {
+      const key = e.key.toLowerCase();
+      const marker =
+        key === 'b'
+          ? '**'
+          : key === 'e'
+          ? '=='
+          : key === 'u'
+          ? '++'
+          : key === 'i'
+          ? '*'
+          : null;
+
+      if (marker) {
+        e.preventDefault();
+        const el = e.currentTarget;
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        const { newValue, newStart, newEnd } = toggleInlineFormatSelection(
+          block.content,
+          start,
+          end,
+          marker
+        );
+        updateBlock(block.id, { content: newValue });
+        requestAnimationFrame(() => {
+          const targetEl = blockRefs.current[block.id];
+          if (targetEl) {
+            targetEl.focus();
+            targetEl.setSelectionRange(newStart, newEnd);
+          }
+        });
+        return;
+      }
+    }
+
     // 슬래시 메뉴가 열려 있을 때 방향키/엔터로 바로 블록 선택
     if (slashMenuBlockId === block.id) {
       const items = getFilteredSlashItems();

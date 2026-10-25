@@ -6,6 +6,7 @@ import { ParsedLessonMaterial } from '@/utils/materialPayload';
 import {
   markdownToBlocks,
   blocksToMarkdown,
+  getBlockImages,
   NotionBlock,
 } from '@/utils/notionBlocks';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
@@ -27,26 +28,68 @@ interface LessonMaterialViewerProps {
 }
 
 /**
- * 마크다운 인라인 문법(**굵게**, `코드`)을 안전하게 렌더링합니다.
+ * 마크다운 인라인 문법(**굵게**, ==형광펜==, ++밑줄++, *기울임*, `코드`)을 안전하게 렌더링합니다.
  */
-function renderInlineMarkdown(text: string): React.ReactNode[] {
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+export function renderInlineMarkdown(text: string): React.ReactNode[] {
+  const tokenRegex =
+    /(\*\*==[^=*]+==\*\*|==\*\*[^=*]+\*\*==|\*\*[^*]+\*\*|==[^=]+==|\+\+[^+]+\+\+|`[^`]+`|\*[^*\n]+\*)/g;
+  const parts = text.split(tokenRegex);
   return parts.map((part, idx) => {
+    if (
+      (part.startsWith('**==') && part.endsWith('==**')) ||
+      (part.startsWith('==**') && part.endsWith('**=='))
+    ) {
+      return (
+        <mark
+          key={idx}
+          className="rounded bg-amber-200/90 px-1 py-0.5 font-extrabold text-gray-950"
+        >
+          {part.slice(4, -4)}
+        </mark>
+      );
+    }
     if (part.startsWith('**') && part.endsWith('**')) {
       return (
-        <strong key={idx} className="font-bold text-gray-900 bg-yellow-100/70 px-1 rounded">
+        <strong key={idx} className="font-extrabold text-gray-950">
           {part.slice(2, -2)}
         </strong>
+      );
+    }
+    if (part.startsWith('==') && part.endsWith('==')) {
+      return (
+        <mark
+          key={idx}
+          className="rounded bg-amber-200/85 px-1 py-0.5 font-semibold text-gray-900"
+        >
+          {part.slice(2, -2)}
+        </mark>
+      );
+    }
+    if (part.startsWith('++') && part.endsWith('++')) {
+      return (
+        <span
+          key={idx}
+          className="underline decoration-indigo-500 decoration-2 underline-offset-4"
+        >
+          {part.slice(2, -2)}
+        </span>
       );
     }
     if (part.startsWith('`') && part.endsWith('`')) {
       return (
         <code
           key={idx}
-          className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-indigo-700"
+          className="rounded bg-gray-100 border border-gray-200/80 px-1.5 py-0.5 font-mono text-xs text-indigo-700"
         >
           {part.slice(1, -1)}
         </code>
+      );
+    }
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+      return (
+        <em key={idx} className="italic text-gray-800">
+          {part.slice(1, -1)}
+        </em>
       );
     }
     return <span key={idx}>{part}</span>;
@@ -201,8 +244,97 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
           );
         }
 
+        if (block.type === 'table') {
+          const rows = block.tableRows || [];
+          if (rows.length === 0) return null;
+          const hasHeader = block.hasTableHeader !== false;
+
+          return (
+            <div
+              key={block.id}
+              className="my-4 overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-2xs"
+            >
+              <table className="w-full border-collapse text-left text-sm">
+                {hasHeader && rows.length > 0 && (
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-slate-50/90">
+                      {rows[0].map((cell, cIdx) => (
+                        <th
+                          key={cIdx}
+                          className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 font-extrabold text-gray-900 leading-snug whitespace-pre-wrap"
+                        >
+                          {renderInlineMarkdown(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                )}
+                <tbody className="divide-y divide-gray-200">
+                  {(hasHeader ? rows.slice(1) : rows).map((row, rIdx) => (
+                    <tr
+                      key={rIdx}
+                      className="hover:bg-slate-50/40 transition-colors"
+                    >
+                      {row.map((cell, cIdx) => (
+                        <td
+                          key={cIdx}
+                          className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 text-gray-700 leading-snug whitespace-pre-wrap align-top"
+                        >
+                          {renderInlineMarkdown(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+
         if (block.type === 'image') {
-          if (!block.imageUrl) return null;
+          const imgs = getBlockImages(block);
+          if (imgs.length === 0) return null;
+
+          if (imgs.length > 1) {
+            const gridColsClass =
+              imgs.length === 2
+                ? 'grid-cols-1 sm:grid-cols-2'
+                : imgs.length === 3
+                ? 'grid-cols-1 sm:grid-cols-3'
+                : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
+
+            return (
+              <div
+                key={block.id}
+                className={`my-4 grid gap-4 ${gridColsClass} ${
+                  block.imageSize === 'md' ? 'max-w-4xl mx-auto' : 'w-full'
+                }`}
+              >
+                {imgs.map((imgItem, iIdx) => (
+                  <figure
+                    key={iIdx}
+                    className="flex flex-col items-center overflow-hidden rounded-2xl border border-gray-200 bg-gray-50/70 p-2 shadow-2xs"
+                  >
+                    <div className="flex w-full items-center justify-center overflow-hidden rounded-xl bg-white">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={imgItem.url}
+                        alt={imgItem.caption || `수업 교안 이미지 ${iIdx + 1}`}
+                        className="w-full h-auto object-contain max-h-[420px]"
+                      />
+                    </div>
+                    {imgItem.caption && (
+                      <figcaption className="mt-2 text-xs text-gray-600 font-medium text-center px-1">
+                        ▲ {renderInlineMarkdown(imgItem.caption)}
+                      </figcaption>
+                    )}
+                  </figure>
+                ))}
+              </div>
+            );
+          }
+
+          const singleImg = imgs[0];
           const widthClass =
             block.imageSize === 'sm'
               ? 'max-w-xs'
@@ -217,14 +349,14 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={block.imageUrl}
-                  alt={block.caption || '수업 교안 이미지'}
+                  src={singleImg.url}
+                  alt={singleImg.caption || '수업 교안 이미지'}
                   className="w-full h-auto object-contain max-h-[520px]"
                 />
               </div>
-              {block.caption && (
+              {singleImg.caption && (
                 <figcaption className="mt-2 text-xs text-gray-500 font-medium text-center">
-                  ▲ {block.caption}
+                  ▲ {renderInlineMarkdown(singleImg.caption)}
                 </figcaption>
               )}
             </figure>
