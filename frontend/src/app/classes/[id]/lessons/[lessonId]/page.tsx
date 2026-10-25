@@ -118,7 +118,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
               <span
                 className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${
                   isClosed
@@ -128,6 +128,21 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
               >
                 {isClosed ? '🔴 마감됨' : '🟢 질문 접수 중'}
               </span>
+              {parsedMaterial.subjectCategory && (
+                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 border border-indigo-100">
+                  📁 {parsedMaterial.subjectCategory}
+                  {parsedMaterial.unitCategory ? ` > ${parsedMaterial.unitCategory}` : ''}
+                  {parsedMaterial.sessionNumber ? ` · ${parsedMaterial.sessionNumber}차시` : ''}
+                </span>
+              )}
+              {isTeacher && parsedMaterial.sourceMaterialId && (
+                <Link
+                  href={`/materials/${parsedMaterial.sourceMaterialId}/edit`}
+                  className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-bold text-purple-700 border border-purple-200 hover:bg-purple-100 transition"
+                >
+                  <span>🔗 원본 교안 연동됨 (모든 분반 실시간 동기화)</span>
+                </Link>
+              )}
               {lesson.deadline && (
                 <span className="text-xs text-gray-400">
                   마감:{' '}

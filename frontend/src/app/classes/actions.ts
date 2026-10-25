@@ -69,7 +69,7 @@ export async function joinClass(formData: FormData) {
   }
 
   const cleanCode = joinCode.trim().toUpperCase();
-  if (cleanCode.length !== 6) {
+  if (cleanCode.length !== 6 || cleanCode.startsWith('#')) {
     return { error: '참여 코드는 6자리 영숫자입니다.' };
   }
 

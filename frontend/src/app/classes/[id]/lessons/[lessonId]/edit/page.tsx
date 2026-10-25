@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import NotionLessonStudio from '@/components/NotionLessonStudio';
+import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 import { Lesson } from '@/types/database.types';
 
 interface EditLessonPageProps {
@@ -44,12 +45,17 @@ export default async function EditLessonPage({ params }: EditLessonPageProps) {
     notFound();
   }
 
+  const { existingSubjects, existingUnits } =
+    await loadTeacherMaterialLibraryContext(user.id);
+
   return (
     <NotionLessonStudio
       classId={classId}
       className={classData.name}
       mode="edit"
       initialLesson={lessonData as Lesson}
+      existingSubjects={existingSubjects}
+      existingUnits={existingUnits}
     />
   );
 }

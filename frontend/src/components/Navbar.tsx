@@ -20,14 +20,35 @@ export default async function Navbar() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-100 bg-white/80 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-[96vw] items-center justify-between px-4 sm:px-8">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white font-extrabold text-lg shadow-sm">
-            Q
-          </span>
-          <span className="text-xl font-bold tracking-tight text-gray-900">
-            Q-Class
-          </span>
-        </Link>
+        <div className="flex items-center gap-6">
+          <Link href="/" className="flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white font-extrabold text-lg shadow-sm">
+              Q
+            </span>
+            <span className="text-xl font-bold tracking-tight text-gray-900">
+              Q-Class
+            </span>
+          </Link>
+
+          {user && profile?.role === 'teacher' && (
+            <div className="hidden sm:flex items-center gap-1.5 rounded-xl bg-slate-100/90 p-1 border border-slate-200/70">
+              <Link
+                href="/"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-white hover:text-blue-600 hover:shadow-xs transition"
+              >
+                <span>🏫</span>
+                <span>학급(분반) 관리</span>
+              </Link>
+              <Link
+                href="/materials"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 transition"
+              >
+                <span>📚</span>
+                <span>교안 보관함 · 제작 스튜디오</span>
+              </Link>
+            </div>
+          )}
+        </div>
 
         <nav className="flex items-center gap-4">
           {user ? (

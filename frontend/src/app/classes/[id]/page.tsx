@@ -3,7 +3,13 @@ import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import CopyCodeButton from '@/components/CopyCodeButton';
 import LessonListWithReorder from '@/components/LessonListWithReorder';
-import { sortLessonsByOrder } from '@/utils/materialPayload';
+import ImportMaterialModal from '@/components/ImportMaterialModal';
+import {
+  isMaterialLibraryClass,
+  parseLessonMaterial,
+  sortLessonsByOrder,
+} from '@/utils/materialPayload';
+import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 import { Profile, Lesson } from '@/types/database.types';
 
 interface ClassDetailPageProps {
@@ -30,7 +36,18 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
     notFound();
   }
 
+  if (isMaterialLibraryClass(classData)) {
+    redirect('/materials');
+  }
+
   const isTeacher = classData.teacher_id === user.id;
+
+  // 교사일 경우 먼저 교안 보관함 동기화 및 보관함 목록 로드
+  let masterMaterials: Lesson[] = [];
+  if (isTeacher) {
+    const libCtx = await loadTeacherMaterialLibraryContext(user.id);
+    masterMaterials = libCtx.masterMaterials;
+  }
 
   // 레슨 목록 조회 및 교사가 지정한 순서(displayOrder) 기준 정렬
   const { data: rawLessons } = await supabase
@@ -40,6 +57,9 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
     .order('created_at', { ascending: false });
 
   const lessons = sortLessonsByOrder((rawLessons || []) as Lesson[]);
+  const alreadyImportedSourceIds = lessons
+    .map((l) => parseLessonMaterial(l).sourceMaterialId)
+    .filter((id): id is string => Boolean(id));
 
   // 참여 학생 목록 조회
   const { data: members } = await supabase
@@ -78,13 +98,26 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
           </div>
 
           {isTeacher && (
-            <div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <ImportMaterialModal
+                classId={classId}
+                className={classData.name}
+                masterMaterials={masterMaterials}
+                alreadyImportedSourceIds={alreadyImportedSourceIds}
+              />
               <Link
                 href={`/classes/${classId}/lessons/new`}
-                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2.5 text-xs font-extrabold text-blue-700 shadow-xs transition hover:bg-blue-100"
               >
-                <span className="text-base">📝</span>
-                <span>+ 새 레슨 & 노션형 교안 작성</span>
+                <span>📝</span>
+                <span>+ 새 교안 직접 작성</span>
+              </Link>
+              <Link
+                href="/materials"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs font-bold text-gray-700 shadow-xs transition hover:bg-gray-50"
+              >
+                <span>📂</span>
+                <span>교안 보관함 관리</span>
               </Link>
             </div>
           )}

@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import NotionLessonStudio from '@/components/NotionLessonStudio';
+import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 
 interface NewLessonPageProps {
   params: Promise<{ id: string }>;
@@ -32,5 +33,15 @@ export default async function NewLessonPage({ params }: NewLessonPageProps) {
     redirect(`/classes/${classId}`);
   }
 
-  return <NotionLessonStudio classId={classId} className={classData.name} />;
+  const { existingSubjects, existingUnits } =
+    await loadTeacherMaterialLibraryContext(user.id);
+
+  return (
+    <NotionLessonStudio
+      classId={classId}
+      className={classData.name}
+      existingSubjects={existingSubjects}
+      existingUnits={existingUnits}
+    />
+  );
 }

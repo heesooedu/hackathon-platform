@@ -4,7 +4,10 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Lesson } from '@/types/database.types';
 import { reorderLessonsAction } from '@/app/lessons/actions';
-import { hasActualLessonMaterial } from '@/utils/materialPayload';
+import {
+  hasActualLessonMaterial,
+  parseLessonMaterial,
+} from '@/utils/materialPayload';
 import ToggleLessonStatusButton from '@/components/ToggleLessonStatusButton';
 import LessonManageActions from '@/components/LessonManageActions';
 
@@ -98,6 +101,7 @@ export default function LessonListWithReorder({
               : false;
             const isClosed = lesson.status === 'closed' || isDeadlinePassed;
             const hasMaterial = hasActualLessonMaterial(lesson);
+            const parsedMeta = parseLessonMaterial(lesson);
             const isBeingDragged = draggedIdx === idx;
             const isDragTarget = dragOverIdx === idx && draggedIdx !== idx;
 
@@ -198,6 +202,20 @@ export default function LessonListWithReorder({
                         {hasMaterial && (
                           <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 border border-indigo-100">
                             📖 수업 교안 포함
+                          </span>
+                        )}
+                        {parsedMeta.subjectCategory && (
+                          <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-100">
+                            📁 {parsedMeta.subjectCategory}
+                            {parsedMeta.unitCategory ? ` · ${parsedMeta.unitCategory}` : ''}
+                          </span>
+                        )}
+                        {isTeacher && parsedMeta.sourceMaterialId && (
+                          <span
+                            title="교안 보관함의 원본 교안과 실시간 연동되어 있습니다. 수정이나 질문 패치 시 다른 분반에도 동기화됩니다."
+                            className="inline-flex items-center rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-bold text-purple-700 border border-purple-100"
+                          >
+                            🔗 보관함 연동
                           </span>
                         )}
                       </div>

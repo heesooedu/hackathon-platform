@@ -3,6 +3,8 @@ import { createClient } from '@/utils/supabase/server';
 import { Profile, ClassItem } from '@/types/database.types';
 import CreateClassModal from '@/components/CreateClassModal';
 import JoinClassModal from '@/components/JoinClassModal';
+import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
+import { isMaterialLibraryClass } from '@/utils/materialPayload';
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -11,6 +13,8 @@ export default async function HomePage() {
   let profile: Profile | null = null;
   let teacherClasses: ClassItem[] = [];
   let studentClasses: ClassItem[] = [];
+  let masterMaterialCount = 0;
+  let subjectCount = 0;
 
   if (user) {
     // 1. 프로필 조회
@@ -21,18 +25,12 @@ export default async function HomePage() {
       .single();
     profile = data as Profile | null;
 
-    // 2. 교사일 경우: 자신이 개설한 클래스 목록 조회
+    // 2. 교사일 경우: 교안 보관함 및 자신이 개설한 일반 클래스(분반) 목록 조회
     if (profile?.role === 'teacher') {
-      const { data: cData } = await supabase
-        .from('classes')
-        .select('*, class_members(count)')
-        .eq('teacher_id', user.id)
-        .order('created_at', { ascending: false });
-
-      teacherClasses = (cData || []).map((c: any) => ({
-        ...c,
-        member_count: c.class_members?.[0]?.count || 0,
-      }));
+      const libCtx = await loadTeacherMaterialLibraryContext(user.id);
+      teacherClasses = libCtx.teacherClasses;
+      masterMaterialCount = libCtx.masterMaterials.length;
+      subjectCount = libCtx.existingSubjects.length;
     }
 
     // 3. 학생일 경우: 자신이 참여한 클래스 목록 조회
@@ -43,7 +41,9 @@ export default async function HomePage() {
         .eq('student_id', user.id)
         .order('joined_at', { ascending: false });
 
-      studentClasses = (mData || []).map((m: any) => m.class as ClassItem).filter(Boolean);
+      studentClasses = (mData || [])
+        .map((m: any) => m.class as ClassItem)
+        .filter((c) => Boolean(c) && !isMaterialLibraryClass(c));
     }
   }
 
@@ -69,9 +69,18 @@ export default async function HomePage() {
                 </p>
               </div>
 
-              <div>
+              <div className="flex flex-wrap items-center gap-2.5">
                 {profile?.role === 'teacher' ? (
-                  <CreateClassModal />
+                  <>
+                    <Link
+                      href="/materials"
+                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:bg-indigo-700 transition"
+                    >
+                      <span>📚</span>
+                      <span>교안 보관함 · 제작 스튜디오</span>
+                    </Link>
+                    <CreateClassModal />
+                  </>
                 ) : (
                   <JoinClassModal />
                 )}
@@ -79,11 +88,51 @@ export default async function HomePage() {
             </div>
           </div>
 
+          {/* 교사 전용: 과목·단원별 교안 보관함 & 분반(A·B·C·D반) 공유 안내 카드 */}
+          {profile?.role === 'teacher' && (
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/90 via-blue-50/60 to-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center rounded-lg bg-indigo-600 px-2.5 py-0.5 text-xs font-extrabold text-white">
+                      📚 통합 교안 스튜디오
+                    </span>
+                    <span className="text-xs font-bold text-indigo-700">
+                      등록된 과목 {subjectCount}개 · 보관된 원본 교안 {masterMaterialCount}차시
+                    </span>
+                  </div>
+                  <h2 className="text-lg font-extrabold text-gray-900">
+                    교안은 한 번만 만들고, 여러 분반(A·B·C·D반)에서 함께 불러와 수업하세요
+                  </h2>
+                  <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+                    <strong>[과목 → 단원 → 차시]</strong> 구조로 교안을 체계적으로 분류·보관하고 여러 학급에 동시 배포할 수 있습니다.
+                    어느 한 분반에서 교안을 다듬거나 학생 질문 기반 AI 보충 설명을 패치하면 연동된 모든 분반 교안에 즉시 동기화됩니다.
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Link
+                    href="/materials"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-xs font-extrabold text-indigo-700 shadow-xs hover:bg-indigo-50 transition"
+                  >
+                    <span>📂 교안 보관함 열기</span>
+                  </Link>
+                  <Link
+                    href="/materials/new"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-indigo-700 transition"
+                  >
+                    <span>✨ + 새 교안 제작</span>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 내 클래스 섹션 */}
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900">
-                {profile?.role === 'teacher' ? '내가 개설한 클래스' : '내가 참여 중인 클래스'}
+                {profile?.role === 'teacher' ? '내가 개설한 학급 (분반 A·B·C·D)' : '내가 참여 중인 클래스'}
               </h2>
               <span className="text-sm text-gray-500">
                 총 {profile?.role === 'teacher' ? teacherClasses.length : studentClasses.length}개

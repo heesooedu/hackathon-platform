@@ -5,6 +5,22 @@ import {
   AiLessonAnalysisResult,
 } from '@/types/database.types';
 
+/**
+ * 교사별 독립 '교안 보관함(Master Material Library)'을 기존 classes/lessons RLS 스키마 위에서
+ * 별도 마이그레이션 없이 완벽 호환되도록 저장하기 위한 시스템 컨테이너 클래스 식별자입니다.
+ */
+export const MATERIAL_LIBRARY_CLASS_NAME = '__QCLASS_MATERIAL_LIBRARY__';
+
+export function isMaterialLibraryClass(classNameOrItem: string | { name?: string; join_code?: string }): boolean {
+  if (typeof classNameOrItem === 'string') {
+    return classNameOrItem === MATERIAL_LIBRARY_CLASS_NAME;
+  }
+  return (
+    classNameOrItem.name === MATERIAL_LIBRARY_CLASS_NAME ||
+    Boolean(classNameOrItem.join_code && classNameOrItem.join_code.startsWith('#'))
+  );
+}
+
 export interface ParsedLessonMaterial {
   materialType: MaterialType;
   markdownContent: string;
@@ -13,6 +29,16 @@ export interface ParsedLessonMaterial {
   appliedPatches: AppliedPatchItem[];
   aiAnalysis: AiLessonAnalysisResult | null;
   displayOrder?: number | null;
+  /** 교안 분류 메타데이터: 과목(대분류 폴더) */
+  subjectCategory?: string | null;
+  /** 교안 분류 메타데이터: 단원(소분류) */
+  unitCategory?: string | null;
+  /** 차시 번호 (예: 1, 2, 3...) */
+  sessionNumber?: number | null;
+  /** 노션 페이지 아이콘 (예: '💻', '🧪') */
+  pageIcon?: string | null;
+  /** 교안 보관함의 원본(Master) 교안 ID (분반 간 실시간 연동용) */
+  sourceMaterialId?: string | null;
 }
 
 const META_PREFIX = '<!--__PEDAGOGY_V2_META__:';
@@ -27,11 +53,15 @@ interface EmbeddedMetaEnvelope {
   appliedPatches: AppliedPatchItem[];
   aiAnalysis: AiLessonAnalysisResult | null;
   displayOrder?: number | null;
+  subjectCategory?: string | null;
+  unitCategory?: string | null;
+  sessionNumber?: number | null;
+  pageIcon?: string | null;
+  sourceMaterialId?: string | null;
 }
 
 /**
- * lessons 레코드에서 교안 데이터(마크다운, HTML, 업로드 파일명, 적용된 패치 목록, AI 진단 결과)를 추출합니다.
- * 신규 컬럼(material_markdown 등)이 있는 경우와 기존 material_html 단일 컬럼만 있는 경우 모두 완벽히 호환됩니다.
+ * lessons 레코드에서 교안 데이터(마크다운, HTML, 업로드 파일명, 적용된 패치 목록, AI 진단 결과, 과목/단원/연동ID)를 추출합니다.
  */
 export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
   const rawField = lesson.material_html || '';
@@ -57,6 +87,12 @@ export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
         aiAnalysis: parsed.aiAnalysis || lesson.ai_review_json || null,
         displayOrder:
           typeof parsed.displayOrder === 'number' ? parsed.displayOrder : null,
+        subjectCategory: parsed.subjectCategory || null,
+        unitCategory: parsed.unitCategory || null,
+        sessionNumber:
+          typeof parsed.sessionNumber === 'number' ? parsed.sessionNumber : null,
+        pageIcon: parsed.pageIcon || null,
+        sourceMaterialId: parsed.sourceMaterialId || null,
       };
     } catch (e) {
       console.error('Failed to parse embedded lesson material meta:', e);
@@ -91,6 +127,11 @@ export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
       fileName: lesson.material_file_name || null,
       appliedPatches: patches,
       aiAnalysis: lesson.ai_review_json || null,
+      subjectCategory: null,
+      unitCategory: null,
+      sessionNumber: null,
+      pageIcon: null,
+      sourceMaterialId: null,
     };
   }
 
@@ -104,6 +145,11 @@ export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
       fileName: null,
       appliedPatches: [],
       aiAnalysis: null,
+      subjectCategory: null,
+      unitCategory: null,
+      sessionNumber: null,
+      pageIcon: null,
+      sourceMaterialId: null,
     };
   }
 
@@ -120,6 +166,11 @@ export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
     fileName: null,
     appliedPatches: [],
     aiAnalysis: null,
+    subjectCategory: null,
+    unitCategory: null,
+    sessionNumber: null,
+    pageIcon: null,
+    sourceMaterialId: null,
   };
 }
 
@@ -132,7 +183,12 @@ export function serializeLessonMaterial(payload: ParsedLessonMaterial): string {
     payload.htmlContent.trim().length > 0 ||
     payload.appliedPatches.length > 0 ||
     payload.aiAnalysis !== null ||
-    typeof payload.displayOrder === 'number';
+    typeof payload.displayOrder === 'number' ||
+    Boolean(payload.subjectCategory) ||
+    Boolean(payload.unitCategory) ||
+    typeof payload.sessionNumber === 'number' ||
+    Boolean(payload.pageIcon) ||
+    Boolean(payload.sourceMaterialId);
 
   if (!hasContent) {
     return '';
@@ -148,6 +204,12 @@ export function serializeLessonMaterial(payload: ParsedLessonMaterial): string {
     aiAnalysis: payload.aiAnalysis,
     displayOrder:
       typeof payload.displayOrder === 'number' ? payload.displayOrder : null,
+    subjectCategory: payload.subjectCategory || null,
+    unitCategory: payload.unitCategory || null,
+    sessionNumber:
+      typeof payload.sessionNumber === 'number' ? payload.sessionNumber : null,
+    pageIcon: payload.pageIcon || null,
+    sourceMaterialId: payload.sourceMaterialId || null,
   };
 
   const jsonStr = JSON.stringify(envelope);
@@ -178,17 +240,19 @@ export function hasActualLessonMaterial(lesson: Lesson): boolean {
 }
 
 /**
- * 교사가 지정한 displayOrder 순서를 우선으로 하고, 지정되지 않은 레슨은 최신 생성순으로 정렬합니다.
+ * 교사가 지정한 displayOrder(또는 sessionNumber) 순서를 우선으로 하고, 지정되지 않은 레슨은 최신 생성순으로 정렬합니다.
  */
 export function sortLessonsByOrder(lessons: Lesson[]): Lesson[] {
   return [...lessons].sort((a, b) => {
-    const orderA = parseLessonMaterial(a).displayOrder;
-    const orderB = parseLessonMaterial(b).displayOrder;
+    const metaA = parseLessonMaterial(a);
+    const metaB = parseLessonMaterial(b);
+    const orderA = metaA.displayOrder ?? metaA.sessionNumber;
+    const orderB = metaB.displayOrder ?? metaB.sessionNumber;
 
     const hasOrderA = typeof orderA === 'number';
     const hasOrderB = typeof orderB === 'number';
 
-    if (hasOrderA && hasOrderB) {
+    if (hasOrderA && hasOrderB && orderA !== orderB) {
       return orderA - orderB;
     }
     if (hasOrderA && !hasOrderB) return -1;
@@ -203,6 +267,12 @@ export function sortLessonsByOrder(lessons: Lesson[]): Lesson[] {
  */
 export function getReadableMaterialTextForAi(parsed: ParsedLessonMaterial): string {
   const parts: string[] = [];
+
+  if (parsed.subjectCategory || parsed.unitCategory) {
+    parts.push(
+      `[교안 분류: ${parsed.subjectCategory || '일반'} > ${parsed.unitCategory || '전체 단원'}]`
+    );
+  }
 
   if (parsed.fileName) {
     parts.push(`[업로드된 교안 파일명: ${parsed.fileName}]`);
@@ -219,7 +289,6 @@ export function getReadableMaterialTextForAi(parsed: ParsedLessonMaterial): stri
   }
 
   if (parsed.htmlContent.trim()) {
-    // HTML의 경우 너무 길면 핵심 텍스트와 구조를 잘라서 전달
     const htmlSnippet =
       parsed.htmlContent.length > 6000
         ? parsed.htmlContent.slice(0, 6000) + '\n...(중략)...'

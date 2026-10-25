@@ -7,6 +7,8 @@ import {
   createLesson,
   updateLessonAction,
   deleteLessonAction,
+  saveMasterMaterialAction,
+  deleteMasterMaterialAction,
   parseMaterialFileAction,
 } from '@/app/lessons/actions';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
@@ -23,15 +25,36 @@ import {
   SAMPLE_PHYSICS_MARKDOWN,
 } from '@/utils/sampleMaterials';
 import { parseLessonMaterial } from '@/utils/materialPayload';
-import { Lesson, MaterialType } from '@/types/database.types';
+import { Lesson, MaterialType, ClassItem } from '@/types/database.types';
 
-const PAGE_ICONS = ['📖', '📘', '📐', '🧪', '🌍', '🏛️', '🎨', '💻', '📝', '🎓'];
+const PAGE_ICONS = ['📖', '💻', '📘', '📐', '🧪', '🌍', '🏛️', '🎨', '📝', '🎓'];
 
-interface NotionLessonStudioProps {
-  classId: string;
-  className: string;
-  mode?: 'create' | 'edit';
+const DEFAULT_SUBJECT_SUGGESTIONS = [
+  '정보',
+  '물리학 I',
+  '수학',
+  '통합사회',
+  '인공지능 기초',
+  '통합과학',
+];
+
+export interface NotionLessonStudioProps {
+  classId?: string;
+  className?: string;
+  mode?: 'create' | 'edit' | 'library-create' | 'library-edit';
   initialLesson?: Lesson;
+  /** 교사가 보유한 전체 일반 학급(분반 A, B, C, D 등) 목록 */
+  teacherClasses?: ClassItem[];
+  /** 이미 이 원본 교안이 배포/연동된 학급 ID 목록 */
+  alreadyLinkedClassIds?: string[];
+  /** 기존 교안들에 등록된 과목 목록 (자동완성 추천용) */
+  existingSubjects?: string[];
+  /** 기존 교안들에 등록된 단원 목록 (자동완성 추천용) */
+  existingUnits?: string[];
+  /** URL 쿼리로 전달된 기본 과목/단원/배포 대상 학급 */
+  defaultSubject?: string;
+  defaultUnit?: string;
+  defaultDeployClassId?: string;
 }
 
 function toDatetimeLocalValue(isoString: string | null | undefined): string {
@@ -48,23 +71,46 @@ function toDatetimeLocalValue(isoString: string | null | undefined): string {
 }
 
 export default function NotionLessonStudio({
-  classId,
-  className,
+  classId = '',
+  className = '',
   mode = 'create',
   initialLesson,
+  teacherClasses = [],
+  alreadyLinkedClassIds = [],
+  existingSubjects = [],
+  existingUnits = [],
+  defaultSubject = '',
+  defaultUnit = '',
+  defaultDeployClassId = '',
 }: NotionLessonStudioProps) {
   const router = useRouter();
-  const isEditMode = mode === 'edit' && !!initialLesson;
+  const isLibraryMode = mode === 'library-create' || mode === 'library-edit';
+  const isEditMode = (mode === 'edit' || mode === 'library-edit') && !!initialLesson;
   const initialParsed = initialLesson ? parseLessonMaterial(initialLesson) : null;
 
-  const [pageIcon, setPageIcon] = useState('📖');
+  const [pageIcon, setPageIcon] = useState(initialParsed?.pageIcon || '📖');
   const [title, setTitle] = useState(initialLesson?.title || '');
   const [learningObjective, setLearningObjective] = useState(
     initialLesson?.learning_objective || ''
   );
+  const [subjectCategory, setSubjectCategory] = useState(
+    initialParsed?.subjectCategory || defaultSubject || (className || '정보')
+  );
+  const [unitCategory, setUnitCategory] = useState(
+    initialParsed?.unitCategory || defaultUnit || '1단원. 핵심 개념과 실습'
+  );
+  const [sessionNumber, setSessionNumber] = useState<string>(
+    initialParsed?.sessionNumber !== null && initialParsed?.sessionNumber !== undefined
+      ? String(initialParsed.sessionNumber)
+      : '1'
+  );
   const [deadline, setDeadline] = useState(() =>
     toDatetimeLocalValue(initialLesson?.deadline)
   );
+  const [selectedDeployClassIds, setSelectedDeployClassIds] = useState<string[]>(() =>
+    defaultDeployClassId ? [defaultDeployClassId] : []
+  );
+
   const [materialType, setMaterialType] = useState<MaterialType>(
     initialParsed?.materialType || 'markdown'
   );
@@ -88,9 +134,38 @@ export default function NotionLessonStudio({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const mergedSubjectSuggestions = Array.from(
+    new Set([...existingSubjects, ...DEFAULT_SUBJECT_SUGGESTIONS].filter(Boolean))
+  );
+  const mergedUnitSuggestions = Array.from(
+    new Set(
+      [
+        ...existingUnits,
+        '1단원. 기초 개념과 원리',
+        '2단원. 심화 탐구와 실습',
+        '3단원. 프로젝트와 문제 해결',
+      ].filter(Boolean)
+    )
+  );
+
   function cyclePageIcon() {
     const nextIdx = (PAGE_ICONS.indexOf(pageIcon) + 1) % PAGE_ICONS.length;
     setPageIcon(PAGE_ICONS[nextIdx]);
+  }
+
+  function toggleDeployClass(targetId: string) {
+    setSelectedDeployClassIds((prev) =>
+      prev.includes(targetId)
+        ? prev.filter((id) => id !== targetId)
+        : [...prev, targetId]
+    );
+  }
+
+  function selectAllUnlinkedClasses() {
+    const unlinked = teacherClasses
+      .filter((c) => !alreadyLinkedClassIds.includes(c.id))
+      .map((c) => c.id);
+    setSelectedDeployClassIds(unlinked);
   }
 
   function applySampleTemplate(type: 'general' | 'math' | 'physics' | 'html') {
@@ -98,6 +173,9 @@ export default function NotionLessonStudio({
     setPreviewMode(false);
     if (type === 'general') {
       setPageIcon('🏛️');
+      setSubjectCategory('통합사회');
+      setUnitCategory('2단원. 인권 보장과 헌법');
+      setSessionNumber('2');
       setTitle('2차시: 시민 혁명과 기본권(참정권·사회권)의 확장');
       setLearningObjective(
         '천부인권 사상과 시민 혁명의 의의를 이해하고, 초기 시민 혁명의 한계가 참정권 확대 운동 및 사회권 등장으로 이어진 과정을 설명할 수 있다.'
@@ -108,6 +186,9 @@ export default function NotionLessonStudio({
       setUploadSuccessBadge('인문/사회 노션 교안 템플릿 로드됨');
     } else if (type === 'math') {
       setPageIcon('📐');
+      setSubjectCategory('수학');
+      setUnitCategory('2단원. 이차함수와 그래프');
+      setSessionNumber('3');
       setTitle('3차시: 이차함수 y=ax²+bx+c의 그래프와 계수의 역할');
       setLearningObjective(
         '계수 a, b, c의 부호와 크기에 따른 포물선의 모양, 대칭축, 꼭짓점의 위치 변화를 설명할 수 있다.'
@@ -118,6 +199,9 @@ export default function NotionLessonStudio({
       setUploadSuccessBadge('수학 개념 노션 교안 템플릿 로드됨');
     } else if (type === 'physics') {
       setPageIcon('🧪');
+      setSubjectCategory('물리학 I');
+      setUnitCategory('1단원. 역학과 에너지');
+      setSessionNumber('4');
       setTitle('4차시: 포물선 운동의 수평·연직 성분 분해와 투사체 실험');
       setLearningObjective(
         '포물선 운동을 수평 등속도 운동과 연직 등가속도 운동으로 분해하여 이해하고, 초기 속력과 발사각에 따른 운동 궤적을 시뮬레이션으로 탐구할 수 있다.'
@@ -128,6 +212,9 @@ export default function NotionLessonStudio({
       setUploadSuccessBadge('물리 노션 교안(인라인 JS 운동 시뮬레이션 포함) 로드됨');
     } else {
       setPageIcon('⚡');
+      setSubjectCategory('수학');
+      setUnitCategory('2단원. 이차함수와 그래프');
+      setSessionNumber('3');
       setTitle('3차시: 이차함수 y=ax²+bx+c의 그래프와 계수의 역할 (시뮬레이터)');
       setLearningObjective(
         '계수 a, b, c의 변화에 따른 포물선의 모양, 꼭짓점, 대칭축의 변화를 시뮬레이터로 관찰하고 설명할 수 있다.'
@@ -178,7 +265,7 @@ export default function NotionLessonStudio({
 
   async function handlePublish() {
     if (!title.trim()) {
-      setErrorMessage('페이지 상단에 수업(레슨) 제목을 입력해 주세요.');
+      setErrorMessage('페이지 상단에 수업 교안 제목을 입력해 주세요.');
       return;
     }
     if (!learningObjective.trim()) {
@@ -192,12 +279,12 @@ export default function NotionLessonStudio({
     const serializedMarkdown = blocksToMarkdown(blocks);
 
     const formData = new FormData();
-    formData.set('class_id', classId);
-    if (isEditMode && initialLesson) {
-      formData.set('lesson_id', initialLesson.id);
-    }
     formData.set('title', title.trim());
     formData.set('learning_objective', learningObjective.trim());
+    formData.set('subject_category', subjectCategory.trim() || '공통 과목');
+    formData.set('unit_category', unitCategory.trim() || '1단원');
+    formData.set('session_number', sessionNumber.trim());
+    formData.set('page_icon', pageIcon);
     formData.set('deadline', deadline);
     formData.set('material_type', materialType);
     formData.set('material_markdown', serializedMarkdown);
@@ -205,12 +292,31 @@ export default function NotionLessonStudio({
     formData.set('material_file_name', materialFileName || '');
 
     try {
-      const result = isEditMode
-        ? await updateLessonAction(formData)
-        : await createLesson(formData);
-      if (result?.error) {
-        setErrorMessage(result.error);
-        setLoading(false);
+      if (isLibraryMode) {
+        if (isEditMode && initialLesson) {
+          formData.set('material_id', initialLesson.id);
+        }
+        if (defaultDeployClassId) {
+          formData.set('return_class_id', defaultDeployClassId);
+        }
+        formData.set('deploy_class_ids', JSON.stringify(selectedDeployClassIds));
+        const result = await saveMasterMaterialAction(formData);
+        if (result?.error) {
+          setErrorMessage(result.error);
+          setLoading(false);
+        }
+      } else {
+        formData.set('class_id', classId);
+        if (isEditMode && initialLesson) {
+          formData.set('lesson_id', initialLesson.id);
+        }
+        const result = isEditMode
+          ? await updateLessonAction(formData)
+          : await createLesson(formData);
+        if (result?.error) {
+          setErrorMessage(result.error);
+          setLoading(false);
+        }
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.message.includes('NEXT_REDIRECT')) {
@@ -218,8 +324,8 @@ export default function NotionLessonStudio({
       }
       setErrorMessage(
         isEditMode
-          ? '교안 및 레슨 수정 중 오류가 발생했습니다.'
-          : '레슨 개설 중 오류가 발생했습니다.'
+          ? '교안 수정 중 오류가 발생했습니다.'
+          : '교안 저장 중 오류가 발생했습니다.'
       );
       setLoading(false);
     }
@@ -227,8 +333,33 @@ export default function NotionLessonStudio({
 
   async function handleDeleteLesson() {
     if (!isEditMode || !initialLesson) return;
+
+    if (isLibraryMode) {
+      const confirmed = window.confirm(
+        `교안 보관함에서 "${initialLesson.title}" 원본 교안을 삭제하시겠습니까?\n(이미 각 분반에 배포된 수업과 학생 질문 데이터는 삭제되지 않고 안전하게 유지됩니다.)`
+      );
+      if (!confirmed) return;
+
+      setDeleting(true);
+      setErrorMessage(null);
+      try {
+        const res = await deleteMasterMaterialAction(initialLesson.id, false);
+        if (!res.success) {
+          setErrorMessage(res.error || '교안 삭제에 실패했습니다.');
+          setDeleting(false);
+          return;
+        }
+        router.push('/materials');
+        router.refresh();
+      } catch {
+        setErrorMessage('교안 삭제 중 오류가 발생했습니다.');
+        setDeleting(false);
+      }
+      return;
+    }
+
     const confirmed = window.confirm(
-      `정말 "${initialLesson.title}" 레슨과 수업 교안을 삭제하시겠습니까?\n(해당 레슨에 제출된 학생 질문과 답변도 함께 삭제됩니다.)`
+      `현재 학급(${className})에서 "${initialLesson.title}" 수업을 제거하시겠습니까?\n(교안 보관함의 원본 교안과 다른 분반의 수업은 그대로 유지됩니다.)`
     );
     if (!confirmed) return;
 
@@ -249,14 +380,25 @@ export default function NotionLessonStudio({
     }
   }
 
-  const backHref =
-    isEditMode && initialLesson
-      ? `/classes/${classId}/lessons/${initialLesson.id}`
-      : `/classes/${classId}`;
+  const backHref = isLibraryMode
+    ? defaultDeployClassId
+      ? `/classes/${defaultDeployClassId}`
+      : '/materials'
+    : isEditMode && initialLesson
+    ? `/classes/${classId}/lessons/${initialLesson.id}`
+    : `/classes/${classId}`;
+
+  const backLabel = isLibraryMode
+    ? defaultDeployClassId
+      ? '학급 화면으로 돌아가기'
+      : '📚 교안 보관함으로'
+    : isEditMode
+    ? '레슨 화면으로'
+    : className;
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] pb-28">
-      {/* 1. 노션 스타일 상단 고정 네비게이션 & 액션 바 (전역 Navbar h-16 바로 아래 고정) */}
+      {/* 1. 노션 스타일 상단 고정 네비게이션 & 액션 바 */}
       <div className="sticky top-16 z-40 border-b border-gray-200/80 bg-white/95 shadow-xs backdrop-blur-md">
         <div
           className={`mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8 transition-all duration-300 ${
@@ -270,10 +412,14 @@ export default function NotionLessonStudio({
               className="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition"
             >
               <span>←</span>
-              <span>{isEditMode ? '레슨 화면으로' : className}</span>
+              <span>{backLabel}</span>
             </Link>
             <span className="text-gray-300">/</span>
-            <span className="inline-flex items-center gap-1.5 font-bold text-gray-800 truncate max-w-[220px] sm:max-w-md">
+            <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-700">
+              {subjectCategory || '미분류 과목'}
+            </span>
+            <span className="text-gray-300">/</span>
+            <span className="inline-flex items-center gap-1.5 font-bold text-gray-800 truncate max-w-[200px] sm:max-w-md">
               <span>{pageIcon}</span>
               <span className="truncate">{title.trim() || '제목 없는 수업 교안'}</span>
               {isEditMode && (
@@ -286,7 +432,6 @@ export default function NotionLessonStudio({
 
           {/* 우측 컨트롤 버튼 */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 노션 스타일 전체 너비(Full Width) 토글 */}
             <button
               type="button"
               onClick={() => setIsFullWidth(!isFullWidth)}
@@ -323,7 +468,7 @@ export default function NotionLessonStudio({
                 className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-100 disabled:opacity-50 transition"
               >
                 <span>🗑️</span>
-                <span>{deleting ? '삭제 중...' : '레슨·교안 삭제'}</span>
+                <span>{deleting ? '삭제 중...' : isLibraryMode ? '원본 교안 삭제' : '이 분반에서 제거'}</span>
               </button>
             )}
 
@@ -338,17 +483,21 @@ export default function NotionLessonStudio({
               type="button"
               disabled={loading || deleting || fileParsing}
               onClick={handlePublish}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition cursor-pointer"
             >
-              <span>{isEditMode ? '💾' : '🚀'}</span>
+              <span>💾</span>
               <span>
                 {loading
+                  ? '저장 중...'
+                  : isLibraryMode
                   ? isEditMode
-                    ? '저장 중...'
-                    : '개설 중...'
+                    ? '원본 교안 저장 & 전체 분반 동기화'
+                    : selectedDeployClassIds.length > 0
+                    ? `교안 보관함 저장 & ${selectedDeployClassIds.length}개 분반 배포`
+                    : '교안 보관함에 저장'
                   : isEditMode
-                  ? '교안·레슨 수정사항 저장'
-                  : '수업 교안 발행 & 레슨 개설'}
+                  ? '교안 수정 저장 (연동 분반 동기화)'
+                  : '교안 저장 & 수업 레슨 개설'}
               </span>
             </button>
           </div>
@@ -364,7 +513,7 @@ export default function NotionLessonStudio({
           }`}
         >
           <span className="inline-flex items-center gap-1.5 rounded-full bg-black/25 backdrop-blur-xs px-3 py-1 font-semibold">
-            ✨ 노션형 수업 교안 스튜디오 — 마크다운 문법 없이 블록 클릭과 이미지 드래그로 교안을 완성하세요
+            ✨ 노션형 교안 제작 스튜디오 — 한 번 만든 교안을 과목·단원별로 체계적으로 분류하고 A·B·C·D 모든 분반에 불러와 함께 진화시키세요
           </span>
         </div>
       </div>
@@ -376,6 +525,20 @@ export default function NotionLessonStudio({
         }`}
       >
         <div className="rounded-3xl border border-gray-200/90 bg-white p-6 sm:p-10 lg:p-14 shadow-sm space-y-8">
+          {/* 원본 연동 안내 배너 (분반 수업 수정 또는 이미 배포된 원본 교안 수정 시) */}
+          {(initialParsed?.sourceMaterialId || alreadyLinkedClassIds.length > 0) && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-xs text-indigo-900">
+              <div className="flex items-center gap-2 font-bold">
+                <span className="rounded-md bg-indigo-600 px-2 py-0.5 text-[11px] font-extrabold text-white">
+                  🔗 원본-분반 실시간 연동 중
+                </span>
+                <span>
+                  이 교안을 수정하고 저장하면 연결된 모든 분반(A·B·C·D반)의 수업 교안 본문이 최신 상태로 자동 동기화됩니다. (각 분반의 학생 질문과 형성평가 응시 내역은 반별로 독립 유지됩니다)
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* 페이지 아이콘 + 원클릭 샘플 템플릿 바 */}
           <div className="flex flex-wrap items-end justify-between gap-4">
             <button
@@ -414,7 +577,7 @@ export default function NotionLessonStudio({
                 onClick={() => applySampleTemplate('physics')}
                 className="inline-flex items-center gap-1 rounded-xl border border-teal-200 bg-teal-50/80 px-3 py-1.5 text-xs font-bold text-teal-800 hover:bg-teal-100 transition"
               >
-                <span>🧪 물리 노션 교안 (JS 운동 시뮬레이션 블록 포함)</span>
+                <span>🧪 물리 노션 교안 (JS 운동 시뮬레이션 포함)</span>
               </button>
               <button
                 type="button"
@@ -438,13 +601,101 @@ export default function NotionLessonStudio({
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="수업(레슨) 제목을 입력하세요..."
+              placeholder="수업 교안 제목을 입력하세요 (예: 1차시: 파이썬 변수와 키보드 입출력 제어)..."
               className="w-full border-0 bg-transparent text-2xl sm:text-4xl font-extrabold text-gray-900 placeholder:text-gray-300 focus:outline-none tracking-tight"
             />
           </div>
 
-          {/* 노션 페이지 속성(Properties) 영역: 학습목표, 마감일시, 문서 파일 가져오기, 교안 유형 */}
-          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 sm:p-5 space-y-3.5 text-sm">
+          {/* 노션 페이지 속성(Properties) 영역: 과목(대분류), 단원(소분류), 차시, 학습목표, 분반 일괄 배포 */}
+          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 sm:p-5 space-y-4 text-sm">
+            {/* 속성 0: 과목(폴더) → 단원(소분류) → 차시 순서 분류 체계 */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-start pb-3 border-b border-gray-200/60">
+              <div className="sm:col-span-3 flex items-center gap-2 text-xs font-bold text-gray-500 pt-1.5">
+                <span>🗂️</span>
+                <span>교안 분류 (과목 · 단원 · 차시)</span>
+              </div>
+              <div className="sm:col-span-9 space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  {/* 과목 입력 */}
+                  <div className="sm:col-span-4">
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">
+                      📁 과목명 (대분류 폴더)
+                    </label>
+                    <input
+                      type="text"
+                      list="subject-category-suggestions"
+                      value={subjectCategory}
+                      onChange={(e) => setSubjectCategory(e.target.value)}
+                      placeholder="예: 정보, 물리학 I, 수학"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-bold text-gray-900 focus:border-blue-500 focus:outline-none"
+                    />
+                    <datalist id="subject-category-suggestions">
+                      {mergedSubjectSuggestions.map((s) => (
+                        <option key={s} value={s} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  {/* 단원 입력 */}
+                  <div className="sm:col-span-6">
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">
+                      📑 단원명 (소분류)
+                    </label>
+                    <input
+                      type="text"
+                      list="unit-category-suggestions"
+                      value={unitCategory}
+                      onChange={(e) => setUnitCategory(e.target.value)}
+                      placeholder="예: 1단원. 파이썬 기초와 입출력"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-semibold text-gray-900 focus:border-blue-500 focus:outline-none"
+                    />
+                    <datalist id="unit-category-suggestions">
+                      {mergedUnitSuggestions.map((u) => (
+                        <option key={u} value={u} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  {/* 차시 번호 입력 */}
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-gray-500 mb-1">
+                      🔢 차시 순서
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={sessionNumber}
+                        onChange={(e) => setSessionNumber(e.target.value)}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-xs sm:text-sm font-extrabold text-gray-900 focus:border-blue-500 focus:outline-none"
+                      />
+                      <span className="text-xs font-bold text-gray-500 shrink-0">차시</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 빠른 과목 선택 칩 */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-semibold text-gray-400">빠른 과목 선택:</span>
+                  {mergedSubjectSuggestions.slice(0, 7).map((subj) => (
+                    <button
+                      key={subj}
+                      type="button"
+                      onClick={() => setSubjectCategory(subj)}
+                      className={`rounded-lg px-2 py-0.5 text-[11px] font-bold transition ${
+                        subjectCategory === subj
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      {subj}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {/* 속성 1: 학습 목표 */}
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-start">
               <div className="sm:col-span-3 flex items-center gap-2 text-xs font-bold text-gray-500 pt-1.5">
@@ -462,27 +713,90 @@ export default function NotionLessonStudio({
               </div>
             </div>
 
-            {/* 속성 2: 질문 마감 일시 */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-center">
-              <div className="sm:col-span-3 flex items-center gap-2 text-xs font-bold text-gray-500">
-                <span>⏰</span>
-                <span>질문 제출 마감</span>
+            {/* 속성 2: 교안 보관함 모드일 때 -> 저장과 동시에 배포할 분반(A, B, C, D반) 선택 */}
+            {isLibraryMode && teacherClasses.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-start pt-2 border-t border-gray-200/60">
+                <div className="sm:col-span-3 flex items-center gap-2 text-xs font-bold text-gray-500 pt-1">
+                  <span>🏫</span>
+                  <span>분반(클래스) 동시 배포</span>
+                </div>
+                <div className="sm:col-span-9 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-gray-600">
+                      교안을 보관함에 저장하면서 바로 적용할 학급(분반)을 선택하세요 (나중에 보관함이나 각 클래스에서도 언제든 불러올 수 있습니다).
+                    </span>
+                    <button
+                      type="button"
+                      onClick={selectAllUnlinkedClasses}
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100 transition"
+                    >
+                      + 전체 분반 선택
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {teacherClasses.map((cls) => {
+                      const isAlreadyLinked = alreadyLinkedClassIds.includes(cls.id);
+                      const isSelected = selectedDeployClassIds.includes(cls.id);
+
+                      if (isAlreadyLinked) {
+                        return (
+                          <span
+                            key={cls.id}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800"
+                          >
+                            <span>✅ {cls.name}</span>
+                            <span className="text-[10px] font-semibold text-emerald-600">
+                              (연동됨 · 자동 동기화)
+                            </span>
+                          </span>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={cls.id}
+                          type="button"
+                          onClick={() => toggleDeployClass(cls.id)}
+                          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition cursor-pointer ${
+                            isSelected
+                              ? 'border-blue-600 bg-blue-600 text-white shadow-2xs'
+                              : 'border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50/40'
+                          }`}
+                        >
+                          <span>{isSelected ? '☑️' : '⬜'}</span>
+                          <span>{cls.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
-              <div className="sm:col-span-9 flex flex-wrap items-center gap-3">
-                <input
-                  type="datetime-local"
-                  value={deadline}
-                  onChange={(e) => setDeadline(e.target.value)}
-                  className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs sm:text-sm text-gray-800 focus:border-blue-500 focus:outline-none"
-                />
-                <span className="text-[11px] text-gray-400">
-                  비워두면 마감 기한 없이 상시 질문을 받습니다.
-                </span>
+            )}
+
+            {/* 속성 2-B: 질문 마감 일시 (학급 내 수정이거나, 분반 동시 배포를 선택했을 때) */}
+            {(!isLibraryMode || selectedDeployClassIds.length > 0) && (
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-center pt-1">
+                <div className="sm:col-span-3 flex items-center gap-2 text-xs font-bold text-gray-500">
+                  <span>⏰</span>
+                  <span>질문 제출 마감</span>
+                </div>
+                <div className="sm:col-span-9 flex flex-wrap items-center gap-3">
+                  <input
+                    type="datetime-local"
+                    value={deadline}
+                    onChange={(e) => setDeadline(e.target.value)}
+                    className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs sm:text-sm text-gray-800 focus:border-blue-500 focus:outline-none"
+                  />
+                  <span className="text-[11px] text-gray-400">
+                    비워두면 마감 기한 없이 상시 질문을 받습니다.
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* 속성 3: 기존 워드/한글 파일 불러오기 & 교안 모드 */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-center pt-1 border-t border-gray-200/60">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-center pt-2 border-t border-gray-200/60">
               <div className="sm:col-span-3 flex items-center gap-2 text-xs font-bold text-gray-500">
                 <span>📂</span>
                 <span>문서 파일 변환</span>
@@ -610,10 +924,10 @@ export default function NotionLessonStudio({
             </div>
           )}
 
-          {/* 5. 교안 하단 저장/발행 액션 바 (문서 끝에서도 바로 저장 가능) */}
+          {/* 5. 교안 하단 저장/발행 액션 바 */}
           <div className="pt-6 border-t border-gray-200 flex flex-wrap items-center justify-between gap-4">
             <div className="text-xs text-gray-500">
-              💡 작성을 마쳤다면 우측의 <strong className="text-gray-800">저장 버튼</strong>을 눌러 수업 교안을 반영하세요.
+              💡 작성을 마쳤다면 우측의 <strong className="text-gray-800">저장 버튼</strong>을 눌러 교안 보관함 및 연동된 분반에 반영하세요.
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
               <Link
@@ -632,6 +946,12 @@ export default function NotionLessonStudio({
                 <span>
                   {loading
                     ? '저장 중...'
+                    : isLibraryMode
+                    ? isEditMode
+                      ? '원본 교안 수정 저장 (전체 분반 동기화)'
+                      : selectedDeployClassIds.length > 0
+                      ? `교안 보관함 저장 & ${selectedDeployClassIds.length}개 분반 배포`
+                      : '교안 보관함에 저장하기'
                     : isEditMode
                     ? '교안·레슨 수정사항 저장하기'
                     : '교안 저장 & 수업 레슨 개설하기'}
@@ -642,7 +962,7 @@ export default function NotionLessonStudio({
         </div>
       </div>
 
-      {/* 6. 화면 우측 하단 플로팅 저장 버튼 (긴 교안 작성 중 언제든 즉시 클릭 가능) */}
+      {/* 6. 화면 우측 하단 플로팅 저장 버튼 */}
       <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-2xl border border-blue-200 bg-white/95 p-2 shadow-xl backdrop-blur-md">
         <button
           type="button"
@@ -654,6 +974,10 @@ export default function NotionLessonStudio({
           <span>
             {loading
               ? '저장 중...'
+              : isLibraryMode
+              ? isEditMode
+                ? '교안 저장 & 분반 동기화'
+                : '교안 보관함에 저장'
               : isEditMode
               ? '교안 수정 저장'
               : '교안 저장 & 발행'}

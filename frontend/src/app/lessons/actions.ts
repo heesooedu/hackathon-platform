@@ -9,6 +9,8 @@ import {
   parseLessonMaterial,
   serializeLessonMaterial,
   getReadableMaterialTextForAi,
+  MATERIAL_LIBRARY_CLASS_NAME,
+  isMaterialLibraryClass,
 } from '@/utils/materialPayload';
 import {
   Submission,
@@ -18,11 +20,189 @@ import {
   MaterialType,
   AiLessonAnalysisResult,
   GeneratedQuizDraft,
-  FormativeQuiz,
-  QuizAttempt,
 } from '@/types/database.types';
 
 import { QUIZ_GROUP_PREFIX } from '@/utils/quizHelper';
+
+function generateLibraryJoinCode(): string {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let result = '#';
+  for (let i = 0; i < 5; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+/**
+ * 교사 전용 '교안 보관함(Master Library)' 컨테이너 클래스를 조회하거나 자동 생성합니다.
+ * 기존 클래스들에 이미 만들어 둔 레슨 중 아직 보관함에 연결(sourceMaterialId)되지 않은 교안이 있다면
+ * 자동으로 보관함에 원본 교안을 등록하고 연결하여 기존 교안도 100% 분류·재사용할 수 있게 합니다.
+ */
+export async function ensureTeacherMaterialLibrary(
+  teacherId: string
+): Promise<{ libraryClassId: string | null; error?: string }> {
+  const supabase = await createClient();
+
+  const { data: allTeacherClasses, error: classErr } = await supabase
+    .from('classes')
+    .select('*')
+    .eq('teacher_id', teacherId)
+    .order('created_at', { ascending: true });
+
+  if (classErr) {
+    return { libraryClassId: null, error: classErr.message };
+  }
+
+  const classesList = allTeacherClasses || [];
+  let libraryClass = classesList.find((c) => isMaterialLibraryClass(c));
+
+  if (!libraryClass) {
+    let attempts = 0;
+    while (!libraryClass && attempts < 5) {
+      attempts++;
+      const code = generateLibraryJoinCode();
+      const { data: created, error: createErr } = await supabase
+        .from('classes')
+        .insert({
+          teacher_id: teacherId,
+          name: MATERIAL_LIBRARY_CLASS_NAME,
+          join_code: code,
+        })
+        .select('*')
+        .single();
+
+      if (!createErr && created) {
+        libraryClass = created;
+      }
+    }
+  }
+
+  if (!libraryClass) {
+    return { libraryClassId: null, error: '교안 보관함 초기화에 실패했습니다.' };
+  }
+
+  const normalClasses = classesList.filter((c) => !isMaterialLibraryClass(c));
+  if (normalClasses.length > 0) {
+    const normalClassIds = normalClasses.map((c) => c.id);
+    const classMap = new Map(normalClasses.map((c) => [c.id, c.name]));
+
+    const { data: existingLessons } = await supabase
+      .from('lessons')
+      .select('*')
+      .in('class_id', normalClassIds)
+      .order('created_at', { ascending: true });
+
+    const unlinkedLessons = ((existingLessons || []) as Lesson[]).filter((l) => {
+      const parsed = parseLessonMaterial(l);
+      return !parsed.sourceMaterialId;
+    });
+
+    for (const lesson of unlinkedLessons) {
+      const parsed = parseLessonMaterial(lesson);
+      const inferredSubject =
+        parsed.subjectCategory || classMap.get(lesson.class_id) || '기본 과목';
+      const inferredUnit = parsed.unitCategory || '1단원 (기본)';
+
+      const masterSerialized = serializeLessonMaterial({
+        ...parsed,
+        subjectCategory: inferredSubject,
+        unitCategory: inferredUnit,
+        aiAnalysis: null,
+        sourceMaterialId: null,
+      });
+
+      const { data: insertedMaster } = await supabase
+        .from('lessons')
+        .insert({
+          class_id: libraryClass.id,
+          title: lesson.title,
+          learning_objective: lesson.learning_objective,
+          deadline: null,
+          status: 'open',
+          material_html: masterSerialized || null,
+        })
+        .select('id')
+        .single();
+
+      if (insertedMaster?.id) {
+        const linkedSerialized = serializeLessonMaterial({
+          ...parsed,
+          subjectCategory: inferredSubject,
+          unitCategory: inferredUnit,
+          sourceMaterialId: insertedMaster.id,
+        });
+
+        await supabase
+          .from('lessons')
+          .update({ material_html: linkedSerialized || null })
+          .eq('id', lesson.id);
+      }
+    }
+  }
+
+  return { libraryClassId: libraryClass.id };
+}
+
+/**
+ * 원본 교안(masterMaterialId)의 최신 내용·보충 패치·분류 메타데이터를
+ * 해당 교안을 불러와 사용 중인 모든 분반(A, B, C, D반)의 수업 레슨에 실시간 동기화합니다.
+ * 각 분반의 고유 데이터(마감일, 오픈 상태, 표시 순서, 반별 AI 질문 진단 리포트)는 보존합니다.
+ */
+async function syncMasterToAllClassLessons(
+  teacherId: string,
+  masterLesson: Lesson
+) {
+  const supabase = await createClient();
+  const masterParsed = parseLessonMaterial(masterLesson);
+
+  const { data: teacherClasses } = await supabase
+    .from('classes')
+    .select('id, name, join_code')
+    .eq('teacher_id', teacherId);
+
+  const normalClassIds = (teacherClasses || [])
+    .filter((c) => !isMaterialLibraryClass(c))
+    .map((c) => c.id);
+
+  if (normalClassIds.length === 0) return;
+
+  const { data: allClassLessons } = await supabase
+    .from('lessons')
+    .select('*')
+    .in('class_id', normalClassIds);
+
+  const linkedLessons = ((allClassLessons || []) as Lesson[]).filter(
+    (l) => parseLessonMaterial(l).sourceMaterialId === masterLesson.id
+  );
+
+  for (const classLesson of linkedLessons) {
+    const classParsed = parseLessonMaterial(classLesson);
+    const syncedSerialized = serializeLessonMaterial({
+      materialType: masterParsed.materialType,
+      markdownContent: masterParsed.markdownContent,
+      htmlContent: masterParsed.htmlContent,
+      fileName: masterParsed.fileName,
+      appliedPatches: masterParsed.appliedPatches,
+      subjectCategory: masterParsed.subjectCategory,
+      unitCategory: masterParsed.unitCategory,
+      sessionNumber: masterParsed.sessionNumber,
+      pageIcon: masterParsed.pageIcon,
+      sourceMaterialId: masterLesson.id,
+      // 반별 고유 설정은 그대로 유지
+      aiAnalysis: classParsed.aiAnalysis,
+      displayOrder: classParsed.displayOrder,
+    });
+
+    await supabase
+      .from('lessons')
+      .update({
+        title: masterLesson.title,
+        learning_objective: masterLesson.learning_objective,
+        material_html: syncedSerialized || null,
+      })
+      .eq('id', classLesson.id);
+  }
+}
 
 /**
  * 1. 워드(.docx), 한글(.hwp, .hwpx), 마크다운(.md), 텍스트(.txt) 파일에서 교안 본문 추출 서버 액션
@@ -48,13 +228,532 @@ export async function parseMaterialFileAction(formData: FormData) {
 }
 
 /**
- * 2. 새 레슨 개설 (마크다운/파일 업로드 교안 및 HTML 인터랙티브 교안 모두 지원)
+ * 1-1. 교안 보관함(Master Library)에 새 교안 생성 또는 기존 원본 교안 수정
+ * - 선택된 분반(deploy_class_ids)이 있으면 해당 분반들에도 자동으로 레슨을 배포/연동합니다.
+ * - 이미 연동된 모든 분반(A, B, C, D반)의 교안도 최신 상태로 자동 동기화합니다.
+ */
+export async function saveMasterMaterialAction(formData: FormData) {
+  const materialId = ((formData.get('material_id') as string) || '').trim();
+  const returnClassId = ((formData.get('return_class_id') as string) || '').trim();
+  const title = ((formData.get('title') as string) || '').trim();
+  const learningObjective = ((formData.get('learning_objective') as string) || '').trim();
+  const subjectCategory = ((formData.get('subject_category') as string) || '').trim() || '공통 과목';
+  const unitCategory = ((formData.get('unit_category') as string) || '').trim() || '1단원';
+  const sessionNumberRaw = ((formData.get('session_number') as string) || '').trim();
+  const sessionNumber = sessionNumberRaw ? Number(sessionNumberRaw) : null;
+  const pageIcon = ((formData.get('page_icon') as string) || '').trim() || '📖';
+  const deadlineStr = ((formData.get('deadline') as string) || '').trim();
+  const deployClassIdsRaw = ((formData.get('deploy_class_ids') as string) || '[]').trim();
+
+  const materialType = ((formData.get('material_type') as string) || 'markdown') as MaterialType;
+  const materialMarkdown = ((formData.get('material_markdown') as string) || '').trim();
+  const materialHtml = ((formData.get('material_html') as string) || '').trim();
+  const materialFileName = ((formData.get('material_file_name') as string) || '').trim() || null;
+
+  if (!title || !learningObjective) {
+    return { error: '교안 제목과 학습 목표를 모두 입력해 주세요.' };
+  }
+
+  let deployClassIds: string[] = [];
+  try {
+    const parsedIds = JSON.parse(deployClassIdsRaw);
+    if (Array.isArray(parsedIds)) {
+      deployClassIds = parsedIds.filter((id) => typeof id === 'string' && id.trim().length > 0);
+    }
+  } catch {
+    deployClassIds = [];
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  const { libraryClassId, error: libErr } = await ensureTeacherMaterialLibrary(user.id);
+  if (libErr || !libraryClassId) {
+    return { error: libErr || '교안 보관함을 불러올 수 없습니다.' };
+  }
+
+  let savedMasterLesson: Lesson | null = null;
+
+  if (materialId) {
+    // 기존 원본 교안 수정
+    const { data: existingMaster } = await supabase
+      .from('lessons')
+      .select('*')
+      .eq('id', materialId)
+      .single();
+
+    if (!existingMaster) {
+      return { error: '수정할 원본 교안을 찾을 수 없습니다.' };
+    }
+
+    const existingParsed = parseLessonMaterial(existingMaster as Lesson);
+    const updatedSerialized = serializeLessonMaterial({
+      materialType,
+      markdownContent: materialMarkdown,
+      htmlContent: materialHtml,
+      fileName: materialFileName,
+      appliedPatches: existingParsed.appliedPatches || [],
+      aiAnalysis: existingParsed.aiAnalysis || null,
+      displayOrder:
+        sessionNumber !== null ? sessionNumber : existingParsed.displayOrder ?? null,
+      subjectCategory,
+      unitCategory,
+      sessionNumber:
+        sessionNumber !== null ? sessionNumber : existingParsed.sessionNumber ?? null,
+      pageIcon,
+      sourceMaterialId: null,
+    });
+
+    const { data: updatedRow, error: updateErr } = await supabase
+      .from('lessons')
+      .update({
+        title,
+        learning_objective: learningObjective,
+        material_html: updatedSerialized || null,
+      })
+      .eq('id', materialId)
+      .select('*')
+      .single();
+
+    if (updateErr || !updatedRow) {
+      return { error: '교안 수정 중 오류가 발생했습니다: ' + updateErr?.message };
+    }
+
+    savedMasterLesson = updatedRow as Lesson;
+    await syncMasterToAllClassLessons(user.id, savedMasterLesson);
+  } else {
+    // 새 원본 교안 생성
+    const newSerialized = serializeLessonMaterial({
+      materialType,
+      markdownContent: materialMarkdown,
+      htmlContent: materialHtml,
+      fileName: materialFileName,
+      appliedPatches: [],
+      aiAnalysis: null,
+      displayOrder: sessionNumber,
+      subjectCategory,
+      unitCategory,
+      sessionNumber,
+      pageIcon,
+      sourceMaterialId: null,
+    });
+
+    const { data: createdRow, error: createErr } = await supabase
+      .from('lessons')
+      .insert({
+        class_id: libraryClassId,
+        title,
+        learning_objective: learningObjective,
+        deadline: null,
+        status: 'open',
+        material_html: newSerialized || null,
+      })
+      .select('*')
+      .single();
+
+    if (createErr || !createdRow) {
+      return { error: '새 교안 저장 중 오류가 발생했습니다: ' + createErr?.message };
+    }
+
+    savedMasterLesson = createdRow as Lesson;
+  }
+
+  // 선택한 분반(A, B, C, D반)이 있으면 즉시 배포/연동
+  if (savedMasterLesson && deployClassIds.length > 0) {
+    await deployMaterialToClassesInternal(
+      user.id,
+      savedMasterLesson,
+      deployClassIds,
+      deadlineStr || null
+    );
+  }
+
+  revalidatePath('/materials');
+  revalidatePath('/', 'layout');
+
+  if (returnClassId) {
+    revalidatePath(`/classes/${returnClassId}`);
+    redirect(`/classes/${returnClassId}`);
+  }
+
+  redirect('/materials');
+}
+
+/**
+ * 내부 헬퍼: 특정 원본 교안(masterLesson)을 지정된 여러 분반(targetClassIds)에 배포합니다.
+ */
+async function deployMaterialToClassesInternal(
+  teacherId: string,
+  masterLesson: Lesson,
+  targetClassIds: string[],
+  deadlineStr: string | null
+): Promise<{ deployedCount: number; alreadyLinkedCount: number }> {
+  const supabase = await createClient();
+  const masterParsed = parseLessonMaterial(masterLesson);
+  const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
+
+  // 교사 소유 클래스인지 확인
+  const { data: validClasses } = await supabase
+    .from('classes')
+    .select('id, name, join_code')
+    .eq('teacher_id', teacherId)
+    .in('id', targetClassIds);
+
+  const validClassIds = (validClasses || [])
+    .filter((c) => !isMaterialLibraryClass(c))
+    .map((c) => c.id);
+
+  if (validClassIds.length === 0) {
+    return { deployedCount: 0, alreadyLinkedCount: 0 };
+  }
+
+  const { data: existingLessons } = await supabase
+    .from('lessons')
+    .select('*')
+    .in('class_id', validClassIds);
+
+  const lessonsByClass = new Map<string, Lesson[]>();
+  for (const l of (existingLessons || []) as Lesson[]) {
+    const arr = lessonsByClass.get(l.class_id) || [];
+    arr.push(l);
+    lessonsByClass.set(l.class_id, arr);
+  }
+
+  let deployedCount = 0;
+  let alreadyLinkedCount = 0;
+
+  for (const classId of validClassIds) {
+    const classLessons = lessonsByClass.get(classId) || [];
+    const alreadyExists = classLessons.some(
+      (l) => parseLessonMaterial(l).sourceMaterialId === masterLesson.id
+    );
+
+    if (alreadyExists) {
+      alreadyLinkedCount++;
+      continue;
+    }
+
+    const nextDisplayOrder =
+      masterParsed.sessionNumber !== null && masterParsed.sessionNumber !== undefined
+        ? masterParsed.sessionNumber
+        : classLessons.length;
+
+    const linkedSerialized = serializeLessonMaterial({
+      materialType: masterParsed.materialType,
+      markdownContent: masterParsed.markdownContent,
+      htmlContent: masterParsed.htmlContent,
+      fileName: masterParsed.fileName,
+      appliedPatches: masterParsed.appliedPatches || [],
+      aiAnalysis: null,
+      displayOrder: nextDisplayOrder,
+      subjectCategory: masterParsed.subjectCategory || null,
+      unitCategory: masterParsed.unitCategory || null,
+      sessionNumber: masterParsed.sessionNumber ?? null,
+      pageIcon: masterParsed.pageIcon || null,
+      sourceMaterialId: masterLesson.id,
+    });
+
+    const { error: insertErr } = await supabase.from('lessons').insert({
+      class_id: classId,
+      title: masterLesson.title,
+      learning_objective: masterLesson.learning_objective,
+      deadline,
+      status: 'open',
+      material_html: linkedSerialized || null,
+    });
+
+    if (!insertErr) {
+      deployedCount++;
+      revalidatePath(`/classes/${classId}`);
+    }
+  }
+
+  return { deployedCount, alreadyLinkedCount };
+}
+
+/**
+ * 1-2. 교안 보관함에서 선택한 교안을 여러 분반(A, B, C, D반)에 일괄 배포하는 서버 액션
+ */
+export async function deployMaterialToClassesAction(
+  materialId: string,
+  targetClassIds: string[],
+  deadlineStr?: string | null
+): Promise<{
+  success: boolean;
+  deployedCount?: number;
+  alreadyLinkedCount?: number;
+  error?: string;
+}> {
+  if (!materialId || targetClassIds.length === 0) {
+    return { success: false, error: '배포할 교안과 대상 학급(분반)을 선택해 주세요.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { data: masterLesson } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', materialId)
+    .single();
+
+  if (!masterLesson) {
+    return { success: false, error: '원본 교안을 찾을 수 없습니다.' };
+  }
+
+  const { deployedCount, alreadyLinkedCount } = await deployMaterialToClassesInternal(
+    user.id,
+    masterLesson as Lesson,
+    targetClassIds,
+    deadlineStr || null
+  );
+
+  revalidatePath('/materials');
+  revalidatePath('/', 'layout');
+  return { success: true, deployedCount, alreadyLinkedCount };
+}
+
+/**
+ * 1-3. 특정 분반(클래스 상세 화면) 안에서 교안 보관함의 교안 여러 개를 한 번에 불러오는 서버 액션
+ */
+export async function importMaterialsToClassAction(
+  classId: string,
+  materialIds: string[],
+  deadlineStr?: string | null
+): Promise<{
+  success: boolean;
+  importedCount?: number;
+  error?: string;
+}> {
+  if (!classId || materialIds.length === 0) {
+    return { success: false, error: '불러올 교안을 1개 이상 선택해 주세요.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('id, teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '이 클래스에 교안을 불러올 권한이 없습니다.' };
+  }
+
+  const { data: masterLessons } = await supabase
+    .from('lessons')
+    .select('*')
+    .in('id', materialIds);
+
+  if (!masterLessons || masterLessons.length === 0) {
+    return { success: false, error: '선택한 교안 정보를 찾을 수 없습니다.' };
+  }
+
+  // 선택한 순서 유지
+  const masterMap = new Map((masterLessons as Lesson[]).map((m) => [m.id, m]));
+  let totalImported = 0;
+
+  for (const matId of materialIds) {
+    const master = masterMap.get(matId);
+    if (!master) continue;
+    const { deployedCount } = await deployMaterialToClassesInternal(
+      user.id,
+      master,
+      [classId],
+      deadlineStr || null
+    );
+    totalImported += deployedCount;
+  }
+
+  revalidatePath(`/classes/${classId}`);
+  revalidatePath('/materials');
+  return { success: true, importedCount: totalImported };
+}
+
+/**
+ * 1-4. 교안 보관함의 원본 교안 복제 (다음 차시 교안 빠른 제작용)
+ */
+export async function duplicateMasterMaterialAction(
+  materialId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { libraryClassId, error: libErr } = await ensureTeacherMaterialLibrary(user.id);
+  if (libErr || !libraryClassId) {
+    return { success: false, error: libErr || '교안 보관함을 확인할 수 없습니다.' };
+  }
+
+  const { data: original } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', materialId)
+    .single();
+
+  if (!original) {
+    return { success: false, error: '복제할 교안을 찾을 수 없습니다.' };
+  }
+
+  const parsed = parseLessonMaterial(original as Lesson);
+  const nextSession =
+    typeof parsed.sessionNumber === 'number' ? parsed.sessionNumber + 1 : null;
+
+  const clonedSerialized = serializeLessonMaterial({
+    ...parsed,
+    sessionNumber: nextSession,
+    displayOrder: nextSession,
+    aiAnalysis: null,
+    sourceMaterialId: null,
+  });
+
+  const { error: insertErr } = await supabase.from('lessons').insert({
+    class_id: libraryClassId,
+    title: `${original.title} (복사본)`,
+    learning_objective: original.learning_objective,
+    deadline: null,
+    status: 'open',
+    material_html: clonedSerialized || null,
+  });
+
+  if (insertErr) {
+    return { success: false, error: '교안 복제 중 오류: ' + insertErr.message };
+  }
+
+  revalidatePath('/materials');
+  return { success: true };
+}
+
+/**
+ * 1-5. 교안 보관함에서 원본 교안 삭제
+ */
+export async function deleteMasterMaterialAction(
+  materialId: string,
+  alsoDeleteFromClasses = false
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { data: teacherClasses } = await supabase
+    .from('classes')
+    .select('id, name, join_code')
+    .eq('teacher_id', user.id);
+
+  const normalClassIds = (teacherClasses || [])
+    .filter((c) => !isMaterialLibraryClass(c))
+    .map((c) => c.id);
+
+  if (normalClassIds.length > 0) {
+    const { data: classLessons } = await supabase
+      .from('lessons')
+      .select('*')
+      .in('class_id', normalClassIds);
+
+    const linked = ((classLessons || []) as Lesson[]).filter(
+      (l) => parseLessonMaterial(l).sourceMaterialId === materialId
+    );
+
+    for (const l of linked) {
+      if (alsoDeleteFromClasses) {
+        await supabase.from('lessons').delete().eq('id', l.id);
+      } else {
+        const parsed = parseLessonMaterial(l);
+        const unlinkedSerialized = serializeLessonMaterial({
+          ...parsed,
+          sourceMaterialId: null,
+        });
+        await supabase
+          .from('lessons')
+          .update({ material_html: unlinkedSerialized || null })
+          .eq('id', l.id);
+      }
+    }
+  }
+
+  const { error } = await supabase.from('lessons').delete().eq('id', materialId);
+  if (error) {
+    return { success: false, error: '교안 삭제 중 오류: ' + error.message };
+  }
+
+  revalidatePath('/materials');
+  revalidatePath('/', 'layout');
+  return { success: true };
+}
+
+/**
+ * 1-6. 교안 보관함 내 과목/단원별 교안 순서 변경 저장 (드래그 앤 드롭)
+ */
+export async function reorderMasterMaterialsAction(
+  orderedMaterialIds: string[]
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { data: materials } = await supabase
+    .from('lessons')
+    .select('*')
+    .in('id', orderedMaterialIds);
+
+  if (!materials) {
+    return { success: false, error: '교안 목록을 불러올 수 없습니다.' };
+  }
+
+  const matMap = new Map((materials as Lesson[]).map((m) => [m.id, m]));
+
+  for (let i = 0; i < orderedMaterialIds.length; i++) {
+    const mat = matMap.get(orderedMaterialIds[i]);
+    if (!mat) continue;
+    const parsed = parseLessonMaterial(mat);
+    const updatedSerialized = serializeLessonMaterial({
+      ...parsed,
+      displayOrder: i + 1,
+      sessionNumber: i + 1,
+    });
+    await supabase
+      .from('lessons')
+      .update({ material_html: updatedSerialized || null })
+      .eq('id', mat.id);
+  }
+
+  revalidatePath('/materials');
+  return { success: true };
+}
+
+/**
+ * 2. 새 레슨 개설 (클래스 내부에서 직접 생성할 때도 교안 보관함에 원본을 자동 등록하고 연동)
  */
 export async function createLesson(formData: FormData) {
   const classId = formData.get('class_id') as string;
   const title = formData.get('title') as string;
   const learningObjective = formData.get('learning_objective') as string;
   const deadlineStr = formData.get('deadline') as string;
+  const subjectCategory = ((formData.get('subject_category') as string) || '').trim() || null;
+  const unitCategory = ((formData.get('unit_category') as string) || '').trim() || null;
+  const sessionNumberRaw = ((formData.get('session_number') as string) || '').trim();
+  const sessionNumber = sessionNumberRaw ? Number(sessionNumberRaw) : null;
+  const pageIcon = ((formData.get('page_icon') as string) || '').trim() || '📖';
 
   const materialType = ((formData.get('material_type') as string) || 'markdown') as MaterialType;
   const materialMarkdown = ((formData.get('material_markdown') as string) || '').trim();
@@ -77,12 +776,52 @@ export async function createLesson(formData: FormData) {
   // 교사 권한 확인
   const { data: classData, error: classError } = await supabase
     .from('classes')
-    .select('teacher_id')
+    .select('teacher_id, name')
     .eq('id', classId)
     .single();
 
   if (classError || !classData || classData.teacher_id !== user.id) {
     return { error: '이 클래스에 레슨을 개설할 권한이 없습니다.' };
+  }
+
+  // 교안 보관함에도 원본 교안 자동 등록
+  const { libraryClassId } = await ensureTeacherMaterialLibrary(user.id);
+  let masterMaterialId: string | null = null;
+  const resolvedSubject = subjectCategory || classData.name || '기본 과목';
+  const resolvedUnit = unitCategory || '1단원';
+
+  if (libraryClassId) {
+    const masterSerialized = serializeLessonMaterial({
+      materialType,
+      markdownContent: materialMarkdown,
+      htmlContent: materialHtml,
+      fileName: materialFileName,
+      appliedPatches: [],
+      aiAnalysis: null,
+      displayOrder: sessionNumber,
+      subjectCategory: resolvedSubject,
+      unitCategory: resolvedUnit,
+      sessionNumber,
+      pageIcon,
+      sourceMaterialId: null,
+    });
+
+    const { data: createdMaster } = await supabase
+      .from('lessons')
+      .insert({
+        class_id: libraryClassId,
+        title: title.trim(),
+        learning_objective: learningObjective.trim(),
+        deadline: null,
+        status: 'open',
+        material_html: masterSerialized || null,
+      })
+      .select('id')
+      .single();
+
+    if (createdMaster?.id) {
+      masterMaterialId = createdMaster.id;
+    }
   }
 
   const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
@@ -94,6 +833,12 @@ export async function createLesson(formData: FormData) {
     fileName: materialFileName,
     appliedPatches: [],
     aiAnalysis: null,
+    displayOrder: sessionNumber,
+    subjectCategory: resolvedSubject,
+    unitCategory: resolvedUnit,
+    sessionNumber,
+    pageIcon,
+    sourceMaterialId: masterMaterialId,
   });
 
   const { data: newLesson, error: lessonError } = await supabase
@@ -113,12 +858,13 @@ export async function createLesson(formData: FormData) {
     return { error: '레슨 개설 중 오류가 발생했습니다: ' + lessonError?.message };
   }
 
+  revalidatePath('/materials');
   revalidatePath(`/classes/${classId}`);
   redirect(`/classes/${classId}/lessons/${newLesson.id}`);
 }
 
 /**
- * 2-1. 기존 레슨 및 교안 통합 수정 (노션 스튜디오 전체 화면 수정용)
+ * 2-1. 기존 레슨 및 교안 통합 수정 (원본 교안 및 동일 교안을 쓰는 타 분반에도 자동 동기화)
  */
 export async function updateLessonAction(formData: FormData) {
   const lessonId = formData.get('lesson_id') as string;
@@ -126,6 +872,10 @@ export async function updateLessonAction(formData: FormData) {
   const title = formData.get('title') as string;
   const learningObjective = formData.get('learning_objective') as string;
   const deadlineStr = formData.get('deadline') as string;
+  const subjectCategoryInput = ((formData.get('subject_category') as string) || '').trim();
+  const unitCategoryInput = ((formData.get('unit_category') as string) || '').trim();
+  const sessionNumberRaw = ((formData.get('session_number') as string) || '').trim();
+  const pageIconInput = ((formData.get('page_icon') as string) || '').trim();
 
   const materialType = ((formData.get('material_type') as string) || 'markdown') as MaterialType;
   const materialMarkdown = ((formData.get('material_markdown') as string) || '').trim();
@@ -165,6 +915,13 @@ export async function updateLessonAction(formData: FormData) {
   const existingParsed = parseLessonMaterial((existingLesson as Lesson) || null);
   const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
 
+  const nextSubject = subjectCategoryInput || existingParsed.subjectCategory || null;
+  const nextUnit = unitCategoryInput || existingParsed.unitCategory || null;
+  const nextSession = sessionNumberRaw
+    ? Number(sessionNumberRaw)
+    : existingParsed.sessionNumber ?? null;
+  const nextIcon = pageIconInput || existingParsed.pageIcon || null;
+
   const serializedMaterial = serializeLessonMaterial({
     materialType,
     markdownContent: materialMarkdown,
@@ -173,6 +930,11 @@ export async function updateLessonAction(formData: FormData) {
     appliedPatches: existingParsed.appliedPatches || [],
     aiAnalysis: existingParsed.aiAnalysis || null,
     displayOrder: existingParsed.displayOrder ?? null,
+    subjectCategory: nextSubject,
+    unitCategory: nextUnit,
+    sessionNumber: nextSession,
+    pageIcon: nextIcon,
+    sourceMaterialId: existingParsed.sourceMaterialId || null,
   });
 
   const { error: updateError } = await supabase
@@ -189,13 +951,47 @@ export async function updateLessonAction(formData: FormData) {
     return { error: '레슨 수정 중 오류가 발생했습니다: ' + updateError.message };
   }
 
+  // 연결된 원본 교안(sourceMaterialId)이 있으면 원본 및 다른 분반(B·C·D반)도 동기화
+  if (existingParsed.sourceMaterialId) {
+    const masterSerialized = serializeLessonMaterial({
+      materialType,
+      markdownContent: materialMarkdown,
+      htmlContent: materialHtml,
+      fileName: materialFileName,
+      appliedPatches: existingParsed.appliedPatches || [],
+      aiAnalysis: null,
+      displayOrder: nextSession,
+      subjectCategory: nextSubject,
+      unitCategory: nextUnit,
+      sessionNumber: nextSession,
+      pageIcon: nextIcon,
+      sourceMaterialId: null,
+    });
+
+    const { data: updatedMaster } = await supabase
+      .from('lessons')
+      .update({
+        title: title.trim(),
+        learning_objective: learningObjective.trim(),
+        material_html: masterSerialized || null,
+      })
+      .eq('id', existingParsed.sourceMaterialId)
+      .select('*')
+      .single();
+
+    if (updatedMaster) {
+      await syncMasterToAllClassLessons(user.id, updatedMaster as Lesson);
+    }
+  }
+
+  revalidatePath('/materials');
   revalidatePath(`/classes/${classId}`);
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
   redirect(`/classes/${classId}/lessons/${lessonId}`);
 }
 
 /**
- * 2-2. 레슨(교안 포함) 완전 삭제
+ * 2-2. 학급 내 레슨 삭제 (학급에서만 제거하며 교안 보관함의 원본 교안은 안전하게 유지됨)
  */
 export async function deleteLessonAction(
   lessonId: string,
@@ -231,6 +1027,7 @@ export async function deleteLessonAction(
     return { success: false, error: '레슨 삭제 중 오류가 발생했습니다: ' + deleteError.message };
   }
 
+  revalidatePath('/materials');
   revalidatePath(`/classes/${classId}`);
   return { success: true };
 }
@@ -396,7 +1193,7 @@ export async function requestAiLessonReview(
     return { success: false, error: aiRes.error || 'AI 분석 중 오류가 발생했습니다.' };
   }
 
-  // 분석 결과를 레슨 메타데이터에 영구 캐싱
+  // 분석 결과를 해당 분반의 레슨 메타데이터에 캐싱
   const updatedSerialized = serializeLessonMaterial({
     ...parsedMaterial,
     aiAnalysis: aiRes.analysis,
@@ -412,7 +1209,8 @@ export async function requestAiLessonReview(
 }
 
 /**
- * 5. 원클릭 교안 보충 패치 적용 (AI가 제안한 보충 설명이나 교사가 수정한 패치를 학생 교안 화면에 즉시 반영)
+ * 5. 원클릭 교안 보충 패치 적용
+ * - A반 수업 후 패치를 적용하면 원본 교안(sourceMaterialId) 및 동일 교안을 쓰는 B, C, D반에도 보충 패치가 실시간 동기화됩니다!
  */
 export async function applyMaterialPatchAction(
   lessonId: string,
@@ -447,9 +1245,11 @@ export async function applyMaterialPatchAction(
     source_questions_summary: sourceQuestionsSummary,
   };
 
+  const nextPatches = [...parsed.appliedPatches, newPatch];
+
   const updatedSerialized = serializeLessonMaterial({
     ...parsed,
-    appliedPatches: [...parsed.appliedPatches, newPatch],
+    appliedPatches: nextPatches,
   });
 
   const { error: updateErr } = await supabase
@@ -461,12 +1261,41 @@ export async function applyMaterialPatchAction(
     return { success: false, error: '교안 패치 저장 실패: ' + updateErr.message };
   }
 
+  // 원본 교안(sourceMaterialId)이 연결되어 있으면 원본 및 타 분반(B·C·D반)에도 보충 패치 동기화!
+  if (parsed.sourceMaterialId) {
+    const { data: masterData } = await supabase
+      .from('lessons')
+      .select('*')
+      .eq('id', parsed.sourceMaterialId)
+      .single();
+
+    if (masterData) {
+      const masterParsed = parseLessonMaterial(masterData as Lesson);
+      const updatedMasterSerialized = serializeLessonMaterial({
+        ...masterParsed,
+        appliedPatches: nextPatches,
+      });
+
+      const { data: updatedMaster } = await supabase
+        .from('lessons')
+        .update({ material_html: updatedMasterSerialized })
+        .eq('id', parsed.sourceMaterialId)
+        .select('*')
+        .single();
+
+      if (updatedMaster) {
+        await syncMasterToAllClassLessons(user.id, updatedMaster as Lesson);
+      }
+    }
+  }
+
+  revalidatePath('/materials');
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
   return { success: true };
 }
 
 /**
- * 6. 적용된 교안 보충 패치 삭제
+ * 6. 적용된 교안 보충 패치 삭제 (원본 교안 및 타 분반과도 동기화)
  */
 export async function removeMaterialPatchAction(
   lessonId: string,
@@ -490,9 +1319,11 @@ export async function removeMaterialPatchAction(
   }
 
   const parsed = parseLessonMaterial(lessonData as Lesson);
+  const nextPatches = parsed.appliedPatches.filter((p) => p.id !== patchId);
+
   const updatedSerialized = serializeLessonMaterial({
     ...parsed,
-    appliedPatches: parsed.appliedPatches.filter((p) => p.id !== patchId),
+    appliedPatches: nextPatches,
   });
 
   const { error } = await supabase
@@ -504,6 +1335,34 @@ export async function removeMaterialPatchAction(
     return { success: false, error: '패치 삭제 실패: ' + error.message };
   }
 
+  if (parsed.sourceMaterialId) {
+    const { data: masterData } = await supabase
+      .from('lessons')
+      .select('*')
+      .eq('id', parsed.sourceMaterialId)
+      .single();
+
+    if (masterData) {
+      const masterParsed = parseLessonMaterial(masterData as Lesson);
+      const updatedMasterSerialized = serializeLessonMaterial({
+        ...masterParsed,
+        appliedPatches: nextPatches,
+      });
+
+      const { data: updatedMaster } = await supabase
+        .from('lessons')
+        .update({ material_html: updatedMasterSerialized })
+        .eq('id', parsed.sourceMaterialId)
+        .select('*')
+        .single();
+
+      if (updatedMaster) {
+        await syncMasterToAllClassLessons(user.id, updatedMaster as Lesson);
+      }
+    }
+  }
+
+  revalidatePath('/materials');
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
   return { success: true };
 }
@@ -528,7 +1387,7 @@ export async function updateLessonMaterialMarkdownAction(
 }
 
 /**
- * 7-1. 교안 본문(노션 블록 마크다운 또는 HTML 시뮬레이터) 직접 수정 및 업데이트
+ * 7-1. 교안 본문(노션 블록 마크다운 또는 HTML 시뮬레이터) 직접 수정 및 업데이트 (원본 및 타 분반 동기화 포함)
  */
 export async function updateLessonMaterialAction(
   lessonId: string,
@@ -555,12 +1414,18 @@ export async function updateLessonMaterialAction(
   }
 
   const parsed = parseLessonMaterial(lessonData as Lesson);
+  const nextMarkdown =
+    materialType === 'markdown' ? newMarkdown.trim() : parsed.markdownContent;
+  const nextHtml =
+    materialType === 'html' ? newHtml.trim() : parsed.htmlContent;
+  const nextFileName = newFileName !== undefined ? newFileName : parsed.fileName;
+
   const updatedSerialized = serializeLessonMaterial({
     ...parsed,
     materialType,
-    markdownContent: materialType === 'markdown' ? newMarkdown.trim() : parsed.markdownContent,
-    htmlContent: materialType === 'html' ? newHtml.trim() : parsed.htmlContent,
-    fileName: newFileName !== undefined ? newFileName : parsed.fileName,
+    markdownContent: nextMarkdown,
+    htmlContent: nextHtml,
+    fileName: nextFileName,
   });
 
   const { error } = await supabase
@@ -572,6 +1437,37 @@ export async function updateLessonMaterialAction(
     return { success: false, error: '교안 수정 중 오류가 발생했습니다: ' + error.message };
   }
 
+  if (parsed.sourceMaterialId) {
+    const { data: masterData } = await supabase
+      .from('lessons')
+      .select('*')
+      .eq('id', parsed.sourceMaterialId)
+      .single();
+
+    if (masterData) {
+      const masterParsed = parseLessonMaterial(masterData as Lesson);
+      const updatedMasterSerialized = serializeLessonMaterial({
+        ...masterParsed,
+        materialType,
+        markdownContent: nextMarkdown,
+        htmlContent: nextHtml,
+        fileName: nextFileName,
+      });
+
+      const { data: updatedMaster } = await supabase
+        .from('lessons')
+        .update({ material_html: updatedMasterSerialized })
+        .eq('id', parsed.sourceMaterialId)
+        .select('*')
+        .single();
+
+      if (updatedMaster) {
+        await syncMasterToAllClassLessons(user.id, updatedMaster as Lesson);
+      }
+    }
+  }
+
+  revalidatePath('/materials');
   revalidatePath(`/classes/${classId}`);
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
   return { success: true };
@@ -605,6 +1501,11 @@ export async function clearLessonMaterialAction(
     appliedPatches: [],
     aiAnalysis: existingParsed?.aiAnalysis || null,
     displayOrder: existingParsed?.displayOrder ?? null,
+    subjectCategory: existingParsed?.subjectCategory || null,
+    unitCategory: existingParsed?.unitCategory || null,
+    sessionNumber: existingParsed?.sessionNumber ?? null,
+    pageIcon: existingParsed?.pageIcon || null,
+    sourceMaterialId: existingParsed?.sourceMaterialId || null,
   });
 
   const { error } = await supabase
@@ -622,8 +1523,7 @@ export async function clearLessonMaterialAction(
 }
 
 /**
- * 8. 오개념 타겟팅 형성평가 문항 학생 화면 배포
- * (formative_quizzes 테이블이 있으면 사용하고, 마이그레이션 전이면 question_groups [__QUIZ__] 엔티티로 완벽 호환 저장)
+ * 8. 오개념 타겟팅 형성평가 문항 학생 화면 배포 (각 분반별로 독립 배포)
  */
 export async function publishFormativeQuizzesAction(
   lessonId: string,
@@ -640,7 +1540,6 @@ export async function publishFormativeQuizzesAction(
     return { success: false, error: '배포할 문항이 없습니다.' };
   }
 
-  // 기존에 배포된 [__QUIZ__] 그룹 정리 후 새로 등록
   const { data: existingGroups } = await supabase
     .from('question_groups')
     .select('id, representative_title')
@@ -704,7 +1603,6 @@ export async function submitQuizAnswerAction(
     is_correct: isCorrect,
   });
 
-  // 기존에 이 학생이 해당 문항에 제출한 답안이 있는지 확인
   const { data: existingAnswers } = await supabase
     .from('answers')
     .select('id')
