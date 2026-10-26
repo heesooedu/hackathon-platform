@@ -62,10 +62,102 @@ export interface NotionBlock {
   tableRows?: string[][]; // 표(table) 블록의 2차원 셀 배열 (행 x 열)
   hasTableHeader?: boolean; // 표 첫 행 머리글 여부 (기본 true)
   quizData?: InlineQuizBlockData; // 인라인 체크포인트 퀴즈 블록 데이터
+  rowId?: string; // 같은 rowId를 공유하는 인접 블록들은 가로 다단(Side-by-Side Row)으로 나란히 조립됨
+  widthPercent?: number; // 블록의 가로 너비 비율 (18~100%, 다단 행 내에서는 열 너비 비중, 단독 블록에서는 가로 폭 %)
+}
+
+export interface NotionBlockRowGroup {
+  rowId: string | null;
+  items: { block: NotionBlock; index: number }[];
 }
 
 export function createBlockId(): string {
   return `blk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function createRowId(): string {
+  return `row-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/**
+ * 연속된 블록 중 같은 rowId를 가진 블록들을 하나의 가로 다단 행(Row Group, 최대 4열)으로 묶어 반환합니다.
+ */
+export function groupBlocksIntoRows(blocks: NotionBlock[]): NotionBlockRowGroup[] {
+  const groups: NotionBlockRowGroup[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    const rId = b.rowId?.trim() || null;
+    if (
+      rId &&
+      groups.length > 0 &&
+      groups[groups.length - 1].rowId === rId &&
+      groups[groups.length - 1].items.length < 4
+    ) {
+      groups[groups.length - 1].items.push({ block: b, index: i });
+    } else {
+      groups.push({
+        rowId: rId,
+        items: [{ block: b, index: i }],
+      });
+    }
+  }
+  return groups;
+}
+
+/**
+ * 한 행(Row Group) 내부 블록들의 가로 너비 비율(%)을 합계 100%가 되도록 정규화하여 반환합니다.
+ */
+export function getNormalizedRowWidths(
+  items: { block: NotionBlock }[]
+): number[] {
+  const n = items.length;
+  if (n === 0) return [];
+  if (n === 1) {
+    const w = items[0].block.widthPercent;
+    return [
+      typeof w === 'number' && Number.isFinite(w)
+        ? Math.min(100, Math.max(25, Math.round(w)))
+        : 100,
+    ];
+  }
+
+  const rawWeights = items.map((it) => {
+    const w = it.block.widthPercent;
+    return typeof w === 'number' && Number.isFinite(w) && w >= 15
+      ? w
+      : 100 / n;
+  });
+  const total = rawWeights.reduce((acc, v) => acc + v, 0) || 100;
+  const normalized = rawWeights.map((w) =>
+    Math.max(15, Math.round((w / total) * 100))
+  );
+  const sumExceptLast = normalized
+    .slice(0, n - 1)
+    .reduce((acc, v) => acc + v, 0);
+  normalized[n - 1] = Math.max(15, 100 - sumExceptLast);
+  return normalized;
+}
+
+/**
+ * 블록 삭제·이동·분리 후 혼자 남은(인접 블록과 rowId를 공유하지 않는) 고아 rowId를 정리합니다.
+ */
+export function cleanupOrphanRowIds(blocks: NotionBlock[]): NotionBlock[] {
+  return blocks.map((b, idx) => {
+    const rId = b.rowId?.trim();
+    if (!rId) return b;
+    const prevSame = idx > 0 && blocks[idx - 1].rowId?.trim() === rId;
+    const nextSame =
+      idx < blocks.length - 1 && blocks[idx + 1].rowId?.trim() === rId;
+    if (!prevSame && !nextSame) {
+      const nextBlock: NotionBlock = { ...b, rowId: undefined };
+      // 다단 행에서 50% 등으로 분할되어 있던 폭은 단독 블록으로 돌아올 때 100%로 복원
+      if (typeof nextBlock.widthPercent === 'number' && nextBlock.widthPercent <= 85) {
+        delete nextBlock.widthPercent;
+      }
+      return nextBlock;
+    }
+    return b;
+  });
 }
 
 export function createInlineQuizId(): string {
@@ -177,6 +269,9 @@ function parseTableRowCells(trimmedLine: string): string[] {
 function isSpecialBlockLine(trimmedLine: string): boolean {
   if (!trimmedLine) return true;
   if (isEmptyBlockToken(trimmedLine)) return true;
+  if (trimmedLine.startsWith('<!--block-layout:') && trimmedLine.endsWith('-->')) {
+    return true;
+  }
   if (isTableLine(trimmedLine)) return true;
   if (trimmedLine.startsWith('```')) return true;
   if (trimmedLine === '---' || trimmedLine === '***') return true;
@@ -217,13 +312,66 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
 
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const blocks: NotionBlock[] = [];
+  let pendingLayout: { rowId?: string; widthPercent?: number } | null = null;
+  let prevBlocksLen = 0;
+
+  const applyPendingLayoutIfAny = () => {
+    if (blocks.length > prevBlocksLen) {
+      if (pendingLayout) {
+        for (let bIdx = prevBlocksLen; bIdx < blocks.length; bIdx++) {
+          if (pendingLayout.rowId) {
+            blocks[bIdx].rowId = pendingLayout.rowId;
+          }
+          if (typeof pendingLayout.widthPercent === 'number') {
+            blocks[bIdx].widthPercent = pendingLayout.widthPercent;
+          }
+        }
+        pendingLayout = null;
+      }
+      prevBlocksLen = blocks.length;
+    }
+  };
 
   let i = 0;
   while (i < lines.length) {
+    applyPendingLayoutIfAny();
+
     const rawLine = lines[i];
     const line = rawLine.trim();
 
     if (!line) {
+      i++;
+      continue;
+    }
+
+    // 0-0. 블록 가로 다단 조립 및 가로 폭 레이아웃 메타데이터 주석 (<!--block-layout:{"rowId":"...","widthPercent":50}-->)
+    if (line.startsWith('<!--block-layout:') && line.endsWith('-->')) {
+      const jsonStr = line.slice('<!--block-layout:'.length, -3).trim();
+      try {
+        const parsedLayout = JSON.parse(jsonStr) as {
+          rowId?: unknown;
+          widthPercent?: unknown;
+        };
+        if (parsedLayout && typeof parsedLayout === 'object') {
+          pendingLayout = {
+            rowId:
+              typeof parsedLayout.rowId === 'string' &&
+              parsedLayout.rowId.trim()
+                ? parsedLayout.rowId.trim()
+                : undefined,
+            widthPercent:
+              typeof parsedLayout.widthPercent === 'number' &&
+              Number.isFinite(parsedLayout.widthPercent)
+                ? Math.min(
+                    100,
+                    Math.max(15, Math.round(parsedLayout.widthPercent))
+                  )
+                : undefined,
+          };
+        }
+      } catch {
+        // 잘못된 형식의 레이아웃 주석은 무시
+      }
       i++;
       continue;
     }
@@ -596,6 +744,8 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
     });
   }
 
+  applyPendingLayoutIfAny();
+
   if (blocks.length === 0) {
     blocks.push({
       id: createBlockId(),
@@ -612,6 +762,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
  * - 빈 블록(공백 블록)은 `<br>`로 보존하여 저장 후에도 그대로 유지됩니다.
  * - 블록 내부의 Shift+Enter 줄바꿈은 단일 개행(`\n` 또는 인라인 `<br>`)으로 보존되어
  *   Enter로 만든 새 블록(`\n\n`)과 명확히 구분됩니다.
+ * - 가로 다단 조립(rowId) 및 블록 가로 너비(widthPercent) 설정은 `<!--block-layout:...-->` 메타 주석으로 직렬화됩니다.
  */
 export function blocksToMarkdown(blocks: NotionBlock[]): string {
   const hasAnyContent = blocks.some(
@@ -629,6 +780,8 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
   const lines: string[] = [];
 
   for (const b of blocks) {
+    const lineCountBefore = lines.length;
+
     switch (b.type) {
       case 'h1':
         if (b.content.trim()) {
@@ -696,13 +849,13 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         break;
       }
       case 'code':
-        if (b.content.trim()) {
+        if (b.content.trim() || b.rowId) {
           const lang = b.language || 'python';
           lines.push(`\`\`\`${lang}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``);
         }
         break;
       case 'colab':
-        if (b.content.trim()) {
+        if (b.content.trim() || b.rowId) {
           const safeTitle = (b.caption || '')
             .replace(/[\n|]/g, ' ')
             .trim();
@@ -717,7 +870,7 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         }
         break;
       case 'vpython':
-        if (b.content.trim()) {
+        if (b.content.trim() || b.rowId) {
           const safeTitle = (b.caption || '')
             .replace(/[\n|]/g, ' ')
             .trim();
@@ -732,12 +885,12 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         }
         break;
       case 'mermaid':
-        if (b.content.trim()) {
+        if (b.content.trim() || b.rowId) {
           lines.push(`\`\`\`mermaid\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);
         }
         break;
       case 'simulation':
-        if (b.content.trim()) {
+        if (b.content.trim() || b.rowId) {
           const safeTitle = (b.caption || '').replace(/\n/g, ' ').trim();
           const header = safeTitle ? `simulation:${safeTitle}` : 'simulation';
           lines.push(`\`\`\`${header}\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);
@@ -809,6 +962,29 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           lines.push('<br>');
         }
         break;
+    }
+
+    if (lines.length > lineCountBefore) {
+      const lastIdx = lines.length - 1;
+      const hasRowId = typeof b.rowId === 'string' && b.rowId.trim().length > 0;
+      const hasCustomWidth =
+        typeof b.widthPercent === 'number' &&
+        Number.isFinite(b.widthPercent) &&
+        (hasRowId || (b.widthPercent >= 15 && b.widthPercent < 100));
+      if (hasRowId || hasCustomWidth) {
+        const layoutMeta: { rowId?: string; widthPercent?: number } = {};
+        if (hasRowId) layoutMeta.rowId = b.rowId!.trim();
+        if (
+          typeof b.widthPercent === 'number' &&
+          Number.isFinite(b.widthPercent)
+        ) {
+          layoutMeta.widthPercent = Math.min(
+            100,
+            Math.max(15, Math.round(b.widthPercent))
+          );
+        }
+        lines[lastIdx] = `<!--block-layout:${JSON.stringify(layoutMeta)}-->\n${lines[lastIdx]}`;
+      }
     }
   }
 

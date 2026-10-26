@@ -7,6 +7,8 @@ import {
   markdownToBlocks,
   blocksToMarkdown,
   getBlockImages,
+  groupBlocksIntoRows,
+  getNormalizedRowWidths,
   NotionBlock,
 } from '@/utils/notionBlocks';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
@@ -121,323 +123,383 @@ export function SimpleMarkdownRenderer({
   inlineQuizzesMap?: Record<string, FormativeQuiz>;
 }) {
   const blocks = markdownToBlocks(content);
+  const rowGroups = groupBlocksIntoRows(blocks);
+
+  const renderSingleBlock = (
+    block: NotionBlock,
+    isInMultiColumnRow: boolean
+  ) => {
+    if (block.type === 'divider') {
+      return <hr key={block.id} className="my-5 border-gray-200" />;
+    }
+
+    if (block.type === 'h1') {
+      return (
+        <h3
+          key={block.id}
+          className="text-xl font-extrabold text-gray-900 pt-3 pb-1.5 border-b border-gray-100 tracking-tight leading-snug whitespace-pre-wrap"
+        >
+          {renderInlineMarkdown(block.content)}
+        </h3>
+      );
+    }
+
+    if (block.type === 'h2') {
+      return (
+        <h4
+          key={block.id}
+          className="text-base font-bold text-indigo-950 pt-2 flex items-start gap-2 leading-snug whitespace-pre-wrap"
+        >
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0 mt-1.5" />
+          <span>{renderInlineMarkdown(block.content)}</span>
+        </h4>
+      );
+    }
+
+    if (block.type === 'h3') {
+      return (
+        <h5
+          key={block.id}
+          className="text-sm font-bold text-gray-900 pt-1 leading-snug whitespace-pre-wrap"
+        >
+          {renderInlineMarkdown(block.content)}
+        </h5>
+      );
+    }
+
+    if (block.type === 'bullet') {
+      return (
+        <div key={block.id} className="flex items-start gap-2.5 pl-2">
+          <span className="text-blue-600 font-bold select-none mt-0.5">•</span>
+          <div className="flex-1 leading-snug whitespace-pre-wrap">
+            {renderInlineMarkdown(block.content)}
+          </div>
+        </div>
+      );
+    }
+
+    if (block.type === 'callout') {
+      return (
+        <div
+          key={block.id}
+          className="flex items-start gap-3 rounded-2xl bg-amber-50/80 border border-amber-200/80 p-4 my-2 shadow-2xs"
+        >
+          <span className="text-xl select-none shrink-0 mt-0.5">
+            {block.icon || '💡'}
+          </span>
+          <div className="flex-1 text-sm font-medium text-gray-900 leading-snug whitespace-pre-wrap">
+            {renderInlineMarkdown(block.content)}
+          </div>
+        </div>
+      );
+    }
+
+    if (block.type === 'quote') {
+      return (
+        <blockquote
+          key={block.id}
+          className="border-l-4 border-indigo-400 bg-slate-50/80 pl-4 pr-4 py-2.5 my-2 rounded-r-xl text-sm text-gray-700 italic leading-snug whitespace-pre-wrap"
+        >
+          {renderInlineMarkdown(block.content)}
+        </blockquote>
+      );
+    }
+
+    if (block.type === 'code') {
+      const langLabel = (block.language || 'python').toUpperCase();
+      return (
+        <div
+          key={block.id}
+          className="my-2 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-sm"
+        >
+          <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-4 py-2">
+            <div className="flex items-center gap-2">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500/80" />
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+              <span className="ml-2 rounded-md bg-indigo-500/20 border border-indigo-400/30 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-300">
+                {langLabel}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                  navigator.clipboard.writeText(block.content);
+                }
+              }}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+            >
+              📋 코드 복사
+            </button>
+          </div>
+          <pre className="overflow-x-auto p-4 font-mono text-xs leading-6 text-slate-100">
+            <code>{block.content}</code>
+          </pre>
+        </div>
+      );
+    }
+
+    if (block.type === 'mermaid') {
+      return (
+        <div
+          key={block.id}
+          className="my-2 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/30 to-white p-4 shadow-2xs"
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
+              <span>❖</span>
+              <span>순서도 / 다이어그램</span>
+            </span>
+          </div>
+          <MermaidDiagram chart={block.content} />
+        </div>
+      );
+    }
+
+    if (block.type === 'simulation') {
+      return (
+        <SimulationBlockPreview
+          key={block.id}
+          code={block.content}
+          caption={block.caption}
+        />
+      );
+    }
+
+    if (block.type === 'colab') {
+      return (
+        <ColabRunnerBlock
+          key={block.id}
+          code={block.content}
+          caption={block.caption}
+          externalUrl={block.externalUrl}
+        />
+      );
+    }
+
+    if (block.type === 'vpython') {
+      return (
+        <VPythonRunnerBlock
+          key={block.id}
+          initialCode={block.content}
+          title={block.caption}
+          externalUrl={block.externalUrl}
+        />
+      );
+    }
+
+    if (block.type === 'quiz') {
+      const rawJson = block.quizData
+        ? JSON.stringify(block.quizData)
+        : block.content;
+      return (
+        <InlineQuizBlockView
+          key={block.id}
+          rawJson={rawJson}
+          lessonId={lessonId}
+          classId={classId}
+          currentUserId={currentUserId}
+          isTeacher={isTeacher}
+          inlineQuizzesMap={inlineQuizzesMap}
+        />
+      );
+    }
+
+    if (block.type === 'table') {
+      const rows = block.tableRows || [];
+      if (rows.length === 0) return null;
+      const hasHeader = block.hasTableHeader !== false;
+
+      return (
+        <div
+          key={block.id}
+          className="my-2 overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-2xs"
+        >
+          <table className="w-full border-collapse text-left text-sm">
+            {hasHeader && rows.length > 0 && (
+              <thead>
+                <tr className="border-b border-gray-200 bg-slate-50/90">
+                  {rows[0].map((cell, cIdx) => (
+                    <th
+                      key={cIdx}
+                      className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 font-extrabold text-gray-900 leading-snug whitespace-pre-wrap"
+                    >
+                      {renderInlineMarkdown(cell)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            <tbody className="divide-y divide-gray-200">
+              {(hasHeader ? rows.slice(1) : rows).map((row, rIdx) => (
+                <tr
+                  key={rIdx}
+                  className="hover:bg-slate-50/40 transition-colors"
+                >
+                  {row.map((cell, cIdx) => (
+                    <td
+                      key={cIdx}
+                      className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 text-gray-700 leading-snug whitespace-pre-wrap align-top"
+                    >
+                      {renderInlineMarkdown(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    if (block.type === 'image') {
+      const imgs = getBlockImages(block);
+      if (imgs.length === 0) return null;
+
+      if (imgs.length > 1) {
+        const gridColsClass =
+          imgs.length === 2
+            ? 'grid-cols-1 sm:grid-cols-2'
+            : imgs.length === 3
+            ? 'grid-cols-1 sm:grid-cols-3'
+            : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
+
+        return (
+          <div
+            key={block.id}
+            className={`my-2 grid gap-4 ${gridColsClass} ${
+              !isInMultiColumnRow &&
+              typeof block.widthPercent !== 'number' &&
+              block.imageSize === 'md'
+                ? 'max-w-4xl mx-auto'
+                : 'w-full'
+            }`}
+          >
+            {imgs.map((imgItem, iIdx) => (
+              <figure
+                key={iIdx}
+                className="flex flex-col items-center overflow-hidden rounded-2xl border border-gray-200 bg-gray-50/70 p-2 shadow-2xs"
+              >
+                <div className="flex w-full items-center justify-center overflow-hidden rounded-xl bg-white">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imgItem.url}
+                    alt={imgItem.caption || `수업 교안 이미지 ${iIdx + 1}`}
+                    className="w-full h-auto object-contain max-h-[420px]"
+                  />
+                </div>
+                {imgItem.caption && (
+                  <figcaption className="mt-2 text-xs text-gray-600 font-medium text-center px-1">
+                    ▲ {renderInlineMarkdown(imgItem.caption)}
+                  </figcaption>
+                )}
+              </figure>
+            ))}
+          </div>
+        );
+      }
+
+      const singleImg = imgs[0];
+      const hasCustomWidth =
+        isInMultiColumnRow || typeof block.widthPercent === 'number';
+      const widthClass = hasCustomWidth
+        ? 'w-full'
+        : block.imageSize === 'sm'
+        ? 'max-w-xs'
+        : block.imageSize === 'md'
+        ? 'max-w-lg'
+        : 'max-w-full';
+
+      return (
+        <figure key={block.id} className="my-2 flex flex-col items-center">
+          <div
+            className={`overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-xs ${widthClass}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={singleImg.url}
+              alt={singleImg.caption || '수업 교안 이미지'}
+              className="w-full h-auto object-contain max-h-[520px]"
+            />
+          </div>
+          {singleImg.caption && (
+            <figcaption className="mt-2 text-xs text-gray-500 font-medium text-center">
+              ▲ {renderInlineMarkdown(singleImg.caption)}
+            </figcaption>
+          )}
+        </figure>
+      );
+    }
+
+    if (!block.content.trim()) {
+      return (
+        <div
+          key={block.id}
+          className="h-6 select-none"
+          aria-hidden="true"
+        >
+          &nbsp;
+        </div>
+      );
+    }
+
+    return (
+      <p key={block.id} className="text-gray-700 leading-snug whitespace-pre-wrap">
+        {renderInlineMarkdown(block.content)}
+      </p>
+    );
+  };
 
   return (
     <div className="space-y-3.5 text-sm text-gray-800">
-      {blocks.map((block) => {
-        if (block.type === 'divider') {
-          return <hr key={block.id} className="my-5 border-gray-200" />;
-        }
-
-        if (block.type === 'h1') {
-          return (
-            <h3
-              key={block.id}
-              className="text-xl font-extrabold text-gray-900 pt-3 pb-1.5 border-b border-gray-100 tracking-tight leading-snug whitespace-pre-wrap"
-            >
-              {renderInlineMarkdown(block.content)}
-            </h3>
-          );
-        }
-
-        if (block.type === 'h2') {
-          return (
-            <h4
-              key={block.id}
-              className="text-base font-bold text-indigo-950 pt-2 flex items-start gap-2 leading-snug whitespace-pre-wrap"
-            >
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-500 shrink-0 mt-1.5" />
-              <span>{renderInlineMarkdown(block.content)}</span>
-            </h4>
-          );
-        }
-
-        if (block.type === 'h3') {
-          return (
-            <h5
-              key={block.id}
-              className="text-sm font-bold text-gray-900 pt-1 leading-snug whitespace-pre-wrap"
-            >
-              {renderInlineMarkdown(block.content)}
-            </h5>
-          );
-        }
-
-        if (block.type === 'bullet') {
-          return (
-            <div key={block.id} className="flex items-start gap-2.5 pl-2">
-              <span className="text-blue-600 font-bold select-none mt-0.5">•</span>
-              <div className="flex-1 leading-snug whitespace-pre-wrap">
-                {renderInlineMarkdown(block.content)}
-              </div>
-            </div>
-          );
-        }
-
-        if (block.type === 'callout') {
+      {rowGroups.map((rowGroup, gIdx) => {
+        if (rowGroup.items.length > 1) {
+          const normalizedWidths = getNormalizedRowWidths(rowGroup.items);
           return (
             <div
-              key={block.id}
-              className="flex items-start gap-3 rounded-2xl bg-amber-50/80 border border-amber-200/80 p-4 my-2 shadow-2xs"
+              key={`${rowGroup.rowId || 'row'}_${gIdx}`}
+              className="my-3 flex flex-col md:flex-row md:items-start gap-4 w-full"
             >
-              <span className="text-xl select-none shrink-0 mt-0.5">
-                {block.icon || '💡'}
-              </span>
-              <div className="flex-1 text-sm font-medium text-gray-900 leading-snug whitespace-pre-wrap">
-                {renderInlineMarkdown(block.content)}
-              </div>
-            </div>
-          );
-        }
-
-        if (block.type === 'quote') {
-          return (
-            <blockquote
-              key={block.id}
-              className="border-l-4 border-indigo-400 bg-slate-50/80 pl-4 pr-4 py-2.5 my-2 rounded-r-xl text-sm text-gray-700 italic leading-snug whitespace-pre-wrap"
-            >
-              {renderInlineMarkdown(block.content)}
-            </blockquote>
-          );
-        }
-
-        if (block.type === 'code') {
-          const langLabel = (block.language || 'python').toUpperCase();
-          return (
-            <div
-              key={block.id}
-              className="my-3 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-sm"
-            >
-              <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-4 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500/80" />
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-400/80" />
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
-                  <span className="ml-2 rounded-md bg-indigo-500/20 border border-indigo-400/30 px-2 py-0.5 font-mono text-[11px] font-bold text-indigo-300">
-                    {langLabel}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                      navigator.clipboard.writeText(block.content);
-                    }
-                  }}
-                  className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
-                >
-                  📋 코드 복사
-                </button>
-              </div>
-              <pre className="overflow-x-auto p-4 font-mono text-xs leading-6 text-slate-100">
-                <code>{block.content}</code>
-              </pre>
-            </div>
-          );
-        }
-
-        if (block.type === 'mermaid') {
-          return (
-            <div
-              key={block.id}
-              className="my-4 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/30 to-white p-4 shadow-2xs"
-            >
-              <div className="mb-2 flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
-                  <span>❖</span>
-                  <span>순서도 / 다이어그램</span>
-                </span>
-              </div>
-              <MermaidDiagram chart={block.content} />
-            </div>
-          );
-        }
-
-        if (block.type === 'simulation') {
-          return (
-            <SimulationBlockPreview
-              key={block.id}
-              code={block.content}
-              caption={block.caption}
-            />
-          );
-        }
-
-        if (block.type === 'colab') {
-          return (
-            <ColabRunnerBlock
-              key={block.id}
-              code={block.content}
-              caption={block.caption}
-              externalUrl={block.externalUrl}
-            />
-          );
-        }
-
-        if (block.type === 'vpython') {
-          return (
-            <VPythonRunnerBlock
-              key={block.id}
-              initialCode={block.content}
-              title={block.caption}
-              externalUrl={block.externalUrl}
-            />
-          );
-        }
-
-        if (block.type === 'quiz') {
-          const rawJson = block.quizData
-            ? JSON.stringify(block.quizData)
-            : block.content;
-          return (
-            <InlineQuizBlockView
-              key={block.id}
-              rawJson={rawJson}
-              lessonId={lessonId}
-              classId={classId}
-              currentUserId={currentUserId}
-              isTeacher={isTeacher}
-              inlineQuizzesMap={inlineQuizzesMap}
-            />
-          );
-        }
-
-        if (block.type === 'table') {
-          const rows = block.tableRows || [];
-          if (rows.length === 0) return null;
-          const hasHeader = block.hasTableHeader !== false;
-
-          return (
-            <div
-              key={block.id}
-              className="my-4 overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-2xs"
-            >
-              <table className="w-full border-collapse text-left text-sm">
-                {hasHeader && rows.length > 0 && (
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-slate-50/90">
-                      {rows[0].map((cell, cIdx) => (
-                        <th
-                          key={cIdx}
-                          className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 font-extrabold text-gray-900 leading-snug whitespace-pre-wrap"
-                        >
-                          {renderInlineMarkdown(cell)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                )}
-                <tbody className="divide-y divide-gray-200">
-                  {(hasHeader ? rows.slice(1) : rows).map((row, rIdx) => (
-                    <tr
-                      key={rIdx}
-                      className="hover:bg-slate-50/40 transition-colors"
-                    >
-                      {row.map((cell, cIdx) => (
-                        <td
-                          key={cIdx}
-                          className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 text-gray-700 leading-snug whitespace-pre-wrap align-top"
-                        >
-                          {renderInlineMarkdown(cell)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
-        }
-
-        if (block.type === 'image') {
-          const imgs = getBlockImages(block);
-          if (imgs.length === 0) return null;
-
-          if (imgs.length > 1) {
-            const gridColsClass =
-              imgs.length === 2
-                ? 'grid-cols-1 sm:grid-cols-2'
-                : imgs.length === 3
-                ? 'grid-cols-1 sm:grid-cols-3'
-                : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
-
-            return (
-              <div
-                key={block.id}
-                className={`my-4 grid gap-4 ${gridColsClass} ${
-                  block.imageSize === 'md' ? 'max-w-4xl mx-auto' : 'w-full'
-                }`}
-              >
-                {imgs.map((imgItem, iIdx) => (
-                  <figure
-                    key={iIdx}
-                    className="flex flex-col items-center overflow-hidden rounded-2xl border border-gray-200 bg-gray-50/70 p-2 shadow-2xs"
+              {rowGroup.items.map((item, colIdx) => {
+                const wPct =
+                  normalizedWidths[colIdx] ??
+                  Math.round(100 / rowGroup.items.length);
+                return (
+                  <div
+                    key={item.block.id}
+                    style={{ flexGrow: wPct }}
+                    className="w-full min-w-0 md:basis-0"
                   >
-                    <div className="flex w-full items-center justify-center overflow-hidden rounded-xl bg-white">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={imgItem.url}
-                        alt={imgItem.caption || `수업 교안 이미지 ${iIdx + 1}`}
-                        className="w-full h-auto object-contain max-h-[420px]"
-                      />
-                    </div>
-                    {imgItem.caption && (
-                      <figcaption className="mt-2 text-xs text-gray-600 font-medium text-center px-1">
-                        ▲ {renderInlineMarkdown(imgItem.caption)}
-                      </figcaption>
-                    )}
-                  </figure>
-                ))}
-              </div>
-            );
-          }
-
-          const singleImg = imgs[0];
-          const widthClass =
-            block.imageSize === 'sm'
-              ? 'max-w-xs'
-              : block.imageSize === 'md'
-              ? 'max-w-lg'
-              : 'max-w-full';
-
-          return (
-            <figure key={block.id} className="my-4 flex flex-col items-center">
-              <div
-                className={`overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-xs ${widthClass}`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={singleImg.url}
-                  alt={singleImg.caption || '수업 교안 이미지'}
-                  className="w-full h-auto object-contain max-h-[520px]"
-                />
-              </div>
-              {singleImg.caption && (
-                <figcaption className="mt-2 text-xs text-gray-500 font-medium text-center">
-                  ▲ {renderInlineMarkdown(singleImg.caption)}
-                </figcaption>
-              )}
-            </figure>
-          );
-        }
-
-        if (!block.content.trim()) {
-          return (
-            <div
-              key={block.id}
-              className="h-6 select-none"
-              aria-hidden="true"
-            >
-              &nbsp;
+                    {renderSingleBlock(item.block, true)}
+                  </div>
+                );
+              })}
             </div>
           );
         }
 
-        return (
-          <p key={block.id} className="text-gray-700 leading-snug whitespace-pre-wrap">
-            {renderInlineMarkdown(block.content)}
-          </p>
-        );
+        const { block } = rowGroup.items[0];
+        const customWidth =
+          typeof block.widthPercent === 'number' &&
+          block.widthPercent >= 20 &&
+          block.widthPercent < 100
+            ? Math.round(block.widthPercent)
+            : null;
+
+        if (customWidth !== null) {
+          return (
+            <div
+              key={block.id}
+              style={{ '--block-w': `${customWidth}%` } as React.CSSProperties}
+              className="w-full md:w-[var(--block-w)]"
+            >
+              {renderSingleBlock(block, false)}
+            </div>
+          );
+        }
+
+        return renderSingleBlock(block, false);
       })}
     </div>
   );

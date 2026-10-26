@@ -9,11 +9,15 @@ import {
   CodeLanguage,
   InlineQuizBlockData,
   createBlockId,
+  createRowId,
   createInlineQuizId,
   createDefaultQuizData,
   blocksToMarkdown,
   getBlockImages,
   createDefaultTableRows,
+  groupBlocksIntoRows,
+  getNormalizedRowWidths,
+  cleanupOrphanRowIds,
 } from '@/utils/notionBlocks';
 import { QuizQuestionType } from '@/types/database.types';
 import { generateInlineQuizDraftAction } from '@/app/lessons/actions';
@@ -440,9 +444,17 @@ export default function NotionBlockEditor({
   const [isDraggingFileOverPage, setIsDraggingFileOverPage] = useState(false);
   const [draggedBlockIdx, setDraggedBlockIdx] = useState<number | null>(null);
   const [dragOverBlockIdx, setDragOverBlockIdx] = useState<number | null>(null);
+  const [dragOverSide, setDragOverSide] = useState<
+    'left' | 'right' | 'vertical' | null
+  >(null);
   const [dragHandleHoveredBlockId, setDragHandleHoveredBlockId] = useState<
     string | null
   >(null);
+  const [resizingInfo, setResizingInfo] = useState<{
+    mode: 'column-split' | 'block-width';
+    label: string;
+    activeId?: string;
+  } | null>(null);
   const [uploadingImageBlockId, setUploadingImageBlockId] = useState<string | null>(
     null
   );
@@ -456,11 +468,22 @@ export default function NotionBlockEditor({
     Record<string, string>
   >({});
 
+  const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  const rowContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const blocksRef = useRef<NotionBlock[]>(blocks);
+  useEffect(() => {
+    blocksRef.current = blocks;
+  }, [blocks]);
+
   const blockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const tableCellRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const targetImageBlockIdRef = useRef<string | null>(null);
   const imageUploadModeRef = useRef<'replace' | 'append'>('replace');
+  const sideImageInsertRef = useRef<{
+    targetIdx: number;
+    side: 'left' | 'right';
+  } | null>(null);
 
   function focusBlock(id: string, cursorPos?: number) {
     setFocusedBlockId(id);
@@ -486,6 +509,343 @@ export default function NotionBlockEditor({
 
   function updateBlock(id: string, patch: Partial<NotionBlock>) {
     onChange(blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  }
+
+  function createNewBlockByType(targetType: NotionBlockType): NotionBlock {
+    if (targetType === 'image') {
+      return {
+        id: createBlockId(),
+        type: 'image',
+        content: '',
+        imageUrl: '',
+        caption: '',
+        images: [],
+        imageSize: 'full',
+      };
+    }
+    if (targetType === 'table') {
+      return {
+        id: createBlockId(),
+        type: 'table',
+        content: '',
+        tableRows: createDefaultTableRows(3, 3),
+        hasTableHeader: true,
+      };
+    }
+    if (targetType === 'quiz') {
+      return {
+        id: createBlockId(),
+        type: 'quiz',
+        content: '',
+        quizData: createDefaultQuizData('multiple_choice'),
+      };
+    }
+    return {
+      id: createBlockId(),
+      type: targetType,
+      content:
+        targetType === 'mermaid'
+          ? MERMAID_TEMPLATES[0].code
+          : targetType === 'simulation'
+          ? SIMULATION_TEMPLATES[0].code
+          : targetType === 'colab'
+          ? COLAB_TEMPLATES[0].code
+          : targetType === 'vpython'
+          ? VPYTHON_TEMPLATES[0].code
+          : '',
+      caption:
+        targetType === 'simulation'
+          ? SIMULATION_TEMPLATES[0].caption
+          : targetType === 'colab'
+          ? COLAB_TEMPLATES[0].caption
+          : targetType === 'vpython'
+          ? VPYTHON_TEMPLATES[0].title
+          : undefined,
+      icon: targetType === 'callout' ? '💡' : undefined,
+      language: targetType === 'code' ? 'python' : undefined,
+    };
+  }
+
+  /**
+   * 특정 블록(targetIdx)의 왼쪽 또는 오른쪽 열에 다른 블록(사진, 글, 코드블록 등 모든 블록)을 나란히 조립합니다.
+   */
+  function assembleBlockSideBySide(
+    sourceBlocks: NotionBlock[],
+    targetIdx: number,
+    blockToPlace: NotionBlock,
+    side: 'left' | 'right'
+  ): NotionBlock[] {
+    if (targetIdx < 0 || targetIdx >= sourceBlocks.length) {
+      return [...sourceBlocks, blockToPlace];
+    }
+    const next = [...sourceBlocks];
+    const targetBlock = next[targetIdx];
+    const rowId = targetBlock.rowId || createRowId();
+
+    next[targetIdx] = {
+      ...targetBlock,
+      rowId,
+      imageSize:
+        targetBlock.type === 'image' ? 'full' : targetBlock.imageSize,
+    };
+
+    const placedBlock: NotionBlock = {
+      ...blockToPlace,
+      rowId,
+      imageSize:
+        blockToPlace.type === 'image' ? 'full' : blockToPlace.imageSize,
+    };
+
+    const insertPos = side === 'left' ? targetIdx : targetIdx + 1;
+    next.splice(insertPos, 0, placedBlock);
+
+    // 같은 rowId에 속한 열들의 가로 폭을 균등 분배 (100% 기준)
+    const rowCount = next.filter((b) => b.rowId === rowId).length;
+    const equalW = Number((100 / Math.max(1, rowCount)).toFixed(1));
+    const balanced = next.map((b) =>
+      b.rowId === rowId ? { ...b, widthPercent: equalW } : b
+    );
+    return cleanupOrphanRowIds(balanced);
+  }
+
+  function addSideBySideBlock(
+    targetIdx: number,
+    blockType: NotionBlockType = 'p',
+    side: 'left' | 'right' = 'right'
+  ) {
+    const newBlock = createNewBlockByType(blockType);
+    const next = assembleBlockSideBySide(blocks, targetIdx, newBlock, side);
+    onChange(next);
+    if (
+      newBlock.type !== 'image' &&
+      newBlock.type !== 'divider' &&
+      newBlock.type !== 'table' &&
+      newBlock.type !== 'quiz'
+    ) {
+      focusBlock(newBlock.id);
+    } else if (newBlock.type === 'table') {
+      focusTableCell(newBlock.id, 0, 0);
+    }
+  }
+
+  function triggerSideBySideImageUpload(
+    targetIdx: number,
+    side: 'left' | 'right' = 'right'
+  ) {
+    sideImageInsertRef.current = { targetIdx, side };
+    targetImageBlockIdRef.current = null;
+    imageUploadModeRef.current = 'replace';
+    imageInputRef.current?.click();
+  }
+
+  function joinBlockWithPrevRow(index: number) {
+    if (index <= 0 || index >= blocks.length) return;
+    const next = [...blocks];
+    const [moving] = next.splice(index, 1);
+    const assembled = assembleBlockSideBySide(
+      next,
+      index - 1,
+      moving,
+      'right'
+    );
+    onChange(assembled);
+  }
+
+  function detachBlockFromRow(index: number) {
+    const target = blocks[index];
+    if (!target || !target.rowId) return;
+    const currentRowId = target.rowId;
+    const next = [...blocks];
+    const [detached] = next.splice(index, 1);
+    const cleanDetached: NotionBlock = {
+      ...detached,
+      rowId: undefined,
+      widthPercent: undefined,
+    };
+
+    // 기존 행의 마지막 블록 바로 뒤에 독립된 전체 폭 블록으로 배치
+    let lastRowIdx = -1;
+    for (let i = 0; i < next.length; i++) {
+      if (next[i].rowId === currentRowId) lastRowIdx = i;
+    }
+    const insertPos = lastRowIdx >= 0 ? lastRowIdx + 1 : index;
+    next.splice(insertPos, 0, cleanDetached);
+
+    // 남은 행 블록들의 폭 재정규화
+    const remainingCount = next.filter((b) => b.rowId === currentRowId).length;
+    const equalW =
+      remainingCount > 1
+        ? Number((100 / remainingCount).toFixed(1))
+        : undefined;
+    const normalized = next.map((b) =>
+      b.rowId === currentRowId ? { ...b, widthPercent: equalW } : b
+    );
+    onChange(cleanupOrphanRowIds(normalized));
+  }
+
+  function moveColumnWithinRow(index: number, direction: -1 | 1) {
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= blocks.length) return;
+    if (
+      !blocks[index].rowId ||
+      blocks[index].rowId !== blocks[targetIdx].rowId
+    ) {
+      return;
+    }
+    const next = [...blocks];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIdx, 0, moved);
+    onChange(cleanupOrphanRowIds(next));
+  }
+
+  function applyRowWidthPreset(rowId: string, ratios: number[]) {
+    let colCursor = 0;
+    const next = blocks.map((b) => {
+      if (b.rowId !== rowId) return b;
+      const w = ratios[colCursor] ?? Math.round(100 / ratios.length);
+      colCursor++;
+      return { ...b, widthPercent: w };
+    });
+    onChange(next);
+  }
+
+  /**
+   * 다단(가로 배치) 행에서 두 열 사이의 구분선을 마우스로 좌우 드래그하여 비율을 조절합니다.
+   */
+  function startColumnSplitResize(
+    e: React.MouseEvent,
+    rowId: string,
+    leftBlockId: string,
+    rightBlockId: string
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rowEl = rowContainerRefs.current[rowId];
+    const rowWidthPx = rowEl?.getBoundingClientRect().width || 800;
+    const startX = e.clientX;
+
+    const currentBlocks = blocksRef.current;
+    const rowItems = currentBlocks
+      .map((block, index) => ({ block, index }))
+      .filter((it) => it.block.rowId === rowId);
+    const normWidths = getNormalizedRowWidths(rowItems);
+
+    const leftIdxInRow = rowItems.findIndex(
+      (it) => it.block.id === leftBlockId
+    );
+    const rightIdxInRow = rowItems.findIndex(
+      (it) => it.block.id === rightBlockId
+    );
+    if (leftIdxInRow === -1 || rightIdxInRow === -1) return;
+
+    const startLeftW = normWidths[leftIdxInRow];
+    const startRightW = normWidths[rightIdxInRow];
+    const pairTotalW = startLeftW + startRightW;
+
+    setResizingInfo({
+      mode: 'column-split',
+      label: `${Math.round(startLeftW)}% : ${Math.round(startRightW)}%`,
+      activeId: `${leftBlockId}_${rightBlockId}`,
+    });
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaPct = (deltaX / Math.max(240, rowWidthPx)) * 100;
+      const minColW = 18;
+      const nextLeftW = Math.min(
+        pairTotalW - minColW,
+        Math.max(minColW, Number((startLeftW + deltaPct).toFixed(1)))
+      );
+      const nextRightW = Number((pairTotalW - nextLeftW).toFixed(1));
+
+      setResizingInfo({
+        mode: 'column-split',
+        label: `${Math.round(nextLeftW)}% : ${Math.round(nextRightW)}%`,
+        activeId: `${leftBlockId}_${rightBlockId}`,
+      });
+
+      const updated = blocksRef.current.map((b) => {
+        if (b.rowId !== rowId) return b;
+        if (b.id === leftBlockId) return { ...b, widthPercent: nextLeftW };
+        if (b.id === rightBlockId) return { ...b, widthPercent: nextRightW };
+        const idxInRow = rowItems.findIndex((it) => it.block.id === b.id);
+        return {
+          ...b,
+          widthPercent:
+            idxInRow >= 0 ? normWidths[idxInRow] : b.widthPercent,
+        };
+      });
+      onChange(updated);
+    }
+
+    function handleMouseUp() {
+      setResizingInfo(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  /**
+   * 개별 블록의 오른쪽 가장자리 핸들을 좌우로 드래그하여 가로 폭(25%~100%)을 자유롭게 늘리거나 줄입니다.
+   */
+  function startSingleBlockWidthResize(
+    e: React.MouseEvent,
+    blockId: string,
+    initialWidthPercent?: number
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const containerWidthPx =
+      editorContainerRef.current?.getBoundingClientRect().width || 800;
+    const startX = e.clientX;
+    const startW = initialWidthPercent ?? 100;
+
+    setResizingInfo({
+      mode: 'block-width',
+      label: `가로 폭 ${Math.round(startW)}%`,
+      activeId: blockId,
+    });
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaPct = (deltaX / Math.max(240, containerWidthPx)) * 100;
+      const clampedW = Math.min(
+        100,
+        Math.max(25, Math.round(startW + deltaPct))
+      );
+      const finalW = clampedW >= 98 ? 100 : clampedW;
+
+      setResizingInfo({
+        mode: 'block-width',
+        label: `가로 폭 ${finalW}%`,
+        activeId: blockId,
+      });
+
+      const updated = blocksRef.current.map((b) =>
+        b.id === blockId
+          ? {
+              ...b,
+              widthPercent: finalW >= 100 ? undefined : finalW,
+              imageSize: b.type === 'image' ? 'full' : b.imageSize,
+            }
+          : b
+      );
+      onChange(updated);
+    }
+
+    function handleMouseUp() {
+      setResizingInfo(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   }
 
   /**
@@ -534,8 +894,19 @@ export default function NotionBlockEditor({
 
   function insertBlockAfter(index: number, newBlock: NotionBlock) {
     const next = [...blocks];
-    next.splice(index + 1, 0, newBlock);
-    onChange(next);
+    let insertIdx = index;
+    // 현재 블록이 다단(가로 배치) 행 내부에 있고 새 블록이 일반 전체폭 블록이면, 행의 마지막 블록 바로 아래에 삽입
+    const currentRowId = next[index]?.rowId;
+    if (currentRowId && !newBlock.rowId) {
+      while (
+        insertIdx + 1 < next.length &&
+        next[insertIdx + 1].rowId === currentRowId
+      ) {
+        insertIdx++;
+      }
+    }
+    next.splice(insertIdx + 1, 0, newBlock);
+    onChange(cleanupOrphanRowIds(next));
     if (
       newBlock.type !== 'image' &&
       newBlock.type !== 'divider' &&
@@ -559,9 +930,20 @@ export default function NotionBlockEditor({
       ]);
       return;
     }
-    const prevBlock = blocks[index - 1];
-    const next = blocks.filter((_, i) => i !== index);
-    onChange(next);
+    const removedRowId = blocks[index]?.rowId;
+    const prevBlock = blocks[index - 1] || blocks[index + 1];
+    let next = blocks.filter((_, i) => i !== index);
+    if (removedRowId) {
+      const remainingInRow = next.filter((b) => b.rowId === removedRowId).length;
+      const equalW =
+        remainingInRow > 1
+          ? Number((100 / remainingInRow).toFixed(1))
+          : undefined;
+      next = next.map((b) =>
+        b.rowId === removedRowId ? { ...b, widthPercent: equalW } : b
+      );
+    }
+    onChange(cleanupOrphanRowIds(next));
     if (prevBlock) {
       focusBlock(prevBlock.id);
     }
@@ -573,7 +955,7 @@ export default function NotionBlockEditor({
     const next = [...blocks];
     const [moved] = next.splice(index, 1);
     next.splice(targetIdx, 0, moved);
-    onChange(next);
+    onChange(cleanupOrphanRowIds(next));
   }
 
   function getFilteredSlashItems() {
@@ -848,7 +1230,8 @@ export default function NotionBlockEditor({
     files: FileList | File[],
     insertAtIdx?: number,
     targetBlockId?: string,
-    mode: 'replace' | 'append' = 'replace'
+    mode: 'replace' | 'append' = 'replace',
+    sideAssemble?: { targetIdx: number; side: 'left' | 'right' }
   ) {
     const imageFiles = Array.from(files).filter((f) =>
       f.type.startsWith('image/')
@@ -895,20 +1278,36 @@ export default function NotionBlockEditor({
       imageUrl: first.url,
       caption: first.caption || '',
       images: uploadedItems,
-      imageSize: 'md',
+      imageSize: sideAssemble ? 'full' : 'md',
     };
+
+    if (sideAssemble) {
+      const next = assembleBlockSideBySide(
+        blocks,
+        sideAssemble.targetIdx,
+        newImageBlock,
+        sideAssemble.side
+      );
+      onChange(next);
+      return;
+    }
 
     const idx =
       insertAtIdx !== undefined ? insertAtIdx : Math.max(0, blocks.length - 1);
     const next = [...blocks];
     next.splice(idx + 1, 0, newImageBlock);
-    onChange(next);
+    onChange(cleanupOrphanRowIds(next));
   }
 
   const filteredSlashItems = getFilteredSlashItems();
+  const activeFocusedIdx = Math.max(
+    0,
+    blocks.findIndex((b) => b.id === focusedBlockId)
+  );
 
   return (
     <div
+      ref={editorContainerRef}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
@@ -928,11 +1327,28 @@ export default function NotionBlockEditor({
           );
           if (hasImage) {
             e.preventDefault();
-            await handleImageFilesDrop(
-              e.dataTransfer.files,
-              dragOverBlockIdx !== null ? dragOverBlockIdx : blocks.length - 1
-            );
+            if (
+              dragOverBlockIdx !== null &&
+              (dragOverSide === 'left' || dragOverSide === 'right')
+            ) {
+              await handleImageFilesDrop(
+                e.dataTransfer.files,
+                undefined,
+                undefined,
+                'replace',
+                {
+                  targetIdx: dragOverBlockIdx,
+                  side: dragOverSide,
+                }
+              );
+            } else {
+              await handleImageFilesDrop(
+                e.dataTransfer.files,
+                dragOverBlockIdx !== null ? dragOverBlockIdx : blocks.length - 1
+              );
+            }
             setDragOverBlockIdx(null);
+            setDragOverSide(null);
           }
         }
       }}
@@ -948,9 +1364,19 @@ export default function NotionBlockEditor({
         onChange={async (e) => {
           const files = e.target.files;
           if (files && files.length > 0) {
+            const sideTarget = sideImageInsertRef.current;
             const targetId = targetImageBlockIdRef.current;
             const mode = imageUploadModeRef.current;
-            if (targetId) {
+            if (sideTarget) {
+              await handleImageFilesDrop(
+                files,
+                undefined,
+                undefined,
+                'replace',
+                sideTarget
+              );
+              sideImageInsertRef.current = null;
+            } else if (targetId) {
               setUploadingImageBlockId(targetId);
               await handleImageFilesDrop(files, undefined, targetId, mode);
               setUploadingImageBlockId(null);
@@ -1140,7 +1566,69 @@ export default function NotionBlockEditor({
             <strong className="text-amber-700">Ctrl+E</strong>(형광펜)를 누르면 다른 줄로 이동 시 기호 없이 바로 적용됩니다
           </span>
         </div>
+
+        {/* 블록 가로 조립(글·코드·사진 나란히 배치) 및 드래그 폭 조절 빠른 액션 바 */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-indigo-700 mr-1">
+              📐 가로 다단 · 폭 조립:
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                triggerSideBySideImageUpload(activeFocusedIdx, 'right')
+              }
+              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition cursor-pointer shadow-2xs"
+              title="현재 선택한 블록(글·코드·콜아웃·수식 등) 바로 오른쪽 옆에 사진을 나란히 넣습니다"
+            >
+              <span>🖼️ 현재 블록 옆에 사진 넣기</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => addSideBySideBlock(activeFocusedIdx, 'p', 'right')}
+              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
+              title="현재 블록의 오른쪽 열에 설명글 단락을 나란히 추가합니다"
+            >
+              <span>📝 옆에 설명글 추가</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                addSideBySideBlock(activeFocusedIdx, 'code', 'right')
+              }
+              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
+              title="현재 블록의 오른쪽 열에 코드블록을 나란히 추가합니다"
+            >
+              <span>💻 옆에 코드블록 추가</span>
+            </button>
+            <button
+              type="button"
+              disabled={activeFocusedIdx <= 0}
+              onClick={() => joinBlockWithPrevRow(activeFocusedIdx)}
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-40 transition cursor-pointer shadow-2xs"
+              title="현재 블록을 바로 위에 있는 블록의 오른쪽 옆 열로 합쳐서 나란히 배치합니다"
+            >
+              <span>⬆️ 위 블록 옆으로 합치기</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-gray-500">
+            💡 블록/사진을 다른 블록의 <strong className="text-indigo-700">왼쪽·오른쪽 끝</strong>으로 드래그해 나란히 조립하고, <strong className="text-indigo-700">경계선 · 우측 끝 핸들(↔)</strong>을 드래그해 가로 폭을 늘려보세요!
+          </span>
+        </div>
       </div>
+
+      {/* 실시간 가로 폭 드래그 리사이즈 상태 배지 */}
+      {resizingInfo && (
+        <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-2xl border border-indigo-300 bg-indigo-950/90 px-4 py-2.5 text-xs font-extrabold text-white shadow-xl backdrop-blur-xs">
+          <span>↔</span>
+          <span>
+            {resizingInfo.mode === 'column-split'
+              ? `열 비율 조절 중: ${resizingInfo.label}`
+              : `블록 가로 폭 조절 중: ${resizingInfo.label}`}
+          </span>
+        </div>
+      )}
 
       {/* 파일 드래그 오버 시 표시되는 노션 스타일 안내 오버레이 */}
       {isDraggingFileOverPage && (
@@ -1151,107 +1639,339 @@ export default function NotionBlockEditor({
               여기에 사진을 놓아 교안 페이지에 바로 삽입하세요!
             </div>
             <div className="text-xs text-blue-600 mt-1">
-              자동으로 크기가 최적화되어 노션 이미지 블록으로 들어갑니다
+              블록의 왼쪽·오른쪽 가장자리에 놓으면 글이나 코드블록 옆에 나란히 조립됩니다
             </div>
           </div>
         </div>
       )}
 
-      {/* 노션 블록 리스트 렌더링 */}
-      <div className="space-y-2 pt-2">
-        {blocks.map((block, idx) => {
-          const isSlashOpen = slashMenuBlockId === block.id;
-
-          const isBeingDragged = draggedBlockIdx === idx;
-          const isDropTarget = dragOverBlockIdx === idx && draggedBlockIdx !== idx;
+      {/* 노션 블록 리스트 렌더링 (다단 가로 조립 행 & 개별 블록 폭 리사이즈 지원) */}
+      <div className="space-y-3 pt-2">
+        {groupBlocksIntoRows(blocks).map((rowGroup) => {
+          const isMultiColumnRow = rowGroup.items.length > 1;
+          const normalizedWidths = getNormalizedRowWidths(rowGroup.items);
+          const rowKey =
+            rowGroup.rowId || rowGroup.items[0]?.block.id || 'row';
+          const lastItemInRow = rowGroup.items[rowGroup.items.length - 1];
 
           return (
             <div
-              key={block.id}
-              draggable={
-                dragHandleHoveredBlockId === block.id ||
-                (block.type !== 'code' &&
-                  block.type !== 'colab' &&
-                  block.type !== 'vpython' &&
-                  block.type !== 'mermaid' &&
-                  block.type !== 'simulation' &&
-                  block.type !== 'table' &&
-                  block.type !== 'quiz')
+              key={rowKey}
+              className={
+                isMultiColumnRow
+                  ? 'rounded-2xl border border-indigo-200/80 bg-indigo-50/15 p-2.5 shadow-2xs transition-all'
+                  : ''
               }
-              onDragStart={(e) => {
-                setDraggedBlockIdx(idx);
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', block.id);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (dragOverBlockIdx !== idx) {
-                  setDragOverBlockIdx(idx);
-                }
-              }}
-              onDragEnd={() => {
-                setDraggedBlockIdx(null);
-                setDragOverBlockIdx(null);
-              }}
-              onDrop={(e) => {
-                if (
-                  draggedBlockIdx !== null &&
-                  draggedBlockIdx !== idx &&
-                  !e.dataTransfer.types.includes('Files')
-                ) {
-                  e.preventDefault();
-                  const next = [...blocks];
-                  const [moved] = next.splice(draggedBlockIdx, 1);
-                  next.splice(idx, 0, moved);
-                  onChange(next);
-                }
-                setDraggedBlockIdx(null);
-                setDragOverBlockIdx(null);
-              }}
-              className={`group relative flex items-start gap-2 rounded-xl px-2 py-1 transition-all ${
-                isBeingDragged
-                  ? 'opacity-40 scale-[0.99] bg-blue-50/40 ring-1 ring-blue-300'
-                  : isDropTarget
-                  ? 'border-y-2 border-blue-500 bg-blue-50/40 shadow-xs'
-                  : 'hover:bg-gray-50/80'
-              }`}
             >
-              {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 추가 / ⋮⋮ 드래그 순서 이동) */}
-              <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-55 group-hover:opacity-100 transition select-none">
-                <button
-                  type="button"
-                  title="블록 타입 변경 또는 코드·순서도·시뮬레이션 선택"
-                  onClick={() => {
-                    if (isSlashOpen) {
-                      setSlashMenuBlockId(null);
-                      setSlashFilterQuery('');
-                    } else {
-                      setSlashMenuBlockId(block.id);
-                      setSlashFilterQuery('');
-                      setSlashSelectedIdx(0);
-                    }
-                  }}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200 hover:text-gray-900 text-sm font-bold cursor-pointer"
-                >
-                  +
-                </button>
-                <div
-                  title="마우스로 잡고 위아래로 드래그하여 블록 순서 변경"
-                  onMouseEnter={() => setDragHandleHoveredBlockId(block.id)}
-                  onMouseLeave={() => {
-                    if (draggedBlockIdx === null) {
-                      setDragHandleHoveredBlockId(null);
-                    }
-                  }}
-                  onMouseDown={() => setDragHandleHoveredBlockId(block.id)}
-                  className="flex h-6 w-6 cursor-grab active:cursor-grabbing items-center justify-center rounded-md text-gray-400 hover:bg-blue-100 hover:text-blue-700 text-xs font-bold transition"
-                >
-                  ⋮⋮
-                </div>
-              </div>
+              {/* 다단(가로 나란히 조립) 행 상단 비율 조절 & 열 추가 컨트롤 바 */}
+              {isMultiColumnRow && rowGroup.rowId && (
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100/90 pb-1.5 px-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-100/90 px-2 py-0.5 text-[11px] font-extrabold text-indigo-800">
+                      📐 가로 {rowGroup.items.length}열 나란히 조립됨
+                    </span>
+                    <span className="text-[11px] font-semibold text-indigo-600">
+                      (비율:{' '}
+                      {normalizedWidths
+                        .map((w) => `${Math.round(w)}%`)
+                        .join(' : ')}
+                      )
+                    </span>
 
-              {/* 블록 본문 영역 */}
-              <div className="flex-1 min-w-0">
+                    {rowGroup.items.length === 2 ? (
+                      <div className="flex items-center gap-1 ml-1">
+                        {(
+                          [
+                            { label: '5:5', ratios: [50, 50] },
+                            { label: '6:4', ratios: [60, 40] },
+                            { label: '4:6', ratios: [40, 60] },
+                            { label: '7:3', ratios: [70, 30] },
+                            { label: '3:7', ratios: [30, 70] },
+                          ] as { label: string; ratios: number[] }[]
+                        ).map((preset) => {
+                          const isCurrent =
+                            Math.abs(
+                              normalizedWidths[0] - preset.ratios[0]
+                            ) <= 2;
+                          return (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() =>
+                                applyRowWidthPreset(
+                                  rowGroup.rowId!,
+                                  preset.ratios
+                                )
+                              }
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-bold transition cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50'
+                              }`}
+                              title={`좌우 열 가로 폭 비율을 ${preset.label}로 설정`}
+                            >
+                              {preset.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applyRowWidthPreset(
+                            rowGroup.rowId!,
+                            rowGroup.items.map(() =>
+                              Number((100 / rowGroup.items.length).toFixed(1))
+                            )
+                          )
+                        }
+                        className="rounded border border-indigo-200 bg-white px-2 py-0.5 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                      >
+                        균등 폭 맞춤
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        triggerSideBySideImageUpload(
+                          lastItemInRow.index,
+                          'right'
+                        )
+                      }
+                      className="rounded-lg border border-indigo-200 bg-white px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                    >
+                      🖼️ +옆에 사진 열
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        addSideBySideBlock(lastItemInRow.index, 'p', 'right')
+                      }
+                      className="rounded-lg border border-indigo-200 bg-white px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                    >
+                      ➕ +옆에 블록 열
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        insertBlockAfter(lastItemInRow.index, {
+                          id: createBlockId(),
+                          type: 'p',
+                          content: '',
+                        })
+                      }
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer"
+                      title="이 다단 행 바로 아래에 새로운 전체 폭 줄을 추가합니다"
+                    >
+                      ↵ 아래에 새 줄
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div
+                ref={(el) => {
+                  if (rowGroup.rowId) {
+                    rowContainerRefs.current[rowGroup.rowId] = el;
+                  }
+                }}
+                className={
+                  isMultiColumnRow
+                    ? 'flex flex-col lg:flex-row items-stretch'
+                    : ''
+                }
+              >
+                {rowGroup.items.map(({ block, index: idx }, colIdx) => {
+                  const isSlashOpen = slashMenuBlockId === block.id;
+                  const isBeingDragged = draggedBlockIdx === idx;
+                  const isDropTarget =
+                    dragOverBlockIdx === idx && draggedBlockIdx !== idx;
+                  const colWidthPct = normalizedWidths[colIdx] ?? 100;
+                  const customStandaloneWidth =
+                    !isMultiColumnRow &&
+                    typeof block.widthPercent === 'number' &&
+                    block.widthPercent >= 25 &&
+                    block.widthPercent < 100
+                      ? Math.round(block.widthPercent)
+                      : null;
+
+                  return (
+                    <div
+                      key={block.id}
+                      style={
+                        isMultiColumnRow
+                          ? {
+                              flexGrow: colWidthPct,
+                              flexShrink: 1,
+                              flexBasis: 0,
+                            }
+                          : customStandaloneWidth
+                          ? ({
+                              '--block-w': `${customStandaloneWidth}%`,
+                            } as React.CSSProperties)
+                          : undefined
+                      }
+                      className={`relative flex items-stretch min-w-0 ${
+                        !isMultiColumnRow && customStandaloneWidth
+                          ? 'w-full md:w-[var(--block-w)] transition-[width] duration-75'
+                          : 'w-full'
+                      }`}
+                    >
+                      <div
+                        draggable={
+                          dragHandleHoveredBlockId === block.id ||
+                          (block.type !== 'code' &&
+                            block.type !== 'colab' &&
+                            block.type !== 'vpython' &&
+                            block.type !== 'mermaid' &&
+                            block.type !== 'simulation' &&
+                            block.type !== 'table' &&
+                            block.type !== 'quiz')
+                        }
+                        onDragStart={(e) => {
+                          setDraggedBlockIdx(idx);
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', block.id);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const relX =
+                            (e.clientX - rect.left) / Math.max(1, rect.width);
+                          const nextSide: 'left' | 'right' | 'vertical' =
+                            relX < 0.2
+                              ? 'left'
+                              : relX > 0.8
+                              ? 'right'
+                              : 'vertical';
+                          if (dragOverBlockIdx !== idx) {
+                            setDragOverBlockIdx(idx);
+                          }
+                          if (dragOverSide !== nextSide) {
+                            setDragOverSide(nextSide);
+                          }
+                        }}
+                        onDragEnd={() => {
+                          setDraggedBlockIdx(null);
+                          setDragOverBlockIdx(null);
+                          setDragOverSide(null);
+                        }}
+                        onDrop={(e) => {
+                          if (
+                            draggedBlockIdx !== null &&
+                            draggedBlockIdx !== idx &&
+                            !e.dataTransfer.types.includes('Files')
+                          ) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const next = [...blocks];
+                            const [moved] = next.splice(draggedBlockIdx, 1);
+                            const adjustedTargetIdx =
+                              draggedBlockIdx < idx ? idx - 1 : idx;
+
+                            if (
+                              dragOverSide === 'left' ||
+                              dragOverSide === 'right'
+                            ) {
+                              const assembled = assembleBlockSideBySide(
+                                next,
+                                adjustedTargetIdx,
+                                moved,
+                                dragOverSide
+                              );
+                              onChange(assembled);
+                            } else {
+                              const movedClean: NotionBlock = {
+                                ...moved,
+                                rowId: blocks[idx]?.rowId,
+                                widthPercent: undefined,
+                              };
+                              next.splice(idx, 0, movedClean);
+                              onChange(cleanupOrphanRowIds(next));
+                            }
+                          }
+                          setDraggedBlockIdx(null);
+                          setDragOverBlockIdx(null);
+                          setDragOverSide(null);
+                        }}
+                        className={`group relative flex flex-1 min-w-0 items-start gap-2 rounded-xl px-2 py-1.5 transition-all ${
+                          isMultiColumnRow
+                            ? 'bg-white/90 border border-indigo-100/90 shadow-2xs'
+                            : ''
+                        } ${
+                          isBeingDragged
+                            ? 'opacity-40 scale-[0.99] bg-blue-50/40 ring-1 ring-blue-300'
+                            : isDropTarget && dragOverSide === 'vertical'
+                            ? 'border-y-2 border-blue-500 bg-blue-50/40 shadow-xs'
+                            : isDropTarget &&
+                              (dragOverSide === 'left' ||
+                                dragOverSide === 'right')
+                            ? 'bg-indigo-50/50 ring-2 ring-indigo-400'
+                            : 'hover:bg-gray-50/80'
+                        }`}
+                      >
+                        {/* 좌/우 가장자리 드롭 시 표시되는 가로 나란히 조립 가이드 바 */}
+                        {isDropTarget && dragOverSide === 'left' && (
+                          <div className="pointer-events-none absolute inset-y-0 left-0 z-30 flex items-center">
+                            <div className="h-full w-1.5 rounded-full bg-indigo-600 shadow-md" />
+                            <span className="ml-1.5 whitespace-nowrap rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-extrabold text-white shadow-lg">
+                              ⬅️ 왼쪽 열에 나란히 배치
+                            </span>
+                          </div>
+                        )}
+                        {isDropTarget && dragOverSide === 'right' && (
+                          <div className="pointer-events-none absolute inset-y-0 right-0 z-30 flex items-center justify-end">
+                            <span className="mr-1.5 whitespace-nowrap rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-extrabold text-white shadow-lg">
+                              ➡️ 오른쪽 열에 나란히 배치
+                            </span>
+                            <div className="h-full w-1.5 rounded-full bg-indigo-600 shadow-md" />
+                          </div>
+                        )}
+
+                        {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 추가 / ⋮⋮ 드래그 순서 이동) */}
+                        <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-55 group-hover:opacity-100 transition select-none">
+                          <button
+                            type="button"
+                            title="블록 타입 변경 또는 코드·순서도·시뮬레이션 선택"
+                            onClick={() => {
+                              if (isSlashOpen) {
+                                setSlashMenuBlockId(null);
+                                setSlashFilterQuery('');
+                              } else {
+                                setSlashMenuBlockId(block.id);
+                                setSlashFilterQuery('');
+                                setSlashSelectedIdx(0);
+                              }
+                            }}
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200 hover:text-gray-900 text-sm font-bold cursor-pointer"
+                          >
+                            +
+                          </button>
+                          <div
+                            title="마우스로 잡고 위아래 또는 다른 블록의 왼쪽·오른쪽 끝으로 드래그하여 가로로 나란히 조립"
+                            onMouseEnter={() =>
+                              setDragHandleHoveredBlockId(block.id)
+                            }
+                            onMouseLeave={() => {
+                              if (draggedBlockIdx === null) {
+                                setDragHandleHoveredBlockId(null);
+                              }
+                            }}
+                            onMouseDown={() =>
+                              setDragHandleHoveredBlockId(block.id)
+                            }
+                            className="flex h-6 w-6 cursor-grab active:cursor-grabbing items-center justify-center rounded-md text-gray-400 hover:bg-blue-100 hover:text-blue-700 text-xs font-bold transition"
+                          >
+                            ⋮⋮
+                          </div>
+                        </div>
+
+                        {/* 블록 본문 영역 */}
+                        <div className="flex-1 min-w-0">
                 {/* 1. 대제목 (H1) */}
                 {block.type === 'h1' && (
                   <div>
@@ -2858,11 +3578,11 @@ export default function NotionBlockEditor({
                       {imgs.length > 0 ? (
                         <div className="space-y-3 rounded-2xl border border-gray-200 bg-slate-50/50 p-3.5">
                           <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-gray-200/70">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className="text-[11px] font-bold text-gray-700">
                                 🖼️ 교안 이미지{' '}
                                 {imgs.length > 1
-                                  ? `(가로 ${imgs.length}장 나란히 배치됨)`
+                                  ? `(가로 ${imgs.length}장)`
                                   : '(1장)'}
                               </span>
                               <button
@@ -2872,10 +3592,43 @@ export default function NotionBlockEditor({
                                   imageUploadModeRef.current = 'append';
                                   imageInputRef.current?.click();
                                 }}
-                                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-extrabold text-white hover:bg-blue-700 transition cursor-pointer shadow-2xs"
+                                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2 py-0.5 text-[11px] font-extrabold text-white hover:bg-blue-700 transition cursor-pointer shadow-2xs"
                               >
-                                <span>➕ 옆에 사진 가로로 추가</span>
+                                <span>➕ 옆에 사진 추가</span>
                               </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  addSideBySideBlock(idx, 'p', 'right')
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                                title="이 사진 바로 오른쪽 열에 설명글 블록을 나란히 배치합니다"
+                              >
+                                📝 옆에 설명글 배치
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  addSideBySideBlock(idx, 'code', 'right')
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                                title="이 사진 바로 오른쪽 열에 코드블록을 나란히 배치합니다"
+                              >
+                                💻 옆에 코드 배치
+                              </button>
+
+                              {idx > 0 &&
+                                (!block.rowId ||
+                                  blocks[idx - 1]?.rowId !== block.rowId) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => joinBlockWithPrevRow(idx)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-bold text-violet-700 hover:bg-violet-100 transition cursor-pointer"
+                                    title="바로 위에 있는 블록(글·코드·사진 등)의 오른쪽 열로 이 사진을 나란히 합칩니다"
+                                  >
+                                    ⬆️ 위 블록 옆으로 나란히 합치기
+                                  </button>
+                                )}
 
                               {canMergeWithPrevImage && (
                                 <button
@@ -2899,12 +3652,12 @@ export default function NotionBlockEditor({
                                           : b
                                       )
                                       .filter((b) => b.id !== block.id);
-                                    onChange(nextBlocks);
+                                    onChange(cleanupOrphanRowIds(nextBlocks));
                                   }}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
-                                  title="바로 위에 있는 사진 블록과 합쳐서 가로로 나란히 배치합니다"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+                                  title="같은 이미지 그리드 카드 안에 사진을 합칩니다"
                                 >
-                                  ⬆️ 위 사진 옆에 가로로 합치기
+                                  🖼️ 위 사진 카드에 병합
                                 </button>
                               )}
                             </div>
@@ -2970,7 +3723,9 @@ export default function NotionBlockEditor({
                                   src={imgs[0].url}
                                   alt={imgs[0].caption || '교안 이미지'}
                                   className={`rounded-xl border border-gray-200 object-contain shadow-xs ${
-                                    block.imageSize === 'sm'
+                                    block.rowId || block.widthPercent
+                                      ? 'w-full'
+                                      : block.imageSize === 'sm'
                                       ? 'max-w-xs'
                                       : block.imageSize === 'full'
                                       ? 'w-full'
@@ -3212,8 +3967,91 @@ export default function NotionBlockEditor({
                 )}
               </div>
 
-              {/* 우측 블록 빠른 액션 (타입 배지, 위/아래 이동, 삭제) */}
-              <div className="flex shrink-0 items-center gap-1 pt-1 opacity-0 group-hover:opacity-100 transition">
+              {/* 우측 블록 빠른 액션 (가로 사진/블록 조립, 폭 조절, 타입 변경, 이동, 삭제) */}
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 pt-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+                <button
+                  type="button"
+                  onClick={() => triggerSideBySideImageUpload(idx, 'right')}
+                  title="이 블록 바로 오른쪽 옆에 사진을 나란히 넣습니다 (글·코드·수식 등 모든 블록 옆 가능)"
+                  className="rounded-lg border border-indigo-200 bg-indigo-50/90 px-1.5 py-0.5 text-[10px] font-extrabold text-indigo-700 hover:bg-indigo-100 cursor-pointer"
+                >
+                  🖼️ 옆에 사진
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addSideBySideBlock(idx, 'p', 'right')}
+                  title="이 블록 바로 오른쪽 옆에 새 블록(글·코드 등)을 나란히 추가합니다"
+                  className="rounded-lg border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                >
+                  ➕ 옆에 블록
+                </button>
+
+                {idx > 0 &&
+                  (!block.rowId ||
+                    blocks[idx - 1]?.rowId !== block.rowId) && (
+                    <button
+                      type="button"
+                      onClick={() => joinBlockWithPrevRow(idx)}
+                      title="이 블록을 바로 위 블록의 오른쪽 옆 열로 합쳐서 나란히 배치합니다"
+                      className="rounded-lg border border-violet-200 bg-violet-50/80 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 cursor-pointer"
+                    >
+                      ⬆️ 위 옆으로
+                    </button>
+                  )}
+
+                {isMultiColumnRow ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={colIdx === 0}
+                      onClick={() => moveColumnWithinRow(idx, -1)}
+                      title="현재 행 안에서 왼쪽 열과 순서 바꾸기"
+                      className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-25 cursor-pointer"
+                    >
+                      ◀
+                    </button>
+                    <button
+                      type="button"
+                      disabled={colIdx === rowGroup.items.length - 1}
+                      onClick={() => moveColumnWithinRow(idx, 1)}
+                      title="현재 행 안에서 오른쪽 열과 순서 바꾸기"
+                      className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-25 cursor-pointer"
+                    >
+                      ▶
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => detachBlockFromRow(idx)}
+                      title="가로 다단 행에서 이 블록을 분리해 아래쪽 독립 줄로 내립니다"
+                      className="rounded-lg border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer"
+                    >
+                      ⤵️ 행 분리
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = customStandaloneWidth ?? 100;
+                      const nextW =
+                        cur === 100 ? 50 : cur <= 55 ? 75 : undefined;
+                      updateBlock(block.id, {
+                        widthPercent: nextW,
+                        imageSize:
+                          block.type === 'image' ? 'full' : block.imageSize,
+                      });
+                    }}
+                    title="블록 가로 폭 빠르게 전환 (50% → 75% → 100%) 또는 우측 끝 핸들(↔)을 드래그해 자유 조절"
+                    className={`rounded-lg border px-1.5 py-0.5 text-[10px] font-bold cursor-pointer ${
+                      customStandaloneWidth
+                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                        : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    ↔ {customStandaloneWidth ?? 100}%
+                  </button>
+                )}
+
                 <select
                   value={block.type}
                   onChange={(e) => {
@@ -3266,6 +4104,64 @@ export default function NotionBlockEditor({
                 >
                   ✕
                 </button>
+              </div>
+
+              {/* 단독 블록 우측 가장자리 가로 폭 드래그 리사이즈 핸들 (25%~100% 자유 조절) */}
+              {!isMultiColumnRow && (
+                <div
+                  onMouseDown={(e) =>
+                    startSingleBlockWidthResize(
+                      e,
+                      block.id,
+                      block.widthPercent
+                    )
+                  }
+                  title="마우스로 잡고 좌우로 드래그하여 이 블록의 가로 폭(25%~100%)을 자유롭게 늘리거나 줄이세요"
+                  className={`group/widthhandle absolute top-1 bottom-1 right-0 z-20 hidden md:flex w-2.5 cursor-ew-resize items-center justify-center rounded-r-xl transition select-none ${
+                    customStandaloneWidth ||
+                    resizingInfo?.activeId === block.id
+                      ? 'opacity-100'
+                      : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                >
+                  <div
+                    className={`h-8 w-1 rounded-full transition-colors ${
+                      resizingInfo?.activeId === block.id
+                        ? 'bg-indigo-600'
+                        : customStandaloneWidth
+                        ? 'bg-indigo-400 group-hover/widthhandle:bg-indigo-600'
+                        : 'bg-gray-300 group-hover/widthhandle:bg-indigo-500'
+                    }`}
+                  />
+                </div>
+              )}
+                      </div>
+
+                      {/* 다단(가로 배치) 행 내부 열 사이의 드래그 분할 리사이즈 핸들 */}
+                      {isMultiColumnRow &&
+                        colIdx < rowGroup.items.length - 1 &&
+                        rowGroup.rowId && (
+                          <div
+                            onMouseDown={(e) =>
+                              startColumnSplitResize(
+                                e,
+                                rowGroup.rowId!,
+                                block.id,
+                                rowGroup.items[colIdx + 1].block.id
+                              )
+                            }
+                            title="마우스로 잡고 좌우로 드래그하여 좌우 블록의 가로 폭 비율을 조절하세요"
+                            className="group/splitter relative hidden lg:flex w-4 shrink-0 cursor-col-resize items-center justify-center select-none z-20"
+                          >
+                            <div className="h-full w-[3px] rounded-full bg-indigo-200/80 group-hover/splitter:bg-indigo-600 group-active/splitter:bg-indigo-700 transition-colors" />
+                            <div className="absolute top-1/2 -translate-y-1/2 flex h-7 w-4 items-center justify-center rounded-md border border-indigo-200 bg-white text-[10px] font-bold text-indigo-600 shadow-xs group-hover/splitter:border-indigo-500 group-hover/splitter:bg-indigo-600 group-hover/splitter:text-white transition">
+                              ⋮
+                            </div>
+                          </div>
+                        )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -3378,6 +4274,29 @@ export default function NotionBlockEditor({
         applyBlockTypeSelection(block, chosen.type);
         return;
       }
+    }
+
+    // 다단(사진·코드 옆 가로 배치) 행 내부의 텍스트 블록(p, callout, quote)에서는
+    // 일반 Enter 입력 시 열 내부 줄바꿈을 유지하여 사진 옆에 여러 줄 설명을 자연스럽게 이어 쓸 수 있도록 지원!
+    // (Shift+Enter를 누르면 다단 행 아래에 새 독립 줄 생성)
+    if (
+      block.rowId &&
+      (block.type === 'p' ||
+        block.type === 'callout' ||
+        block.type === 'quote') &&
+      e.key === 'Enter' &&
+      !e.nativeEvent.isComposing
+    ) {
+      if (e.shiftKey) {
+        e.preventDefault();
+        setSlashMenuBlockId(null);
+        insertBlockAfter(idx, {
+          id: createBlockId(),
+          type: 'p',
+          content: '',
+        });
+      }
+      return;
     }
 
     // Shift+Enter는 줄바꿈 허용, 그냥 Enter는 다음 블록 생성 (노션 방식)

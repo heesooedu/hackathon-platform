@@ -361,6 +361,7 @@ export function getReadableMaterialTextForAi(parsed: ParsedLessonMaterial): stri
   if (parsed.markdownContent.trim()) {
     const cleanMdForAi = parsed.markdownContent
       .trim()
+      .replace(/<!--block-layout:[^>]*-->\n?/g, '')
       .replace(
         /!\[([^\]]*)\]\(data:image\/[^)]+\)/g,
         (_, caption) => `[교안 내 삽입된 이미지 자료: ${caption || '참고 사진'}]`
