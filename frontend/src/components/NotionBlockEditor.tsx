@@ -408,9 +408,16 @@ function AutoResizeTextarea({
 
   useEffect(() => {
     const el = internalRef.current;
-    if (el) {
+    if (!el) return;
+    const syncHeight = () => {
       el.style.height = 'auto';
       el.style.height = `${el.scrollHeight}px`;
+    };
+    syncHeight();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => syncHeight());
+      ro.observe(el);
+      return () => ro.disconnect();
     }
   }, [value]);
 
@@ -3993,8 +4000,8 @@ export default function NotionBlockEditor({
                 )}
               </div>
 
-              {/* 우측 블록 빠른 액션 (가로 사진/블록 조립, 폭 조절, 타입 변경, 이동, 삭제) */}
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 pt-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+              {/* 우측 상단 플로팅 블록 빠른 액션 (본문 가로 폭을 차지하지 않고 마우스 호버 시 우측 상단에 떠서 표시됨) */}
+              <div className="absolute -top-3 right-3 z-20 flex flex-wrap items-center justify-end gap-1 rounded-xl border border-gray-200/90 bg-white/95 px-2 py-1 shadow-md backdrop-blur-xs opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition">
                 <button
                   type="button"
                   onClick={() => triggerSideBySideImageUpload(idx, 'right')}
