@@ -1,26 +1,46 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
-import CopyCodeButton from '@/components/CopyCodeButton';
-import LessonListWithReorder from '@/components/LessonListWithReorder';
 import ImportMaterialModal from '@/components/ImportMaterialModal';
+import ClassDetailView from '@/components/ClassDetailView';
+import {
+  EnrolledStudentRecord,
+  StudentPeerAnswerItem,
+} from '@/components/ClassStudentManagementDashboard';
 import {
   isMaterialLibraryClass,
   parseLessonMaterial,
   sortLessonsByOrder,
 } from '@/utils/materialPayload';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
-import { Profile, Lesson } from '@/types/database.types';
+import { separateGroupsAndQuizzes } from '@/utils/quizHelper';
+import {
+  Profile,
+  Lesson,
+  Submission,
+  QuestionGroup,
+  FormativeQuiz,
+} from '@/types/database.types';
 
 interface ClassDetailPageProps {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ tab?: string }>;
 }
 
-export default async function ClassDetailPage({ params }: ClassDetailPageProps) {
+export default async function ClassDetailPage({
+  params,
+  searchParams,
+}: ClassDetailPageProps) {
   const { id: classId } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const initialTab =
+    resolvedSearchParams.tab === 'students' ? 'students' : 'lessons';
+
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     redirect('/login');
   }
@@ -61,21 +81,87 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
     .map((l) => parseLessonMaterial(l).sourceMaterialId)
     .filter((id): id is string => Boolean(id));
 
-  // 참여 학생 목록 조회 (교사에게만 조회 및 표시하여 학생 간 실명/참여일 노출 차단)
-  let members: { id: string; joined_at: string; student: unknown }[] | null = null;
+  // 교사 전용: 참여 학생 명단 및 학급 전체 학습 데이터(질문·이해 제출, 퀴즈 풀이, 동료 답변) 조회
+  const enrolledStudents: EnrolledStudentRecord[] = [];
+  let classSubmissions: Submission[] = [];
+  let classQuizzes: FormativeQuiz[] = [];
+  const peerAnswersByStudent: Record<string, StudentPeerAnswerItem[]> = {};
+
   if (isTeacher) {
     const { data: memberRows } = await supabase
       .from('class_members')
-      .select('id, joined_at, student:student_id(id, name, role)')
+      .select('id, student_id, joined_at, student:student_id(id, name, role)')
       .eq('class_id', classId)
       .order('joined_at', { ascending: false });
-    members = memberRows;
+
+    if (memberRows) {
+      for (const m of memberRows) {
+        const studentProfile = m.student as unknown as Profile | null;
+        enrolledStudents.push({
+          id: m.id,
+          studentId: m.student_id,
+          name: studentProfile?.name || '학생',
+          joinedAt: m.joined_at,
+        });
+      }
+    }
+
+    const lessonIds = lessons.map((l) => l.id);
+    const lessonTitleMap = new Map<string, string>(
+      lessons.map((l) => [l.id, l.title])
+    );
+
+    if (lessonIds.length > 0) {
+      const [{ data: subRows }, { data: groupRows }] = await Promise.all([
+        supabase
+          .from('submissions')
+          .select('*')
+          .in('lesson_id', lessonIds)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('question_groups')
+          .select('*, answers(*)')
+          .in('lesson_id', lessonIds)
+          .order('created_at', { ascending: true }),
+      ]);
+
+      classSubmissions = (subRows || []) as Submission[];
+
+      const allGroups = (groupRows || []) as QuestionGroup[];
+      const { normalGroups, publishedQuizzes, inlineQuizzesMap } =
+        separateGroupsAndQuizzes(allGroups);
+
+      classQuizzes = [
+        ...publishedQuizzes,
+        ...Object.values(inlineQuizzesMap),
+      ];
+
+      for (const group of normalGroups) {
+        const lessonTitle =
+          lessonTitleMap.get(group.lesson_id) || '수업 차시';
+        for (const ans of group.answers || []) {
+          if (ans.author_id === user.id) continue; // 교사 본인 답변 제외
+          if (!peerAnswersByStudent[ans.author_id]) {
+            peerAnswersByStudent[ans.author_id] = [];
+          }
+          peerAnswersByStudent[ans.author_id].push({
+            id: ans.id,
+            lessonId: group.lesson_id,
+            lessonTitle,
+            groupTitle: group.representative_title,
+            content: ans.content,
+            isTeacherChecked: ans.is_teacher_checked,
+            createdAt: ans.created_at,
+          });
+        }
+      }
+    }
   }
 
   const teacherProfile = classData.teacher as unknown as Profile;
 
   return (
-    <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-8">
+    <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-6">
       {/* 상단 네비게이션 & 헤더 */}
       <div>
         <Link
@@ -128,84 +214,19 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
         </div>
       </div>
 
-      {/* 6자리 참여 코드 안내 배너 (교사 전용) */}
-      {isTeacher && (
-        <div className="rounded-2xl border-2 border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 shadow-sm">
-          <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
-            <div>
-              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-700 mb-2">
-                📢 학생 안내용 코드
-              </span>
-              <h2 className="text-lg font-bold text-gray-900">
-                학생들에게 이 6자리 코드를 안내해 주세요!
-              </h2>
-              <p className="text-sm text-gray-500">
-                학생들이 로그인 후 참여 코드를 입력하면 이 학급에 바로 등록됩니다.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3 bg-white px-5 py-3 rounded-2xl border border-blue-200 shadow-md">
-              <span className="text-3xl font-mono font-extrabold tracking-widest text-blue-600">
-                {classData.join_code}
-              </span>
-              <CopyCodeButton code={classData.join_code} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 메인 그리드: 교사는 레슨 목록 + 참여 학생 명단, 학생은 레슨 목록만 표시 */}
-      <div className={isTeacher ? 'grid gap-8 lg:grid-cols-3' : 'space-y-8'}>
-        {/* 왼쪽 2열(교사) 또는 전체(학생): 레슨 목록 영역 */}
-        <div className={isTeacher ? 'lg:col-span-2' : ''}>
-          <LessonListWithReorder
-            classId={classId}
-            initialLessons={lessons}
-            isTeacher={isTeacher}
-          />
-        </div>
-
-        {/* 오른쪽 1열: 참여 학생 명단 (교사 전용) */}
-        {isTeacher && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-gray-200 pb-3">
-              <h2 className="text-lg font-bold text-gray-900">참여 학생 명단</h2>
-              <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-600">
-                {members?.length || 0}명
-              </span>
-            </div>
-
-            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm divide-y divide-gray-50 max-h-96 overflow-y-auto">
-              {members && members.length > 0 ? (
-                members.map((m) => {
-                  const student = m.student as unknown as Profile;
-                  return (
-                    <div key={m.id} className="flex items-center justify-between py-2.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-700">
-                          {student?.name?.charAt(0) || '학'}
-                        </div>
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">
-                            {student?.name || '익명 학생'}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {new Date(m.joined_at).toLocaleDateString('ko-KR')} 참여
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="py-8 text-center text-sm text-gray-400">
-                  아직 참여한 학생이 없습니다.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      {/* 메인 콘텐츠 (교사: 수업 교안 탭 / 학생 관리 & 학습 대시보드 탭, 학생: 수업 목록) */}
+      <ClassDetailView
+        classId={classId}
+        className={classData.name}
+        joinCode={classData.join_code}
+        isTeacher={isTeacher}
+        lessons={lessons}
+        enrolledStudents={enrolledStudents}
+        submissions={classSubmissions}
+        quizzes={classQuizzes}
+        peerAnswersByStudent={peerAnswersByStudent}
+        initialTab={initialTab}
+      />
     </div>
   );
 }

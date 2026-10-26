@@ -114,3 +114,166 @@ export async function joinClass(formData: FormData) {
   redirect(`/classes/${result.class_id}`);
 }
 
+export async function addStudentToClassAction(
+  classId: string,
+  identifier: string
+): Promise<{ error?: string; studentName?: string }> {
+  const cleanIdentifier = (identifier || '').trim();
+  if (!cleanIdentifier) {
+    return { error: '추가할 학생의 이메일 또는 이름을 입력해 주세요.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: '로그인이 필요합니다.' };
+  }
+
+  // 클래스 소유 교사 확인
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('id, teacher_id, join_code')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { error: '담당 선생님만 학생을 추가할 수 있습니다.' };
+  }
+
+  // 1차: SECURITY DEFINER RPC 함수 호출
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'teacher_add_student_to_class',
+    {
+      p_class_id: classId,
+      p_identifier: cleanIdentifier,
+    }
+  );
+
+  if (!rpcError && rpcData) {
+    const res = rpcData as {
+      error?: string;
+      success?: boolean;
+      student_name?: string;
+    };
+    if (res.error) {
+      return { error: res.error };
+    }
+    revalidatePath(`/classes/${classId}`);
+    revalidatePath('/');
+    return { studentName: res.student_name || cleanIdentifier };
+  }
+
+  // 2차 폴백: 마이그레이션(09_teacher_student_management.sql) 적용 전 환경 호환
+  const { data: matchedProfiles } = await supabase
+    .from('profiles')
+    .select('id, name, role')
+    .eq('role', 'student')
+    .ilike('name', cleanIdentifier);
+
+  if (!matchedProfiles || matchedProfiles.length === 0) {
+    return {
+      error:
+        '일치하는 학생 계정을 찾을 수 없습니다. (신규 학생 이메일/이름 검색을 위해선 Supabase SQL Editor에서 09_teacher_student_management.sql을 실행하거나, 학생에게 6자리 참여 코드 [' +
+        classData.join_code +
+        ']를 안내해 주세요.)',
+    };
+  }
+
+  if (matchedProfiles.length > 1) {
+    return {
+      error:
+        '동명이인 학생이 여러 명 있습니다. 이메일 주소로 정확히 추가해 주세요.',
+    };
+  }
+
+  const targetStudent = matchedProfiles[0];
+
+  const { error: insertError } = await supabase.from('class_members').insert({
+    class_id: classId,
+    student_id: targetStudent.id,
+  });
+
+  if (insertError) {
+    if (insertError.code === '23505') {
+      return { error: '이미 이 클래스에 등록되어 있는 학생입니다.' };
+    }
+    return {
+      error:
+        '학생 추가 권한 정책(09_teacher_student_management.sql) 적용이 필요합니다: ' +
+        insertError.message,
+    };
+  }
+
+  revalidatePath(`/classes/${classId}`);
+  revalidatePath('/');
+  return { studentName: targetStudent.name || cleanIdentifier };
+}
+
+export async function removeStudentFromClassAction(
+  classId: string,
+  studentId: string
+): Promise<{ error?: string }> {
+  if (!classId || !studentId) {
+    return { error: '잘못된 요청입니다.' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: '로그인이 필요합니다.' };
+  }
+
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('id, teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { error: '담당 선생님만 학생을 제외할 수 있습니다.' };
+  }
+
+  // 1차: SECURITY DEFINER RPC 호출
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'teacher_remove_student_from_class',
+    {
+      p_class_id: classId,
+      p_student_id: studentId,
+    }
+  );
+
+  if (!rpcError && rpcData) {
+    const res = rpcData as { error?: string; success?: boolean };
+    if (res.error) {
+      return { error: res.error };
+    }
+    revalidatePath(`/classes/${classId}`);
+    revalidatePath('/');
+    return {};
+  }
+
+  // 2차 폴백: 일반 DELETE 쿼리 시도
+  const { error: deleteError } = await supabase
+    .from('class_members')
+    .delete()
+    .eq('class_id', classId)
+    .eq('student_id', studentId);
+
+  if (deleteError) {
+    return {
+      error: '학생 제외 중 오류가 발생했습니다: ' + deleteError.message,
+    };
+  }
+
+  revalidatePath(`/classes/${classId}`);
+  revalidatePath('/');
+  return {};
+}
+
+
