@@ -467,14 +467,21 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
         const metaPart =
           colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
         const [rawCaption, rawUrl] = metaPart.split('|');
+        const rawCodeContent = codeLines.join('\n');
+        const isLegacyEarthMoon =
+          rawCodeContent.includes('texture=textures.earth') &&
+          rawCodeContent.includes('moon = sphere(pos=vector(4.5, 0, 0)');
+        const cleanedCaption = (rawCaption || '').trim();
         blocks.push({
           id: createBlockId(),
           type: 'vpython',
           caption:
-            (rawCaption || '').trim() ||
-            'Web VPython (GlowScript) 3D 시뮬레이션',
+            cleanedCaption === '지구와 달의 3D 중력 공전 시뮬레이션' ||
+            cleanedCaption === 'Web VPython (GlowScript) 3D 시뮬레이션'
+              ? ''
+              : cleanedCaption,
           externalUrl: (rawUrl || '').trim() || undefined,
-          content: codeLines.join('\n'),
+          content: isLegacyEarthMoon ? '' : rawCodeContent,
         });
       } else if (
         langRaw === 'simulation' ||
@@ -770,6 +777,8 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       b.type === 'divider' ||
       b.type === 'table' ||
       b.type === 'quiz' ||
+      b.type === 'vpython' ||
+      b.type === 'colab' ||
       (b.type === 'image' && getBlockImages(b).length > 0) ||
       b.content.trim().length > 0
   );
@@ -869,21 +878,20 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           );
         }
         break;
-      case 'vpython':
-        if (b.content.trim() || b.rowId) {
-          const safeTitle = (b.caption || '')
-            .replace(/[\n|]/g, ' ')
-            .trim();
-          const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
-          const meta =
-            safeTitle || safeUrl
-              ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
-              : '';
-          lines.push(
-            `\`\`\`vpython${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
-          );
-        }
+      case 'vpython': {
+        const safeTitle = (b.caption || '')
+          .replace(/[\n|]/g, ' ')
+          .trim();
+        const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+        const meta =
+          safeTitle || safeUrl
+            ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+            : '';
+        lines.push(
+          `\`\`\`vpython${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+        );
         break;
+      }
       case 'mermaid':
         if (b.content.trim() || b.rowId) {
           lines.push(`\`\`\`mermaid\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);

@@ -4,34 +4,11 @@ import { useState, useRef, useEffect } from 'react'
 
 export const VPYTHON_TEMPLATES: { label: string; title: string; code: string }[] = [
   {
-    label: '🌍 지구와 달 공전 3D',
-    title: '지구와 달의 3D 중력 공전 시뮬레이션',
-    code: `Web VPython 3.2
-scene.background = color.rgb(0.05, 0.07, 0.14)
-scene.height = 340
-scene.caption = "마우스 우클릭(또는 Ctrl+드래그)으로 회전, 휠로 확대/축소해보세요!"
-
-earth = sphere(pos=vector(0, 0, 0), radius=1.2, texture=textures.earth)
-moon = sphere(pos=vector(4.5, 0, 0), radius=0.35, color=color.white, make_trail=True, trail_color=color.yellow, retain=150)
-
-moon.v = vector(0, 1.5, 0.4)
-dt = 0.03
-G_M = 10.0
-
-while True:
-    rate(60)
-    earth.rotate(angle=0.015, axis=vector(0, 1, 0))
-    r = moon.pos - earth.pos
-    acc = -G_M * norm(r) / mag2(r)
-    moon.v = moon.v + acc * dt
-    moon.pos = moon.pos + moon.v * dt`,
-  },
-  {
     label: '⌨️ 키보드 조종 & print 입출력 (keysdown)',
     title: '키보드 입력(keysdown)으로 3D 상자 조종 및 print 출력 실습',
     code: `Web VPython 3.2
 scene.background = color.rgb(0.06, 0.09, 0.16)
-scene.height = 320
+scene.height = 280
 
 player = box(pos=vec(0, 0, 0), size=vec(1.2, 1.2, 1.2), color=color.cyan)
 print("3D 화면을 클릭한 뒤 방향키(또는 W, A, S, D)를 눌러보세요!")
@@ -58,7 +35,7 @@ while True:
     title: '3D 포물선 운동과 속도 벡터 시각화',
     code: `Web VPython 3.2
 scene.background = color.rgb(0.06, 0.09, 0.16)
-scene.height = 340
+scene.height = 280
 
 floor = box(pos=vector(0, -3, 0), size=vector(16, 0.3, 6), color=color.rgb(0.3, 0.4, 0.5))
 ball = sphere(pos=vector(-6.5, -2.4, 0), radius=0.45, color=color.orange, make_trail=True)
@@ -85,7 +62,7 @@ while True:
     title: '3D 용수철 탄성력 단진동 시뮬레이션',
     code: `Web VPython 3.2
 scene.background = color.rgb(0.06, 0.08, 0.15)
-scene.height = 340
+scene.height = 280
 
 wall = box(pos=vector(-5, 0, 0), size=vector(0.3, 4, 4), color=color.gray(0.6))
 mass = box(pos=vector(2, 0, 0), size=vector(1.2, 1.2, 1.2), color=color.rgb(0.95, 0.4, 0.3), make_trail=True, retain=100)
@@ -107,9 +84,35 @@ while True:
   },
 ]
 
-function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string {
+/**
+ * 과거 기본값으로 자동 삽입되었던 '지구와 달의 3D 중력 공전 시뮬레이션' 코드는
+ * 사용자가 직접 입력한 코드가 아니므로 빈 코드로 정규화합니다.
+ */
+export function stripLegacyEarthMoonDefaultCode(raw?: string): string {
+  if (!raw) return ''
+  if (
+    raw.includes('texture=textures.earth') &&
+    raw.includes('moon = sphere(pos=vector(4.5, 0, 0)')
+  ) {
+    return ''
+  }
+  return raw
+}
+
+export function stripLegacyEarthMoonDefaultTitle(raw?: string): string {
+  if (!raw) return ''
+  const trimmed = raw.trim()
+  if (
+    trimmed === '지구와 달의 3D 중력 공전 시뮬레이션' ||
+    trimmed === 'Web VPython (GlowScript) 3D 시뮬레이션'
+  ) {
+    return ''
+  }
+  return trimmed
+}
+
+function buildGlowScriptSrcDoc(vpythonCode: string): string {
   const safeJsonCode = JSON.stringify(vpythonCode).replace(/<\/script/gi, '<\\/script')
-  const safeInstanceId = JSON.stringify(instanceId)
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -126,10 +129,12 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
   html, body {
     margin: 0;
     padding: 0;
+    height: 100%;
     background: #0b0f19;
     color: #f8fafc;
     font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     overflow-x: hidden;
+    overflow-y: auto;
     outline: none;
   }
   #kbd-status-bar {
@@ -183,7 +188,7 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
-    padding: 10px 12px 14px 12px;
+    padding: 8px 12px 12px 12px;
   }
   .glowscript {
     width: 100%;
@@ -195,22 +200,21 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
     border-radius: 10px;
     max-width: 100% !important;
   }
-  /* GlowScript가 print() 호출 시 생성하는 textarea(#print)를 선명한 다크 콘솔로 스타일링 */
   textarea#print,
   .glowscript textarea {
     display: block !important;
     width: 96% !important;
     max-width: 680px !important;
-    height: 155px !important;
-    margin: 10px auto 4px auto !important;
-    padding: 10px 14px !important;
+    height: 110px !important;
+    margin: 8px auto 4px auto !important;
+    padding: 8px 12px !important;
     border-radius: 10px !important;
     background: #090d16 !important;
     color: #34d399 !important;
     border: 1px solid #334155 !important;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
-    font-size: 12.5px !important;
-    line-height: 1.55 !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
     outline: none !important;
     box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5) !important;
   }
@@ -218,8 +222,8 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
     display: none;
     width: 96%;
     max-width: 680px;
-    margin: 10px auto -6px auto;
-    padding: 6px 12px;
+    margin: 8px auto -6px auto;
+    padding: 5px 12px;
     background: #1e293b;
     border: 1px solid #334155;
     border-bottom: none;
@@ -287,26 +291,11 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
   <script type="text/javascript">
     (function() {
       var rawCode = ${safeJsonCode};
-      var instanceId = ${safeInstanceId};
       var errorBox = document.getElementById('error-box');
       var focusIndicator = document.getElementById('focus-indicator');
       var focusText = document.getElementById('focus-text');
       var pressedKeysLabel = document.getElementById('pressed-keys-label');
       var activeKeysSet = {};
-
-      function notifyHeight() {
-        var h = Math.max(
-          document.body ? document.body.scrollHeight : 0,
-          document.documentElement ? document.documentElement.scrollHeight : 0
-        );
-        if (h > 100) {
-          window.parent.postMessage({
-            type: 'VPYTHON_IFRAME_HEIGHT',
-            instanceId: instanceId,
-            height: h + 12
-          }, '*');
-        }
-      }
 
       function updateFocusUI(isFocused) {
         if (isFocused) {
@@ -339,12 +328,10 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
         updateFocusUI(true);
       });
 
-      // 한글 IME(한/영 키가 한글 상태)일 때도 영문 알파벳 키(W, A, S, D 등)가 GlowScript keysdown()에 정상 인식되도록 보정
-      // + 방향키/스페이스바 입력 시 웹페이지 전체 스크롤 방지
       window.addEventListener('keydown', function(e) {
         updateFocusUI(true);
         if (e.code && /^Key[A-Z]$/.test(e.code)) {
-          var ascii = e.code.charCodeAt(3); // 'KeyW' -> 'W' (87)
+          var ascii = e.code.charCodeAt(3);
           if (e.which === 229 || e.keyCode === 229) {
             try {
               Object.defineProperty(e, 'which', { get: function() { return ascii; } });
@@ -396,7 +383,6 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
       function showError(err) {
         errorBox.style.display = 'block';
         errorBox.textContent = '⚠️ Web VPython 실행 오류:\\n' + (err && err.message ? err.message : String(err));
-        notifyHeight();
       }
       window.onerror = function(msg, src, line) {
         showError(msg + (line ? ' (줄 ' + line + ')' : ''));
@@ -405,10 +391,6 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
         showError(ev.reason);
       });
 
-      // GlowScript의 print() 출력창(#print textarea)을 실시간 감시하여:
-      // 1) 상단 콘솔 헤더(출력 지우기 버튼 포함) 부착
-      // 2) while True: print(key) 무한 루프에서도 최신 출력 줄로 자동 스크롤 & 버퍼 최적화
-      // 3) 부모 iframe 높이 자동 확장 (콘솔이 잘리지 않도록)
       var lastPrintLen = 0;
       var headerInserted = false;
       setInterval(function() {
@@ -433,12 +415,10 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
                 lastPrintLen = 0;
               };
             }
-            notifyHeight();
           }
 
           var curLen = ta.value.length;
           if (curLen !== lastPrintLen) {
-            // while True 루프에서 print()가 수천 줄 쌓여 느려지는 것을 방지 (최근 150줄 유지)
             if (curLen > 7000) {
               var lines = ta.value.split('\\n');
               if (lines.length > 150) {
@@ -449,8 +429,7 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
             lastPrintLen = ta.value.length;
           }
         }
-        notifyHeight();
-      }, 80);
+      }, 100);
 
       function startVPython() {
         try {
@@ -468,6 +447,9 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
             lines.shift();
           }
           var cleanedCode = lines.join('\\n');
+          if (!/scene\\.height\\s*=/.test(cleanedCode)) {
+            cleanedCode = 'scene.height = 280\\n' + cleanedCode;
+          }
           var compiledJs = window.glowscript_compile(cleanedCode, { lang: lang, version: version, run: false });
           var container = $("#glowscript").removeAttr("id");
           window.__context = { glowscript_container: container };
@@ -478,8 +460,6 @@ function buildGlowScriptSrcDoc(vpythonCode: string, instanceId: string): string 
               res.catch(showError);
             }
           }
-          setTimeout(notifyHeight, 150);
-          setTimeout(notifyHeight, 500);
         } catch (err) {
           showError(err);
         }
@@ -509,35 +489,24 @@ export default function VPythonRunnerBlock({
   externalUrl,
   compact = false,
 }: VPythonRunnerBlockProps) {
-  const [code, setCode] = useState(initialCode)
-  const [activeCode, setActiveCode] = useState(initialCode)
+  const normalizedInitialCode = stripLegacyEarthMoonDefaultCode(initialCode)
+  const normalizedTitle = stripLegacyEarthMoonDefaultTitle(title)
+
+  const [code, setCode] = useState(normalizedInitialCode)
+  const [activeCode, setActiveCode] = useState(normalizedInitialCode)
   const [runKey, setRunKey] = useState(0)
-  const [showCodeEditor, setShowCodeEditor] = useState(false)
+  // 첫 화면은 항상 '파이썬 코드 수정·실험하기'('code')가 되도록 설정 (단, 교안 편집기 우측 미리보기인 compact 모드에서는 3D 실행 화면 표시)
+  const [viewMode, setViewMode] = useState<'code' | 'run' | 'split'>(
+    compact ? 'run' : 'code'
+  )
   const [copied, setCopied] = useState(false)
-  const [iframeHeight, setIframeHeight] = useState<number>(compact ? 430 : 480)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
-  const instanceIdRef = useRef<string>(`vp_${Math.random().toString(36).slice(2, 9)}`)
 
   useEffect(() => {
-    setCode(initialCode)
-    setActiveCode(initialCode)
+    const cleaned = stripLegacyEarthMoonDefaultCode(initialCode)
+    setCode(cleaned)
+    setActiveCode(cleaned)
   }, [initialCode])
-
-  useEffect(() => {
-    function handleMessage(e: MessageEvent) {
-      if (
-        e.data &&
-        e.data.type === 'VPYTHON_IFRAME_HEIGHT' &&
-        e.data.instanceId === instanceIdRef.current &&
-        typeof e.data.height === 'number'
-      ) {
-        const nextH = Math.min(820, Math.max(compact ? 420 : 460, e.data.height))
-        setIframeHeight((prev) => (Math.abs(prev - nextH) > 6 ? nextH : prev))
-      }
-    }
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [compact])
 
   const focusSimulationWindow = () => {
     setTimeout(() => {
@@ -552,14 +521,16 @@ export default function VPythonRunnerBlock({
   const handleRun = () => {
     setActiveCode(code)
     setRunKey((k) => k + 1)
+    if (viewMode === 'code') {
+      setViewMode('run')
+    }
     focusSimulationWindow()
   }
 
   const handleReset = () => {
-    setCode(initialCode)
-    setActiveCode(initialCode)
+    setCode(normalizedInitialCode)
+    setActiveCode(normalizedInitialCode)
     setRunKey((k) => k + 1)
-    focusSimulationWindow()
   }
 
   const handleCopyAndOpenGlowScript = async () => {
@@ -577,39 +548,151 @@ export default function VPythonRunnerBlock({
     window.open(safeUrl, '_blank', 'noopener,noreferrer')
   }
 
+  const fixedBodyHeightClass = compact ? 'h-[360px]' : 'h-[420px]'
+  const hasExecutableCode = activeCode.trim().length > 0
+
+  const renderCodeEditorPane = () => (
+    <div className="flex h-full flex-col bg-slate-950/95 p-3.5">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+        <span>
+          💡 파이썬 VPython 코드를 입력·수정한 뒤{' '}
+          <strong className="text-cyan-300">Ctrl+Enter</strong> 또는 우측 상단{' '}
+          <strong className="text-emerald-300">[▶ 3D 실행]</strong>을 눌러 실험해보세요!
+        </span>
+        <span className="font-mono text-[10px] text-slate-500">
+          box() · sphere() · arrow() · vec() · rate() · keysdown() · print()
+        </span>
+      </div>
+      <textarea
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey || e.shiftKey) && e.key === 'Enter') {
+            e.preventDefault()
+            handleRun()
+            return
+          }
+          if (e.key === 'Tab') {
+            e.preventDefault()
+            const start = e.currentTarget.selectionStart
+            const end = e.currentTarget.selectionEnd
+            const next = code.substring(0, start) + '    ' + code.substring(end)
+            setCode(next)
+            const target = e.currentTarget
+            requestAnimationFrame(() => {
+              target.selectionStart = target.selectionEnd = start + 4
+            })
+          }
+        }}
+        placeholder={`Web VPython 3.2\n# 여기에 파이썬 VPython 코드를 작성하고 [▶ 3D 실행]을 눌러보세요!\nbox(pos=vec(0, 0, 0), size=vec(1.2, 1.2, 1.2), color=color.cyan)`}
+        spellCheck={false}
+        className="w-full flex-1 resize-none overflow-y-auto rounded-xl border border-slate-800 bg-[#070a12] p-3 font-mono text-xs sm:text-sm leading-relaxed text-cyan-100 placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none"
+      />
+    </div>
+  )
+
+  const renderSimulationPane = () => (
+    <div
+      className="h-full w-full bg-[#0b0f19]"
+      onMouseEnter={() => {
+        const activeTag = document.activeElement?.tagName
+        if (activeTag !== 'TEXTAREA' && activeTag !== 'INPUT') {
+          try {
+            iframeRef.current?.contentWindow?.focus()
+          } catch {
+            // ignore
+          }
+        }
+      }}
+    >
+      {hasExecutableCode ? (
+        <iframe
+          ref={iframeRef}
+          key={runKey}
+          title={normalizedTitle || 'Web VPython 3D 시뮬레이션'}
+          sandbox="allow-scripts allow-modals"
+          srcDoc={buildGlowScriptSrcDoc(activeCode)}
+          className="h-full w-full border-0 bg-[#0b0f19]"
+        />
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-400">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900/90 text-2xl">
+            🧊
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-bold text-slate-200">
+              아직 실행할 VPython 코드가 없습니다
+            </p>
+            <p className="text-xs text-slate-400">
+              {compact
+                ? '좌측 코드 입력창에 Web VPython 코드를 작성하면 이곳에 3D 시뮬레이션이 표시됩니다.'
+                : '[✏️ 파이썬 코드 수정·실험하기] 화면에서 코드를 작성한 뒤 [▶ 3D 실행]을 눌러보세요.'}
+            </p>
+          </div>
+          {!compact && viewMode !== 'code' && (
+            <button
+              type="button"
+              onClick={() => setViewMode('code')}
+              className="mt-1 rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition cursor-pointer"
+            >
+              ✏️ 파이썬 코드 수정·실험하기로 이동
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <div className="my-4 overflow-hidden rounded-2xl border border-cyan-300 bg-[#0b0f19] shadow-md">
       {/* 상단 툴바 */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-900/95 px-4 py-2.5">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/20 px-2.5 py-0.5 text-xs font-extrabold text-cyan-300 border border-cyan-500/30">
-            🧊 Web VPython 3.2 (GlowScript 3D)
+            🧊 Web VPython 3.2
           </span>
-          <span className="text-xs font-bold text-slate-200">
-            {title || '3D 파이썬 물리·정보 시뮬레이션'}
-          </span>
+          {normalizedTitle && (
+            <span className="text-xs font-bold text-slate-200">
+              {normalizedTitle}
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setShowCodeEditor((prev) => !prev)}
-            className={`rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer ${
-              showCodeEditor
-                ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                : 'border border-slate-700 bg-slate-800 text-cyan-300 hover:bg-slate-700'
-            }`}
-          >
-            {showCodeEditor ? '🔼 파이썬 코드 접기' : '✏️ 파이썬 코드 수정·실험하기'}
-          </button>
+          {!compact && (
+            <>
+              <button
+                type="button"
+                onClick={() => setViewMode('code')}
+                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer ${
+                  viewMode === 'code'
+                    ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                    : 'border border-slate-700 bg-slate-800 text-cyan-300 hover:bg-slate-700'
+                }`}
+              >
+                ✏️ 파이썬 코드 수정·실험하기
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('split')}
+                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer ${
+                  viewMode === 'split'
+                    ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                    : 'border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                ◫ 코드+3D 함께 보기
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={handleRun}
             className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-emerald-500 transition cursor-pointer"
           >
-            ▶ 3D 다시 실행
+            ▶ 3D 실행
           </button>
-          {code !== initialCode && (
+          {code !== normalizedInitialCode && (
             <button
               type="button"
               onClick={handleReset}
@@ -629,73 +712,22 @@ export default function VPythonRunnerBlock({
         </div>
       </div>
 
-      {/* 학생용 VPython 코드 직접 수정 패널 (토글) */}
-      {showCodeEditor && (
-        <div className="border-b border-slate-800 bg-slate-950/90 p-3">
-          <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-400">
-            <span>
-              💡 숫자와 벡터(`vec(x, y, z)`), `keysdown()`, `print()` 등을 바꾼 뒤{' '}
-              <strong className="text-cyan-300">Ctrl+Enter</strong> 또는{' '}
-              <strong className="text-emerald-300">[▶ 3D 다시 실행]</strong>을 눌러 실험해보세요!
-            </span>
+      {/* 처음부터 크기가 100% 고정되는 메인 영역 */}
+      <div className={`w-full overflow-hidden ${fixedBodyHeightClass}`}>
+        {viewMode === 'code' && renderCodeEditorPane()}
+        {viewMode === 'run' && renderSimulationPane()}
+        {viewMode === 'split' && (
+          <div className="grid h-full w-full grid-cols-1 divide-y divide-slate-800 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+            <div className="h-full overflow-hidden">{renderCodeEditorPane()}</div>
+            <div className="h-full overflow-hidden">{renderSimulationPane()}</div>
           </div>
-          <textarea
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey || e.shiftKey) && e.key === 'Enter') {
-                e.preventDefault()
-                handleRun()
-                return
-              }
-              if (e.key === 'Tab') {
-                e.preventDefault()
-                const start = e.currentTarget.selectionStart
-                const end = e.currentTarget.selectionEnd
-                const next = code.substring(0, start) + '    ' + code.substring(end)
-                setCode(next)
-                const target = e.currentTarget
-                requestAnimationFrame(() => {
-                  target.selectionStart = target.selectionEnd = start + 4
-                })
-              }
-            }}
-            rows={Math.min(16, Math.max(6, code.split('\n').length + 1))}
-            spellCheck={false}
-            className="w-full rounded-xl border border-slate-800 bg-[#070a12] p-3 font-mono text-xs sm:text-sm leading-relaxed text-cyan-100 focus:border-cyan-500 focus:outline-none"
-          />
-        </div>
-      )}
-
-      {/* 3D WebGL 캔버스 + print() 출력 콘솔 실행 영역 */}
-      <div
-        onMouseEnter={() => {
-          // 코드 입력창(textarea/input)을 편집 중이 아닐 때는 마우스를 3D 영역에 올리면 자동으로 키보드 포커스 전달
-          const activeTag = document.activeElement?.tagName
-          if (activeTag !== 'TEXTAREA' && activeTag !== 'INPUT') {
-            try {
-              iframeRef.current?.contentWindow?.focus()
-            } catch {
-              // ignore
-            }
-          }
-        }}
-      >
-        <iframe
-          ref={iframeRef}
-          key={runKey}
-          title={title || 'Web VPython 3D 시뮬레이션'}
-          sandbox="allow-scripts allow-modals"
-          srcDoc={buildGlowScriptSrcDoc(activeCode, instanceIdRef.current)}
-          style={{ height: `${iframeHeight}px` }}
-          className="w-full border-0 bg-[#0b0f19] transition-[height] duration-150"
-        />
+        )}
       </div>
 
       {/* 하단 조작 안내 바 */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 bg-slate-900/90 px-4 py-1.5 text-[11px] text-slate-400">
         <span>
-          🖱️ 회전: 우클릭(Ctrl) 드래그 · 확대/축소: 휠 · ⌨️ 키보드 입력(`keysdown`): 3D 화면에 마우스를 올리거나 클릭 후 키 입력
+          🖱️ 회전: 우클릭(Ctrl) 드래그 · 확대/축소: 휠 · ⌨️ 키보드 입력(`keysdown`): 3D 화면 클릭 후 키 입력
         </span>
         <span className="text-cyan-400 font-semibold">GlowScript 3.2 (print · input · keysdown 지원)</span>
       </div>

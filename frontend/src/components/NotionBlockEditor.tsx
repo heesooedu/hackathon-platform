@@ -30,6 +30,8 @@ import ColabRunnerBlock, {
 } from '@/components/ColabRunnerBlock';
 import VPythonRunnerBlock, {
   VPYTHON_TEMPLATES,
+  stripLegacyEarthMoonDefaultCode,
+  stripLegacyEarthMoonDefaultTitle,
 } from '@/components/VPythonRunnerBlock';
 import { renderInlineMarkdown } from '@/components/LessonMaterialViewer';
 
@@ -550,16 +552,12 @@ export default function NotionBlockEditor({
           ? SIMULATION_TEMPLATES[0].code
           : targetType === 'colab'
           ? COLAB_TEMPLATES[0].code
-          : targetType === 'vpython'
-          ? VPYTHON_TEMPLATES[0].code
           : '',
       caption:
         targetType === 'simulation'
           ? SIMULATION_TEMPLATES[0].caption
           : targetType === 'colab'
           ? COLAB_TEMPLATES[0].caption
-          : targetType === 'vpython'
-          ? VPYTHON_TEMPLATES[0].title
           : undefined,
       icon: targetType === 'callout' ? '💡' : undefined,
       language: targetType === 'code' ? 'python' : undefined,
@@ -974,7 +972,6 @@ export default function NotionBlockEditor({
     const defaultMermaid = MERMAID_TEMPLATES[0].code;
     const defaultSimulation = SIMULATION_TEMPLATES[0].code;
     const defaultColab = COLAB_TEMPLATES[0].code;
-    const defaultVPython = VPYTHON_TEMPLATES[0].code;
 
     updateBlock(block.id, {
       type: targetType,
@@ -985,16 +982,12 @@ export default function NotionBlockEditor({
           ? defaultSimulation
           : targetType === 'colab' && !cleanedContent.trim()
           ? defaultColab
-          : targetType === 'vpython' && !cleanedContent.trim()
-          ? defaultVPython
           : cleanedContent,
       caption:
         targetType === 'simulation'
           ? block.caption || SIMULATION_TEMPLATES[0].caption
           : targetType === 'colab'
           ? block.caption || COLAB_TEMPLATES[0].caption
-          : targetType === 'vpython'
-          ? block.caption || VPYTHON_TEMPLATES[0].title
           : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
@@ -1442,16 +1435,12 @@ export default function NotionBlockEditor({
                           ? SIMULATION_TEMPLATES[0].code
                           : item.type === 'colab'
                           ? COLAB_TEMPLATES[0].code
-                          : item.type === 'vpython'
-                          ? VPYTHON_TEMPLATES[0].code
                           : '',
                       caption:
                         item.type === 'simulation'
                           ? SIMULATION_TEMPLATES[0].caption
                           : item.type === 'colab'
                           ? COLAB_TEMPLATES[0].caption
-                          : item.type === 'vpython'
-                          ? VPYTHON_TEMPLATES[0].title
                           : undefined,
                       icon: item.type === 'callout' ? '💡' : undefined,
                       language: item.type === 'code' ? 'python' : undefined,
@@ -2364,12 +2353,8 @@ export default function NotionBlockEditor({
                               onClick={() =>
                                 updateBlock(block.id, {
                                   type: 'vpython',
-                                  caption:
-                                    block.caption ||
-                                    VPYTHON_TEMPLATES[0].title,
-                                  content:
-                                    block.content.trim() ||
-                                    VPYTHON_TEMPLATES[0].code,
+                                  caption: block.caption || '',
+                                  content: block.content.trim(),
                                 })
                               }
                               className="rounded-lg bg-cyan-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-cyan-500 transition cursor-pointer"
@@ -2720,11 +2705,11 @@ export default function NotionBlockEditor({
                         </span>
                         <input
                           type="text"
-                          value={block.caption || ''}
+                          value={stripLegacyEarthMoonDefaultTitle(block.caption)}
                           onChange={(e) =>
                             updateBlock(block.id, { caption: e.target.value })
                           }
-                          placeholder="3D 시뮬레이션 제목 (예: 지구와 달 공전 3D 시뮬레이션)..."
+                          placeholder="(선택) 3D 시뮬레이션 제목 입력..."
                           className="flex-1 min-w-[180px] rounded-lg border border-cyan-300 bg-white px-2.5 py-1 text-xs font-bold text-cyan-950 placeholder:text-gray-400 focus:border-cyan-500 focus:outline-none"
                         />
                         <input
@@ -2772,7 +2757,7 @@ export default function NotionBlockEditor({
                           <span>Enter 자동 들여쓰기</span>
                         </div>
                         <AutoResizeTextarea
-                          value={block.content}
+                          value={stripLegacyEarthMoonDefaultCode(block.content)}
                           spellCheck={false}
                           inputRef={(el) => {
                             blockRefs.current[block.id] = el;
@@ -2794,9 +2779,9 @@ export default function NotionBlockEditor({
                           👁️ 실시간 3D 시뮬레이션 미리보기 (우클릭 드래그로 회전, 휠로 확대/축소)
                         </div>
                         <VPythonRunnerBlock
-                          key={`${block.id}_${block.content}`}
-                          initialCode={block.content}
-                          title={block.caption}
+                          key={`${block.id}_${stripLegacyEarthMoonDefaultCode(block.content)}`}
+                          initialCode={stripLegacyEarthMoonDefaultCode(block.content)}
+                          title={stripLegacyEarthMoonDefaultTitle(block.caption)}
                           externalUrl={block.externalUrl}
                           compact
                         />
