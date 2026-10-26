@@ -346,7 +346,7 @@ export default function ColabRunnerBlock({
     const start = el.selectionStart;
     const end = el.selectionEnd;
 
-    // 일반 Enter -> 파이썬 스마트 들여쓰기(:, (, [, { 뒤 4칸 들여쓰기)
+    // 일반 Enter -> 파이썬 스마트 들여쓰기(:, (, [, { 뒤 4칸 들여쓰기 및 기존 들여쓰기 유지)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       const before = val.slice(0, start);
@@ -354,17 +354,25 @@ export default function ColabRunnerBlock({
       const currentLine = before.split('\n').pop() || '';
       const match = currentLine.match(/^(\s*)/);
       let indent = match ? match[1] : '';
-      const trimmed = currentLine.trimEnd();
+      const trimmed = currentLine.replace(/#.*$/, '').trimEnd();
       if (
         trimmed.endsWith(':') ||
+        trimmed.endsWith('：') ||
         trimmed.endsWith('(') ||
         trimmed.endsWith('[') ||
         trimmed.endsWith('{')
       ) {
         indent += '    ';
+      } else if (
+        indent.length >= 4 &&
+        /^(return|break|continue|pass|raise)(\b|\s|$)/.test(trimmed.trim())
+      ) {
+        indent = indent.slice(0, -4);
       }
       const nextVal = `${before}\n${indent}${after}`;
       const nextPos = start + 1 + indent.length;
+      el.value = nextVal;
+      el.setSelectionRange(nextPos, nextPos);
       setStudentCode(nextVal);
       requestAnimationFrame(() => {
         el.focus();
@@ -373,18 +381,58 @@ export default function ColabRunnerBlock({
       return;
     }
 
-    // Tab -> 4칸 공백
+    // Tab -> 4칸 공백, Shift + Tab -> 4칸 내어쓰기
     if (e.key === 'Tab') {
       e.preventDefault();
       const before = val.slice(0, start);
       const after = val.slice(end);
+      if (e.shiftKey) {
+        const lastNewline = before.lastIndexOf('\n');
+        const lineStart = lastNewline + 1;
+        const linePrefix = val.slice(lineStart, start);
+        const leadingMatch = linePrefix.match(/^( {1,4}|\t)/);
+        if (leadingMatch) {
+          const removeLen = leadingMatch[1].length;
+          const nextVal = val.slice(0, lineStart) + val.slice(lineStart + removeLen);
+          const nextPos = Math.max(lineStart, start - removeLen);
+          el.value = nextVal;
+          el.setSelectionRange(nextPos, nextPos);
+          setStudentCode(nextVal);
+          requestAnimationFrame(() => {
+            el.focus();
+            el.setSelectionRange(nextPos, nextPos);
+          });
+        }
+        return;
+      }
       const nextVal = `${before}    ${after}`;
       const nextPos = start + 4;
+      el.value = nextVal;
+      el.setSelectionRange(nextPos, nextPos);
       setStudentCode(nextVal);
       requestAnimationFrame(() => {
         el.focus();
         el.setSelectionRange(nextPos, nextPos);
       });
+      return;
+    }
+
+    // Backspace -> 줄 앞 4칸 공백 스마트 지우기
+    if (e.key === 'Backspace' && start === end && start > 0) {
+      const before = val.slice(0, start);
+      const currentLine = before.split('\n').pop() || '';
+      if (currentLine.length >= 4 && /^\s+$/.test(currentLine) && currentLine.endsWith('    ')) {
+        e.preventDefault();
+        const nextVal = val.slice(0, start - 4) + val.slice(end);
+        const nextPos = start - 4;
+        el.value = nextVal;
+        el.setSelectionRange(nextPos, nextPos);
+        setStudentCode(nextVal);
+        requestAnimationFrame(() => {
+          el.focus();
+          el.setSelectionRange(nextPos, nextPos);
+        });
+      }
     }
   }
 

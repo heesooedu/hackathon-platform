@@ -551,6 +551,116 @@ export default function VPythonRunnerBlock({
   const fixedBodyHeightClass = compact ? 'h-[360px]' : 'h-[420px]'
   const hasExecutableCode = activeCode.trim().length > 0
 
+  const handleCodeKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return
+
+    if ((e.ctrlKey || e.metaKey || e.shiftKey) && e.key === 'Enter') {
+      e.preventDefault()
+      handleRun()
+      return
+    }
+
+    const target = e.currentTarget
+    const val = target.value
+    const start = target.selectionStart
+    const end = target.selectionEnd
+
+    // 일반 Enter -> 파이썬 스마트 자동 들여쓰기 (:, (, [, { 뒤 4칸 들여쓰기 및 기존 들여쓰기 유지)
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault()
+      const beforeCursor = val.slice(0, start)
+      const afterCursor = val.slice(end)
+      const currentLine = beforeCursor.split('\n').pop() || ''
+      const leadingSpacesMatch = currentLine.match(/^(\s*)/)
+      let indent = leadingSpacesMatch ? leadingSpacesMatch[1] : ''
+
+      const trimmedLine = currentLine.replace(/#.*$/, '').trimEnd()
+      if (
+        trimmedLine.endsWith(':') ||
+        trimmedLine.endsWith('：') ||
+        trimmedLine.endsWith('(') ||
+        trimmedLine.endsWith('[') ||
+        trimmedLine.endsWith('{')
+      ) {
+        indent += '    '
+      } else if (
+        indent.length >= 4 &&
+        /^(return|break|continue|pass|raise)(\b|\s|$)/.test(trimmedLine.trim())
+      ) {
+        indent = indent.slice(0, -4)
+      }
+
+      const nextVal = `${beforeCursor}\n${indent}${afterCursor}`
+      const nextPos = start + 1 + indent.length
+      target.value = nextVal
+      target.setSelectionRange(nextPos, nextPos)
+      setCode(nextVal)
+      requestAnimationFrame(() => {
+        target.focus()
+        target.setSelectionRange(nextPos, nextPos)
+      })
+      return
+    }
+
+    // Tab / Shift+Tab -> 4칸 들여쓰기 및 내어쓰기
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (e.shiftKey) {
+        const beforeCursor = val.slice(0, start)
+        const lineStartIdx = beforeCursor.lastIndexOf('\n') + 1
+        const currentLine = val.slice(lineStartIdx)
+        const removeMatch = currentLine.match(/^( {1,4})/)
+        if (removeMatch) {
+          const removeCount = removeMatch[1].length
+          const nextVal =
+            val.slice(0, lineStartIdx) + val.slice(lineStartIdx + removeCount)
+          const nextPos = Math.max(lineStartIdx, start - removeCount)
+          target.value = nextVal
+          target.setSelectionRange(nextPos, nextPos)
+          setCode(nextVal)
+          requestAnimationFrame(() => {
+            target.focus()
+            target.setSelectionRange(nextPos, nextPos)
+          })
+        }
+        return
+      }
+
+      const nextVal = val.slice(0, start) + '    ' + val.slice(end)
+      const nextPos = start + 4
+      target.value = nextVal
+      target.setSelectionRange(nextPos, nextPos)
+      setCode(nextVal)
+      requestAnimationFrame(() => {
+        target.focus()
+        target.setSelectionRange(nextPos, nextPos)
+      })
+      return
+    }
+
+    // Backspace -> 커서 앞이 공백이고 4칸 단위이면 한 번에 4칸 내어쓰기
+    if (e.key === 'Backspace' && start === end && start >= 4) {
+      const beforeCursor = val.slice(0, start)
+      const currentLineBeforeCursor = beforeCursor.split('\n').pop() || ''
+      if (
+        currentLineBeforeCursor.length >= 4 &&
+        /^\s+$/.test(currentLineBeforeCursor) &&
+        currentLineBeforeCursor.endsWith('    ')
+      ) {
+        e.preventDefault()
+        const nextVal = val.slice(0, start - 4) + val.slice(end)
+        const nextPos = start - 4
+        target.value = nextVal
+        target.setSelectionRange(nextPos, nextPos)
+        setCode(nextVal)
+        requestAnimationFrame(() => {
+          target.focus()
+          target.setSelectionRange(nextPos, nextPos)
+        })
+      }
+    }
+  }
+
   const renderCodeEditorPane = () => (
     <div className="flex h-full flex-col bg-slate-950/95 p-3.5">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
@@ -566,24 +676,7 @@ export default function VPythonRunnerBlock({
       <textarea
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey || e.shiftKey) && e.key === 'Enter') {
-            e.preventDefault()
-            handleRun()
-            return
-          }
-          if (e.key === 'Tab') {
-            e.preventDefault()
-            const start = e.currentTarget.selectionStart
-            const end = e.currentTarget.selectionEnd
-            const next = code.substring(0, start) + '    ' + code.substring(end)
-            setCode(next)
-            const target = e.currentTarget
-            requestAnimationFrame(() => {
-              target.selectionStart = target.selectionEnd = start + 4
-            })
-          }
-        }}
+        onKeyDown={handleCodeKeyDown}
         placeholder={`Web VPython 3.2\n# 여기에 파이썬 VPython 코드를 작성하고 [▶ 3D 실행]을 눌러보세요!\nbox(pos=vec(0, 0, 0), size=vec(1.2, 1.2, 1.2), color=color.cyan)`}
         spellCheck={false}
         className="w-full flex-1 resize-none overflow-y-auto rounded-xl border border-slate-800 bg-[#070a12] p-3 font-mono text-xs sm:text-sm leading-relaxed text-cyan-100 placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none"

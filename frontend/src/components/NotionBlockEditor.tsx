@@ -1135,22 +1135,35 @@ export default function NotionBlockEditor({
       const leadingSpacesMatch = currentLine.match(/^(\s*)/);
       let indent = leadingSpacesMatch ? leadingSpacesMatch[1] : '';
 
-      const trimmedLine = currentLine.trimEnd();
+      const trimmedLine = (
+        block.type === 'vpython' || block.type === 'colab' || block.type === 'code'
+          ? currentLine.replace(/#.*$/, '')
+          : currentLine
+      ).trimEnd();
       // Python의 콜론(:), 또는 중괄호/대괄호/소괄호 열림({, [, () 혹은 Mermaid의 subgraph 끝에서 자동 추가 들여쓰기
       if (
         trimmedLine.endsWith(':') ||
+        trimmedLine.endsWith('：') ||
         trimmedLine.endsWith('{') ||
         trimmedLine.endsWith('(') ||
         trimmedLine.endsWith('[') ||
         (block.type === 'mermaid' && /^subgraph\b/.test(trimmedLine.trim()))
       ) {
         indent += indentUnit;
+      } else if (
+        indent.length >= 4 &&
+        (block.type === 'vpython' || block.type === 'colab' || block.type === 'code') &&
+        /^(return|break|continue|pass|raise)(\b|\s|$)/.test(trimmedLine.trim())
+      ) {
+        indent = indent.slice(0, -4);
       }
 
       const insertion = '\n' + indent;
       const newVal = beforeCursor + insertion + afterCursor;
       const newCursorPos = start + insertion.length;
 
+      el.value = newVal;
+      el.setSelectionRange(newCursorPos, newCursorPos);
       updateBlock(block.id, { content: newVal });
       requestAnimationFrame(() => {
         const targetEl = blockRefs.current[block.id];
@@ -1162,14 +1175,40 @@ export default function NotionBlockEditor({
       return;
     }
 
-    // 3. Tab 키 -> 4칸 들여쓰기 삽입
+    // 3. Tab / Shift+Tab 키 -> 4칸 들여쓰기 및 내어쓰기
     if (e.key === 'Tab') {
       e.preventDefault();
+      if (e.shiftKey) {
+        const beforeCursor = val.slice(0, start);
+        const lineStartIdx = beforeCursor.lastIndexOf('\n') + 1;
+        const currentLine = val.slice(lineStartIdx);
+        const removeMatch = currentLine.match(/^( {1,4})/);
+        if (removeMatch) {
+          const removeCount = removeMatch[1].length;
+          const newVal =
+            val.slice(0, lineStartIdx) + val.slice(lineStartIdx + removeCount);
+          const newCursorPos = Math.max(lineStartIdx, start - removeCount);
+          el.value = newVal;
+          el.setSelectionRange(newCursorPos, newCursorPos);
+          updateBlock(block.id, { content: newVal });
+          requestAnimationFrame(() => {
+            const targetEl = blockRefs.current[block.id];
+            if (targetEl) {
+              targetEl.focus();
+              targetEl.setSelectionRange(newCursorPos, newCursorPos);
+            }
+          });
+        }
+        return;
+      }
+
       const beforeCursor = val.slice(0, start);
       const afterCursor = val.slice(end);
       const newVal = beforeCursor + indentUnit + afterCursor;
       const newCursorPos = start + indentUnit.length;
 
+      el.value = newVal;
+      el.setSelectionRange(newCursorPos, newCursorPos);
       updateBlock(block.id, { content: newVal });
       requestAnimationFrame(() => {
         const targetEl = blockRefs.current[block.id];
@@ -1201,6 +1240,8 @@ export default function NotionBlockEditor({
           e.preventDefault();
           const newVal = val.slice(0, start - 4) + val.slice(end);
           const newPos = start - 4;
+          el.value = newVal;
+          el.setSelectionRange(newPos, newPos);
           updateBlock(block.id, { content: newVal });
           requestAnimationFrame(() => {
             const targetEl = blockRefs.current[block.id];
@@ -2779,7 +2820,7 @@ export default function NotionBlockEditor({
                           👁️ 실시간 3D 시뮬레이션 미리보기 (우클릭 드래그로 회전, 휠로 확대/축소)
                         </div>
                         <VPythonRunnerBlock
-                          key={`${block.id}_${stripLegacyEarthMoonDefaultCode(block.content)}`}
+                          key={block.id}
                           initialCode={stripLegacyEarthMoonDefaultCode(block.content)}
                           title={stripLegacyEarthMoonDefaultTitle(block.caption)}
                           externalUrl={block.externalUrl}
