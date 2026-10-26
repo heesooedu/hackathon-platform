@@ -1,21 +1,12 @@
 import Link from 'next/link';
-import { createClient } from '@/utils/supabase/server';
+import { getCurrentUser, getCurrentProfile } from '@/utils/supabase/server';
 import { signOut } from '@/app/(auth)/actions';
-import { Profile } from '@/types/database.types';
 
 export default async function Navbar() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  let profile: Profile | null = null;
-  if (user) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-    profile = data as Profile | null;
-  }
+  const [user, profile] = await Promise.all([
+    getCurrentUser(),
+    getCurrentProfile(),
+  ]);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-100 bg-white/80 backdrop-blur-md">

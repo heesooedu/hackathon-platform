@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
+import { createClient, getCurrentUser } from '@/utils/supabase/server';
 import NotionLessonStudio from '@/components/NotionLessonStudio';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 
@@ -8,21 +8,30 @@ interface NewLessonPageProps {
 }
 
 export default async function NewLessonPage({ params }: NewLessonPageProps) {
-  const { id: classId } = await params;
-  const supabase = await createClient();
+  const [{ id: classId }, user, supabase] = await Promise.all([
+    params,
+    getCurrentUser(),
+    createClient(),
+  ]);
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
   if (!user) {
     redirect('/login');
   }
 
-  const { data: classData, error } = await supabase
-    .from('classes')
-    .select('id, name, teacher_id')
-    .eq('id', classId)
-    .single();
+  const [
+    { data: classData, error },
+    { existingSubjects, existingUnits },
+  ] = await Promise.all([
+    supabase
+      .from('classes')
+      .select('id, name, teacher_id')
+      .eq('id', classId)
+      .single(),
+    loadTeacherMaterialLibraryContext(user.id, {
+      includeDeployedMap: false,
+      lightweightMasterMaterials: true,
+    }),
+  ]);
 
   if (error || !classData) {
     notFound();
@@ -32,9 +41,6 @@ export default async function NewLessonPage({ params }: NewLessonPageProps) {
   if (classData.teacher_id !== user.id) {
     redirect(`/classes/${classId}`);
   }
-
-  const { existingSubjects, existingUnits } =
-    await loadTeacherMaterialLibraryContext(user.id);
 
   return (
     <NotionLessonStudio

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
+import { getCurrentUser, getCurrentProfile } from '@/utils/supabase/server';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 import NotionLessonStudio from '@/components/NotionLessonStudio';
 
@@ -12,29 +12,25 @@ interface NewMaterialPageProps {
 }
 
 export default async function NewMaterialPage({ searchParams }: NewMaterialPageProps) {
-  const resolvedSearchParams = await searchParams;
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const [resolvedSearchParams, user, profile] = await Promise.all([
+    searchParams,
+    getCurrentUser(),
+    getCurrentProfile(),
+  ]);
 
   if (!user) {
     redirect('/login');
   }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
 
   if (profile?.role !== 'teacher') {
     redirect('/');
   }
 
   const { teacherClasses, existingSubjects, existingUnits } =
-    await loadTeacherMaterialLibraryContext(user.id);
+    await loadTeacherMaterialLibraryContext(user.id, {
+      includeDeployedMap: false,
+      lightweightMasterMaterials: true,
+    });
 
   return (
     <NotionLessonStudio

@@ -1,5 +1,5 @@
 import { notFound, redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
+import { getCurrentUser, getCurrentProfile } from '@/utils/supabase/server';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 import NotionLessonStudio from '@/components/NotionLessonStudio';
 
@@ -8,22 +8,15 @@ interface EditMaterialPageProps {
 }
 
 export default async function EditMaterialPage({ params }: EditMaterialPageProps) {
-  const { materialId } = await params;
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const [{ materialId }, user, profile] = await Promise.all([
+    params,
+    getCurrentUser(),
+    getCurrentProfile(),
+  ]);
 
   if (!user) {
     redirect('/login');
   }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
 
   if (profile?.role !== 'teacher') {
     redirect('/');

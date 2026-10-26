@@ -22,14 +22,21 @@ export default function ToggleLessonStatusButton({
     e.preventDefault();
     e.stopPropagation();
 
+    const prevStatus = status;
+    const optimisticNext: LessonStatus = prevStatus === 'open' ? 'closed' : 'open';
+    setStatus(optimisticNext);
+    setLoading(true);
+
     try {
-      setLoading(true);
-      const res = await toggleLessonStatus(lessonId, classId, status);
+      const res = await toggleLessonStatus(lessonId, classId, prevStatus);
       if (res?.success && res.newStatus) {
         setStatus(res.newStatus as LessonStatus);
+      } else {
+        setStatus(prevStatus);
       }
     } catch (err) {
       console.error(err);
+      setStatus(prevStatus);
       alert('상태 변경에 실패했습니다.');
     } finally {
       setLoading(false);

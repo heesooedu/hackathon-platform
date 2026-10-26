@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { createClient } from '@/utils/supabase/server';
+import { createClient, getCurrentUser } from '@/utils/supabase/server';
 import ImportMaterialModal from '@/components/ImportMaterialModal';
 import ClassDetailView from '@/components/ClassDetailView';
 import {
@@ -11,6 +11,7 @@ import {
   isMaterialLibraryClass,
   parseLessonMaterial,
   sortLessonsByOrder,
+  toLightweightLessonForList,
 } from '@/utils/materialPayload';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 import { separateGroupsAndQuizzes } from '@/utils/quizHelper';
@@ -31,26 +32,35 @@ export default async function ClassDetailPage({
   params,
   searchParams,
 }: ClassDetailPageProps) {
-  const { id: classId } = await params;
-  const resolvedSearchParams = searchParams ? await searchParams : {};
-  const initialTab =
-    resolvedSearchParams.tab === 'students' ? 'students' : 'lessons';
+  const [{ id: classId }, resolvedSearchParams, user, supabase] =
+    await Promise.all([
+      params,
+      searchParams ? searchParams : Promise.resolve({} as { tab?: string }),
+      getCurrentUser(),
+      createClient(),
+    ]);
 
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
   if (!user) {
     redirect('/login');
   }
 
-  // 클래스 정보 조회 (필요한 최소 프로필 항목만 조회)
-  const { data: classData, error: classError } = await supabase
-    .from('classes')
-    .select('*, teacher:teacher_id(id, name, role)')
-    .eq('id', classId)
-    .single();
+  const initialTab =
+    resolvedSearchParams.tab === 'students' ? 'students' : 'lessons';
+
+  // 1단계 병렬 조회: 클래스 정보 + 해당 클래스의 레슨 목록을 동시에 조회
+  const [{ data: classData, error: classError }, { data: rawLessons }] =
+    await Promise.all([
+      supabase
+        .from('classes')
+        .select('*, teacher:teacher_id(id, name, role)')
+        .eq('id', classId)
+        .single(),
+      supabase
+        .from('lessons')
+        .select('*')
+        .eq('class_id', classId)
+        .order('created_at', { ascending: false }),
+    ]);
 
   if (classError || !classData) {
     notFound();
@@ -61,38 +71,55 @@ export default async function ClassDetailPage({
   }
 
   const isTeacher = classData.teacher_id === user.id;
-
-  // 교사일 경우 먼저 교안 보관함 동기화 및 보관함 목록 로드
-  let masterMaterials: Lesson[] = [];
-  if (isTeacher) {
-    const libCtx = await loadTeacherMaterialLibraryContext(user.id);
-    masterMaterials = libCtx.masterMaterials;
-  }
-
-  // 레슨 목록 조회 및 교사가 지정한 순서(displayOrder) 기준 정렬
-  const { data: rawLessons } = await supabase
-    .from('lessons')
-    .select('*')
-    .eq('class_id', classId)
-    .order('created_at', { ascending: false });
-
-  const lessons = sortLessonsByOrder((rawLessons || []) as Lesson[]);
-  const alreadyImportedSourceIds = lessons
+  const sortedLessons = sortLessonsByOrder((rawLessons || []) as Lesson[]);
+  const alreadyImportedSourceIds = sortedLessons
     .map((l) => parseLessonMaterial(l).sourceMaterialId)
     .filter((id): id is string => Boolean(id));
 
-  // 교사 전용: 참여 학생 명단 및 학급 전체 학습 데이터(질문·이해 제출, 퀴즈 풀이, 동료 답변) 조회
+  // 클라이언트 목록 뷰로 전달할 때는 수백 KB의 본문/이미지를 제외한 경량 메타데이터만 직렬화
+  const lessons = sortedLessons.map(toLightweightLessonForList);
+
+  let masterMaterials: Lesson[] = [];
   const enrolledStudents: EnrolledStudentRecord[] = [];
   let classSubmissions: Submission[] = [];
   let classQuizzes: FormativeQuiz[] = [];
   const peerAnswersByStudent: Record<string, StudentPeerAnswerItem[]> = {};
 
   if (isTeacher) {
-    const { data: memberRows } = await supabase
-      .from('class_members')
-      .select('id, student_id, joined_at, student:student_id(id, name, role)')
-      .eq('class_id', classId)
-      .order('joined_at', { ascending: false });
+    const lessonIds = sortedLessons.map((l) => l.id);
+    const lessonTitleMap = new Map<string, string>(
+      sortedLessons.map((l) => [l.id, l.title])
+    );
+
+    // 2단계 병렬 조회: 교안 보관함 + 참여 학생 명단 + 제출물 + 질문/퀴즈 그룹을 한 번에 동시 조회
+    const [libCtx, { data: memberRows }, { data: subRows }, { data: groupRows }] =
+      await Promise.all([
+        loadTeacherMaterialLibraryContext(user.id, {
+          includeDeployedMap: false,
+          lightweightMasterMaterials: true,
+        }),
+        supabase
+          .from('class_members')
+          .select('id, student_id, joined_at, student:student_id(id, name, role)')
+          .eq('class_id', classId)
+          .order('joined_at', { ascending: false }),
+        lessonIds.length > 0
+          ? supabase
+              .from('submissions')
+              .select('*')
+              .in('lesson_id', lessonIds)
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: [] }),
+        lessonIds.length > 0
+          ? supabase
+              .from('question_groups')
+              .select('*, answers(*)')
+              .in('lesson_id', lessonIds)
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: [] }),
+      ]);
+
+    masterMaterials = libCtx.masterMaterials;
 
     if (memberRows) {
       for (const m of memberRows) {
@@ -106,54 +133,34 @@ export default async function ClassDetailPage({
       }
     }
 
-    const lessonIds = lessons.map((l) => l.id);
-    const lessonTitleMap = new Map<string, string>(
-      lessons.map((l) => [l.id, l.title])
-    );
+    classSubmissions = (subRows || []) as Submission[];
 
-    if (lessonIds.length > 0) {
-      const [{ data: subRows }, { data: groupRows }] = await Promise.all([
-        supabase
-          .from('submissions')
-          .select('*')
-          .in('lesson_id', lessonIds)
-          .order('created_at', { ascending: true }),
-        supabase
-          .from('question_groups')
-          .select('*, answers(*)')
-          .in('lesson_id', lessonIds)
-          .order('created_at', { ascending: true }),
-      ]);
+    const allGroups = (groupRows || []) as QuestionGroup[];
+    const { normalGroups, publishedQuizzes, inlineQuizzesMap } =
+      separateGroupsAndQuizzes(allGroups);
 
-      classSubmissions = (subRows || []) as Submission[];
+    classQuizzes = [
+      ...publishedQuizzes,
+      ...Object.values(inlineQuizzesMap),
+    ];
 
-      const allGroups = (groupRows || []) as QuestionGroup[];
-      const { normalGroups, publishedQuizzes, inlineQuizzesMap } =
-        separateGroupsAndQuizzes(allGroups);
-
-      classQuizzes = [
-        ...publishedQuizzes,
-        ...Object.values(inlineQuizzesMap),
-      ];
-
-      for (const group of normalGroups) {
-        const lessonTitle =
-          lessonTitleMap.get(group.lesson_id) || '수업 차시';
-        for (const ans of group.answers || []) {
-          if (ans.author_id === user.id) continue; // 교사 본인 답변 제외
-          if (!peerAnswersByStudent[ans.author_id]) {
-            peerAnswersByStudent[ans.author_id] = [];
-          }
-          peerAnswersByStudent[ans.author_id].push({
-            id: ans.id,
-            lessonId: group.lesson_id,
-            lessonTitle,
-            groupTitle: group.representative_title,
-            content: ans.content,
-            isTeacherChecked: ans.is_teacher_checked,
-            createdAt: ans.created_at,
-          });
+    for (const group of normalGroups) {
+      const lessonTitle =
+        lessonTitleMap.get(group.lesson_id) || '수업 차시';
+      for (const ans of group.answers || []) {
+        if (ans.author_id === user.id) continue; // 교사 본인 답변 제외
+        if (!peerAnswersByStudent[ans.author_id]) {
+          peerAnswersByStudent[ans.author_id] = [];
         }
+        peerAnswersByStudent[ans.author_id].push({
+          id: ans.id,
+          lessonId: group.lesson_id,
+          lessonTitle,
+          groupTitle: group.representative_title,
+          content: ans.content,
+          isTeacherChecked: ans.is_teacher_checked,
+          createdAt: ans.created_at,
+        });
       }
     }
   }

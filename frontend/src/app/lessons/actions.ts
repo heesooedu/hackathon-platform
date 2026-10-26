@@ -157,24 +157,27 @@ export async function ensureTeacherMaterialLibrary(
   const classesList = allTeacherClasses || [];
   let libraryClass = classesList.find((c) => isMaterialLibraryClass(c));
 
-  if (!libraryClass) {
-    let attempts = 0;
-    while (!libraryClass && attempts < 5) {
-      attempts++;
-      const code = generateLibraryJoinCode();
-      const { data: created, error: createErr } = await supabase
-        .from('classes')
-        .insert({
-          teacher_id: teacherId,
-          name: MATERIAL_LIBRARY_CLASS_NAME,
-          join_code: code,
-        })
-        .select('*')
-        .single();
+  // 이미 교안 보관함이 생성되어 있다면 매번 전체 학급 교안을 풀스캔하지 않고 즉시 반환
+  if (libraryClass) {
+    return { libraryClassId: libraryClass.id };
+  }
 
-      if (!createErr && created) {
-        libraryClass = created;
-      }
+  let attempts = 0;
+  while (!libraryClass && attempts < 5) {
+    attempts++;
+    const code = generateLibraryJoinCode();
+    const { data: created, error: createErr } = await supabase
+      .from('classes')
+      .insert({
+        teacher_id: teacherId,
+        name: MATERIAL_LIBRARY_CLASS_NAME,
+        join_code: code,
+      })
+      .select('*')
+      .single();
+
+    if (!createErr && created) {
+      libraryClass = created;
     }
   }
 

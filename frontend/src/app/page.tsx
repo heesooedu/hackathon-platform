@@ -1,40 +1,41 @@
 import Link from 'next/link';
-import { createClient } from '@/utils/supabase/server';
-import { Profile, ClassItem } from '@/types/database.types';
+import {
+  createClient,
+  getCurrentUser,
+  getCurrentProfile,
+} from '@/utils/supabase/server';
+import { ClassItem } from '@/types/database.types';
 import CreateClassModal from '@/components/CreateClassModal';
 import JoinClassModal from '@/components/JoinClassModal';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
 import { isMaterialLibraryClass } from '@/utils/materialPayload';
 
 export default async function HomePage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const [user, profile] = await Promise.all([
+    getCurrentUser(),
+    getCurrentProfile(),
+  ]);
 
-  let profile: Profile | null = null;
   let teacherClasses: ClassItem[] = [];
   let studentClasses: ClassItem[] = [];
   let masterMaterialCount = 0;
   let subjectCount = 0;
 
-  if (user) {
-    // 1. 프로필 조회
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-    profile = data as Profile | null;
-
-    // 2. 교사일 경우: 교안 보관함 및 자신이 개설한 일반 클래스(분반) 목록 조회
-    if (profile?.role === 'teacher') {
-      const libCtx = await loadTeacherMaterialLibraryContext(user.id);
+  if (user && profile) {
+    // 1. 교사일 경우: 교안 보관함 및 자신이 개설한 일반 클래스(분반) 목록 조회 (배포 맵 생략 & 경량화)
+    if (profile.role === 'teacher') {
+      const libCtx = await loadTeacherMaterialLibraryContext(user.id, {
+        includeDeployedMap: false,
+        lightweightMasterMaterials: true,
+      });
       teacherClasses = libCtx.teacherClasses;
       masterMaterialCount = libCtx.masterMaterials.length;
       subjectCount = libCtx.existingSubjects.length;
     }
 
-    // 3. 학생일 경우: 자신이 참여한 클래스 목록 조회
-    if (profile?.role === 'student') {
+    // 2. 학생일 경우: 자신이 참여한 클래스 목록 조회
+    if (profile.role === 'student') {
+      const supabase = await createClient();
       const { data: mData } = await supabase
         .from('class_members')
         .select('class:class_id(*, teacher:teacher_id(name))')

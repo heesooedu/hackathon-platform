@@ -60,11 +60,33 @@ interface EmbeddedMetaEnvelope {
   sourceMaterialId?: string | null;
 }
 
+const parsedMaterialCache = new WeakMap<
+  Lesson,
+  { raw: string | null | undefined; parsed: ParsedLessonMaterial }
+>();
+
 /**
  * lessons 레코드에서 교안 데이터(마크다운, HTML, 업로드 파일명, 적용된 패치 목록, AI 진단 결과, 과목/단원/연동ID)를 추출합니다.
  */
 export function parseLessonMaterial(lesson: Lesson): ParsedLessonMaterial {
   const rawField = lesson.material_html || '';
+  const cached = parsedMaterialCache.get(lesson);
+  if (cached && cached.raw === lesson.material_html) {
+    return cached.parsed;
+  }
+
+  const result = parseLessonMaterialInternal(lesson, rawField);
+  parsedMaterialCache.set(lesson, {
+    raw: lesson.material_html,
+    parsed: result,
+  });
+  return result;
+}
+
+function parseLessonMaterialInternal(
+  lesson: Lesson,
+  rawField: string
+): ParsedLessonMaterial {
 
   // 1. 메타 엔벨로프가 포함되어 있는 경우 우선 파싱
   const startIdx = rawField.indexOf(META_PREFIX);
@@ -237,6 +259,64 @@ export function hasActualLessonMaterial(lesson: Lesson): boolean {
     parsed.htmlContent.trim().length > 0 ||
     parsed.appliedPatches.length > 0
   );
+}
+
+/**
+ * 목록/대시보드 화면(클라이언트 컴포넌트)으로 Lesson 배열을 전달할 때
+ * 수백 KB에 달하는 본문 마크다운/base64 이미지/HTML/AI 분석 JSON을 제거하고
+ * 배지·분류·정렬 표시용 메타데이터만 남겨 RSC 직렬화 페이로드 크기를 대폭 줄입니다.
+ */
+export function toLightweightLessonForList(lesson: Lesson): Lesson {
+  const parsed = parseLessonMaterial(lesson);
+  const featureFlags = [
+    parsed.markdownContent.includes('```colab') ? '```colab' : '',
+    parsed.markdownContent.includes('```vpython') ? '```vpython' : '',
+    parsed.markdownContent.includes('```simulation') ? '```simulation' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const lightMarkdown =
+    parsed.markdownContent.trim().length > 0
+      ? featureFlags || '__HAS_MATERIAL__'
+      : '';
+  const lightHtml =
+    parsed.htmlContent.trim().length > 0 ? '<div></div>' : '';
+
+  const lightPayload: ParsedLessonMaterial = {
+    materialType: parsed.materialType,
+    markdownContent: lightMarkdown,
+    htmlContent: lightHtml,
+    fileName: parsed.fileName,
+    appliedPatches: parsed.appliedPatches.map((p) => ({
+      id: p.id,
+      title: p.title,
+      content_markdown: '',
+      applied_at: p.applied_at,
+    })),
+    aiAnalysis: null,
+    displayOrder: parsed.displayOrder ?? null,
+    subjectCategory: parsed.subjectCategory ?? null,
+    unitCategory: parsed.unitCategory ?? null,
+    sessionNumber: parsed.sessionNumber ?? null,
+    pageIcon: parsed.pageIcon ?? null,
+    sourceMaterialId: parsed.sourceMaterialId ?? null,
+  };
+
+  const lightLesson: Lesson = {
+    ...lesson,
+    material_html: serializeLessonMaterial(lightPayload) || null,
+    material_markdown: undefined,
+    ai_supplement_markdown: null,
+    ai_review_json: null,
+  };
+
+  parsedMaterialCache.set(lightLesson, {
+    raw: lightLesson.material_html,
+    parsed: lightPayload,
+  });
+
+  return lightLesson;
 }
 
 /**
