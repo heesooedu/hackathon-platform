@@ -1,6 +1,6 @@
 export default function LessonDetailLoading() {
   return (
-    <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-8 animate-pulse">
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8 space-y-8 animate-pulse">
       {/* 상단 브레드크럼 & 제목 스켈레톤 */}
       <div>
         <div className="h-4 w-44 rounded-md bg-gray-200 mb-4" />

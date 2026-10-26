@@ -514,7 +514,6 @@ export default function LessonMaterialViewer({
   inlineQuizzesMap,
 }: LessonMaterialViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [isExpandedWide, setIsExpandedWide] = useState(true);
   const [draftMaterialType, setDraftMaterialType] = useState<MaterialType>(
     material.materialType || 'markdown'
   );
@@ -611,13 +610,7 @@ export default function LessonMaterialViewer({
   }
 
   return (
-    <div
-      className={`space-y-4 transition-all duration-300 ${
-        isExpandedWide
-          ? 'relative left-1/2 right-1/2 -ml-[47vw] -mr-[47vw] w-[94vw] max-w-[1720px]'
-          : 'w-full'
-      }`}
-    >
+    <div className="w-full space-y-4">
       {/* 상단 헤더 */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -639,20 +632,6 @@ export default function LessonMaterialViewer({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setIsExpandedWide(!isExpandedWide)}
-            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition ${
-              isExpandedWide
-                ? 'border-blue-300 bg-blue-50 text-blue-700'
-                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-            }`}
-            title="교안 가로 폭을 화면 전체로 넓히거나 기본 폭으로 줄입니다"
-          >
-            <span>↔️</span>
-            <span>{isExpandedWide ? '전체 화면 가로 확장됨 (기본 폭으로)' : '교안 가로 전체 확장'}</span>
-          </button>
-
           {isTeacher && (
             <>
               <button

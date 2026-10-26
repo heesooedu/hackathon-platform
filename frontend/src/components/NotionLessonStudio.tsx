@@ -126,7 +126,6 @@ export default function NotionLessonStudio({
   const [uploadSuccessBadge, setUploadSuccessBadge] = useState<string | null>(null);
 
   const [previewMode, setPreviewMode] = useState(false);
-  const [isFullWidth, setIsFullWidth] = useState(true);
   const [fileParsing, setFileParsing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -400,11 +399,7 @@ export default function NotionLessonStudio({
     <div className="min-h-screen bg-[#fbfbfa] pb-28">
       {/* 1. 노션 스타일 상단 고정 네비게이션 & 액션 바 */}
       <div className="sticky top-16 z-40 border-b border-gray-200/80 bg-white/95 shadow-xs backdrop-blur-md">
-        <div
-          className={`mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8 transition-all duration-300 ${
-            isFullWidth ? 'max-w-[96vw]' : 'max-w-5xl'
-          }`}
-        >
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-8">
           {/* 좌측 브레드크럼 */}
           <div className="flex items-center gap-2 text-xs sm:text-sm">
             <Link
@@ -432,20 +427,6 @@ export default function NotionLessonStudio({
 
           {/* 우측 컨트롤 버튼 */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsFullWidth(!isFullWidth)}
-              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
-                isFullWidth
-                  ? 'border-blue-300 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-              }`}
-              title="노션 페이지 가로 너비 전환"
-            >
-              <span>↔️</span>
-              <span>{isFullWidth ? '전체 화면 너비 켜짐 (광폭)' : '전체 화면 너비로 넓히기'}</span>
-            </button>
-
             {materialType === 'markdown' && (
               <button
                 type="button"
@@ -507,11 +488,7 @@ export default function NotionLessonStudio({
       {/* 2. 노션 커버 배너 */}
       <div className="relative h-36 sm:h-44 w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-teal-500 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(#ffffff33_1px,transparent_1px)] [background-size:20px_20px] opacity-40" />
-        <div
-          className={`mx-auto px-6 h-full flex items-end pb-4 justify-between text-white/90 text-xs transition-all duration-300 ${
-            isFullWidth ? 'max-w-[96vw]' : 'max-w-4xl'
-          }`}
-        >
+        <div className="mx-auto max-w-6xl px-6 h-full flex items-end pb-4 justify-between text-white/90 text-xs">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-black/25 backdrop-blur-xs px-3 py-1 font-semibold">
             ✨ 노션형 교안 제작 스튜디오 — 한 번 만든 교안을 과목·단원별로 체계적으로 분류하고 A·B·C·D 모든 분반에 불러와 함께 진화시키세요
           </span>
@@ -519,11 +496,7 @@ export default function NotionLessonStudio({
       </div>
 
       {/* 3. 노션 문서 본문 컨테이너 */}
-      <div
-        className={`mx-auto px-3 sm:px-6 -mt-10 relative z-10 transition-all duration-300 ${
-          isFullWidth ? 'max-w-[96vw]' : 'max-w-4xl'
-        }`}
-      >
+      <div className="mx-auto max-w-6xl px-3 sm:px-6 -mt-10 relative z-10">
         <div className="rounded-3xl border border-gray-200/90 bg-white p-6 sm:p-10 lg:p-14 shadow-sm space-y-8">
           {/* 원본 연동 안내 배너 (분반 수업 수정 또는 이미 배포된 원본 교안 수정 시) */}
           {(initialParsed?.sourceMaterialId || alreadyLinkedClassIds.length > 0) && (

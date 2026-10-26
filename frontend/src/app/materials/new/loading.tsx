@@ -1,6 +1,6 @@
 export default function StudioLoading() {
   return (
-    <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-6 animate-pulse">
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8 space-y-6 animate-pulse">
       <div className="flex items-center justify-between border-b border-gray-200 pb-4">
         <div className="h-5 w-40 rounded-lg bg-gray-200" />
         <div className="flex items-center gap-2">
