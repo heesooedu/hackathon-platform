@@ -449,6 +449,9 @@ export default function NotionBlockEditor({
   const [slashFilterQuery, setSlashFilterQuery] = useState('');
   const [slashSelectedIdx, setSlashSelectedIdx] = useState(0);
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
+  const [toolbarMode, setToolbarMode] = useState<
+    'compact' | 'expanded' | 'minimized'
+  >('compact');
 
   const [isDraggingFileOverPage, setIsDraggingFileOverPage] = useState(false);
   const [draggedBlockIdx, setDraggedBlockIdx] = useState<number | null>(null);
@@ -1346,6 +1349,62 @@ export default function NotionBlockEditor({
     blocks.findIndex((b) => b.id === focusedBlockId)
   );
 
+  function handleQuickAddBlock(targetType: NotionBlockType) {
+    if (targetType === 'image') {
+      const newImgBlock: NotionBlock = {
+        id: createBlockId(),
+        type: 'image',
+        content: '',
+        imageUrl: '',
+        caption: '',
+        images: [],
+        imageSize: 'md',
+      };
+      onChange([...blocks, newImgBlock]);
+    } else if (targetType === 'table') {
+      const newTableBlock: NotionBlock = {
+        id: createBlockId(),
+        type: 'table',
+        content: '',
+        tableRows: createDefaultTableRows(3, 3),
+        hasTableHeader: true,
+      };
+      onChange([...blocks, newTableBlock]);
+      focusTableCell(newTableBlock.id, 0, 0);
+    } else if (targetType === 'quiz') {
+      const newQuizBlock: NotionBlock = {
+        id: createBlockId(),
+        type: 'quiz',
+        content: '',
+        quizData: createDefaultQuizData('multiple_choice'),
+      };
+      onChange([...blocks, newQuizBlock]);
+    } else {
+      const newBlock: NotionBlock = {
+        id: createBlockId(),
+        type: targetType,
+        content:
+          targetType === 'mermaid'
+            ? MERMAID_TEMPLATES[0].code
+            : targetType === 'simulation'
+            ? SIMULATION_TEMPLATES[0].code
+            : targetType === 'colab'
+            ? COLAB_TEMPLATES[0].code
+            : '',
+        caption:
+          targetType === 'simulation'
+            ? SIMULATION_TEMPLATES[0].caption
+            : targetType === 'colab'
+            ? COLAB_TEMPLATES[0].caption
+            : undefined,
+        icon: targetType === 'callout' ? '💡' : undefined,
+        language: targetType === 'code' ? 'python' : undefined,
+      };
+      onChange([...blocks, newBlock]);
+      focusBlock(newBlock.id);
+    }
+  }
+
   return (
     <div
       ref={editorContainerRef}
@@ -1431,228 +1490,358 @@ export default function NotionBlockEditor({
         }}
       />
 
-      {/* 상단 고정 노션 블록 빠른 삽입 & 텍스트 서식 단축키 툴바 */}
-      <div className="sticky top-[124px] z-20 space-y-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-gray-400 mr-1">
-              블록 빠른 추가:
-            </span>
-            {BLOCK_TYPE_META.map((item) => (
+      {/* 상단 고정 노션 블록 빠른 삽입 & 텍스트 서식 단축키 툴바 (초슬림 1줄 기본 / 상세 펼치기 / 최소화 접기 지원) */}
+      <div className="sticky top-[124px] z-20">
+        {toolbarMode === 'minimized' ? (
+          <div className="pointer-events-none flex justify-end">
+            <button
+              type="button"
+              onClick={() => setToolbarMode('compact')}
+              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-white/95 px-3 py-1 text-xs font-extrabold text-indigo-700 shadow-sm backdrop-blur-md hover:bg-indigo-50 transition cursor-pointer"
+              title="빠른 블록 추가 및 서식 툴바를 다시 펼칩니다"
+            >
+              <span>🛠️ 빠른 블록 · 서식 도구 열기</span>
+              <span>▼</span>
+            </button>
+          </div>
+        ) : toolbarMode === 'compact' ? (
+          <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl border border-gray-200/90 bg-white/95 px-2.5 py-1.5 shadow-xs backdrop-blur-md">
+            <div className="flex flex-wrap items-center gap-1">
+              {BLOCK_TYPE_META.map((item) => {
+                const shortLabel =
+                  item.type === 'h1'
+                    ? 'H1'
+                    : item.type === 'h2'
+                    ? 'H2'
+                    : item.type === 'h3'
+                    ? 'H3'
+                    : item.type === 'colab'
+                    ? 'Colab'
+                    : item.type === 'vpython'
+                    ? '3D'
+                    : item.type === 'simulation'
+                    ? '실험'
+                    : item.type === 'quiz'
+                    ? '퀴즈'
+                    : item.label.split(' ')[0];
+                return (
+                  <button
+                    key={item.type}
+                    type="button"
+                    onClick={() => handleQuickAddBlock(item.type)}
+                    className="inline-flex items-center gap-0.5 rounded-md border border-gray-200/90 bg-gray-50/80 px-1.5 py-0.5 text-[11px] font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
+                    title={`${item.label} — ${item.desc}`}
+                  >
+                    <span className="text-blue-600">{item.badge}</span>
+                    <span>{shortLabel}</span>
+                  </button>
+                );
+              })}
+
+              <span className="mx-0.5 h-3.5 w-px bg-gray-200 select-none" />
+
+              {/* 미니 인라인 서식 아이콘 버튼 */}
               <button
-                key={item.type}
                 type="button"
-                onClick={() => {
-                  if (item.type === 'image') {
-                    const newImgBlock: NotionBlock = {
-                      id: createBlockId(),
-                      type: 'image',
-                      content: '',
-                      imageUrl: '',
-                      caption: '',
-                      images: [],
-                      imageSize: 'md',
-                    };
-                    onChange([...blocks, newImgBlock]);
-                  } else if (item.type === 'table') {
-                    const newTableBlock: NotionBlock = {
-                      id: createBlockId(),
-                      type: 'table',
-                      content: '',
-                      tableRows: createDefaultTableRows(3, 3),
-                      hasTableHeader: true,
-                    };
-                    onChange([...blocks, newTableBlock]);
-                    focusTableCell(newTableBlock.id, 0, 0);
-                  } else if (item.type === 'quiz') {
-                    const newQuizBlock: NotionBlock = {
-                      id: createBlockId(),
-                      type: 'quiz',
-                      content: '',
-                      quizData: createDefaultQuizData('multiple_choice'),
-                    };
-                    onChange([...blocks, newQuizBlock]);
-                  } else {
-                    const newBlock: NotionBlock = {
-                      id: createBlockId(),
-                      type: item.type,
-                      content:
-                        item.type === 'mermaid'
-                          ? MERMAID_TEMPLATES[0].code
-                          : item.type === 'simulation'
-                          ? SIMULATION_TEMPLATES[0].code
-                          : item.type === 'colab'
-                          ? COLAB_TEMPLATES[0].code
-                          : '',
-                      caption:
-                        item.type === 'simulation'
-                          ? SIMULATION_TEMPLATES[0].caption
-                          : item.type === 'colab'
-                          ? COLAB_TEMPLATES[0].caption
-                          : undefined,
-                      icon: item.type === 'callout' ? '💡' : undefined,
-                      language: item.type === 'code' ? 'python' : undefined,
-                    };
-                    onChange([...blocks, newBlock]);
-                    focusBlock(newBlock.id);
-                  }
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyFormatToFocusedBlock('**');
                 }}
-                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50/80 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
-                title={item.desc}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white text-[11px] font-black text-gray-900 hover:bg-gray-100 transition cursor-pointer"
+                title="진하게 (단축키: Ctrl+B)"
               >
-                <span className="text-blue-600">{item.badge}</span>
-                <span>{item.label.split(' ')[0]}</span>
+                B
               </button>
-            ))}
-          </div>
-
-          <span className="text-[11px] font-medium text-gray-400 hidden 2xl:inline">
-            💡 빈 줄에 <kbd className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600">/</kbd>{' '}
-            입력 시 표·코드블록·순서도·시뮬레이션·사진 즉시 선택
-          </span>
-        </div>
-
-        {/* 노션 스타일 인라인 서식 단축키 바 (Ctrl+B 진하게 / Ctrl+E 형광펜 / Ctrl+U 밑줄 등) */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-gray-400 mr-1">
-              글자 강조 단축키:
-            </span>
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyFormatToFocusedBlock('**');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
-              title="드래그한 텍스트를 진하게 표시합니다 (단축키: Ctrl + B)"
-            >
-              <span className="font-black text-gray-950">B</span>
-              <span>진하게</span>
-              <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
-                Ctrl+B
-              </kbd>
-            </button>
-
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyFormatToFocusedBlock('==');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50/80 px-2.5 py-1 text-xs font-bold text-amber-950 hover:bg-amber-100 transition cursor-pointer shadow-2xs"
-              title="드래그한 텍스트에 형광펜 강조 표시를 합니다 (단축키: Ctrl + E)"
-            >
-              <span className="rounded bg-yellow-300/90 px-1 text-[11px] font-extrabold text-gray-900">
-                🖍️ 형광펜
-              </span>
-              <kbd className="rounded bg-white/90 px-1 py-0.5 font-mono text-[10px] font-semibold text-amber-800">
-                Ctrl+E
-              </kbd>
-            </button>
-
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyFormatToFocusedBlock('++');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
-              title="드래그한 텍스트에 밑줄을 긋습니다 (단축키: Ctrl + U)"
-            >
-              <span className="underline decoration-2 underline-offset-2 font-bold">
-                U 밑줄
-              </span>
-              <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
-                Ctrl+U
-              </kbd>
-            </button>
-
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyFormatToFocusedBlock('*');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
-              title="드래그한 텍스트를 기울임꼴로 표시합니다 (단축키: Ctrl + I)"
-            >
-              <span className="italic font-serif font-bold">I 기울임</span>
-              <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
-                Ctrl+I
-              </kbd>
-            </button>
-
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyFormatToFocusedBlock('`');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 transition cursor-pointer shadow-2xs"
-              title="드래그한 텍스트를 인라인 코드 배지로 감쌉니다"
-            >
-              <span className="font-mono text-[11px] bg-gray-100 px-1 rounded">
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyFormatToFocusedBlock('==');
+                }}
+                className="inline-flex h-6 items-center justify-center rounded-md border border-amber-300 bg-amber-50 px-1.5 text-[11px] font-extrabold text-amber-950 hover:bg-amber-100 transition cursor-pointer"
+                title="형광펜 강조 (단축키: Ctrl+E)"
+              >
+                🖍️
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyFormatToFocusedBlock('++');
+                }}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white text-[11px] font-bold underline decoration-2 text-gray-800 hover:bg-gray-100 transition cursor-pointer"
+                title="밑줄 (단축키: Ctrl+U)"
+              >
+                U
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyFormatToFocusedBlock('*');
+                }}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white text-[11px] italic font-serif font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer"
+                title="기울임 (단축키: Ctrl+I)"
+              >
+                I
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyFormatToFocusedBlock('`');
+                }}
+                className="inline-flex h-6 items-center justify-center rounded-md border border-gray-200 bg-white px-1.5 font-mono text-[10px] font-bold text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                title="인라인 코드 배지"
+              >
                 `코드`
-              </span>
-            </button>
+              </button>
+
+              <span className="mx-0.5 h-3.5 w-px bg-gray-200 select-none" />
+
+              {/* 미니 다단 조립 버튼 */}
+              <button
+                type="button"
+                onClick={() =>
+                  triggerSideBySideImageUpload(activeFocusedIdx, 'right')
+                }
+                className="inline-flex items-center gap-0.5 rounded-md border border-indigo-200 bg-indigo-50/80 px-1.5 py-0.5 text-[11px] font-bold text-indigo-800 hover:bg-indigo-100 transition cursor-pointer"
+                title="현재 선택한 블록 바로 오른쪽 옆에 사진을 나란히 넣습니다"
+              >
+                <span>🖼️옆사진</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => addSideBySideBlock(activeFocusedIdx, 'p', 'right')}
+                className="inline-flex items-center gap-0.5 rounded-md border border-indigo-200 bg-white px-1.5 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer"
+                title="현재 선택한 블록 바로 오른쪽 옆에 설명글을 나란히 추가합니다"
+              >
+                <span>📝옆글</span>
+              </button>
+            </div>
+
+            {/* 우측: [?] 도움말 팝오버 + 상세 펼치기 / 숨기기 토글 */}
+            <div className="flex shrink-0 items-center gap-1">
+              <div className="group/help relative">
+                <span
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-[11px] font-extrabold text-gray-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 cursor-help select-none"
+                  title="단축키 및 가로 다단 조립 도움말"
+                >
+                  ?
+                </span>
+                <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-40 hidden w-80 space-y-1.5 rounded-xl border border-slate-700 bg-slate-900/95 p-3 text-[11px] leading-relaxed text-slate-100 shadow-xl group-hover/help:block">
+                  <div>
+                    💡 빈 줄에 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-amber-300">/</kbd> 입력 시 표·코드·순서도·시뮬레이션 즉시 선택
+                  </div>
+                  <div>
+                    ✨ 텍스트 드래그 후 <strong className="text-amber-300">Ctrl+B</strong>(진하게), <strong className="text-amber-300">Ctrl+E</strong>(형광펜), <strong className="text-amber-300">Ctrl+U</strong>(밑줄)
+                  </div>
+                  <div>
+                    📐 블록을 다른 블록의 <strong className="text-indigo-300">왼쪽·오른쪽 끝</strong>으로 드래그해 나란히 조립하고, <strong className="text-indigo-300">경계선 · 우측 끝 핸들(↔)</strong>로 폭을 조절하세요!
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setToolbarMode('expanded')}
+                className="rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+                title="글자 강조 단축키와 다단 조립 도구를 넓게 펼쳐서 봅니다"
+              >
+                ▼ 상세
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolbarMode('minimized')}
+                className="rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-bold text-gray-500 hover:bg-gray-200 hover:text-gray-800 transition cursor-pointer"
+                title="상단 툴바를 접어 입력 화면을 넓게 사용합니다"
+              >
+                ▲ 접기
+              </button>
+            </div>
           </div>
+        ) : (
+          <div className="space-y-2 rounded-2xl border border-gray-200/90 bg-white/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-gray-400 mr-1">
+                  블록 빠른 추가:
+                </span>
+                {BLOCK_TYPE_META.map((item) => (
+                  <button
+                    key={item.type}
+                    type="button"
+                    onClick={() => handleQuickAddBlock(item.type)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50/80 px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition cursor-pointer"
+                    title={item.desc}
+                  >
+                    <span className="text-blue-600">{item.badge}</span>
+                    <span>{item.label.split(' ')[0]}</span>
+                  </button>
+                ))}
+              </div>
 
-          <span className="text-[11px] text-gray-500">
-            ✨ 텍스트를 드래그한 뒤 <strong className="text-gray-700">Ctrl+B</strong>(진하게) 또는{' '}
-            <strong className="text-amber-700">Ctrl+E</strong>(형광펜)를 누르면 다른 줄로 이동 시 기호 없이 바로 적용됩니다
-          </span>
-        </div>
+              <div className="flex items-center gap-1">
+                <div className="group/help relative">
+                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-[11px] font-extrabold text-gray-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 cursor-help select-none">
+                    ?
+                  </span>
+                  <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-40 hidden w-80 space-y-1.5 rounded-xl border border-slate-700 bg-slate-900/95 p-3 text-[11px] leading-relaxed text-slate-100 shadow-xl group-hover/help:block">
+                    <div>
+                      💡 빈 줄에 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-amber-300">/</kbd> 입력 시 표·코드·순서도·시뮬레이션 즉시 선택
+                    </div>
+                    <div>
+                      ✨ 텍스트 드래그 후 <strong className="text-amber-300">Ctrl+B</strong>(진하게), <strong className="text-amber-300">Ctrl+E</strong>(형광펜), <strong className="text-amber-300">Ctrl+U</strong>(밑줄)
+                    </div>
+                    <div>
+                      📐 블록을 다른 블록의 <strong className="text-indigo-300">왼쪽·오른쪽 끝</strong>으로 드래그해 나란히 조립하고, <strong className="text-indigo-300">경계선 · 우측 끝 핸들(↔)</strong>로 폭을 조절하세요!
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setToolbarMode('compact')}
+                  className="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                >
+                  ▲ 1줄 슬림 바
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToolbarMode('minimized')}
+                  className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-200 transition cursor-pointer"
+                >
+                  ✕ 숨기기
+                </button>
+              </div>
+            </div>
 
-        {/* 블록 가로 조립(글·코드·사진 나란히 배치) 및 드래그 폭 조절 빠른 액션 바 */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-indigo-700 mr-1">
-              📐 가로 다단 · 폭 조립:
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                triggerSideBySideImageUpload(activeFocusedIdx, 'right')
-              }
-              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2.5 py-1 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition cursor-pointer shadow-2xs"
-              title="현재 선택한 블록(글·코드·콜아웃·수식 등) 바로 오른쪽 옆에 사진을 나란히 넣습니다"
-            >
-              <span>🖼️ 현재 블록 옆에 사진 넣기</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => addSideBySideBlock(activeFocusedIdx, 'p', 'right')}
-              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
-              title="현재 블록의 오른쪽 열에 설명글 단락을 나란히 추가합니다"
-            >
-              <span>📝 옆에 설명글 추가</span>
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                addSideBySideBlock(activeFocusedIdx, 'code', 'right')
-              }
-              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
-              title="현재 블록의 오른쪽 열에 코드블록을 나란히 추가합니다"
-            >
-              <span>💻 옆에 코드블록 추가</span>
-            </button>
-            <button
-              type="button"
-              disabled={activeFocusedIdx <= 0}
-              onClick={() => joinBlockWithPrevRow(activeFocusedIdx)}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-40 transition cursor-pointer shadow-2xs"
-              title="현재 블록을 바로 위에 있는 블록의 오른쪽 옆 열로 합쳐서 나란히 배치합니다"
-            >
-              <span>⬆️ 위 블록 옆으로 합치기</span>
-            </button>
+            {/* 노션 스타일 인라인 서식 단축키 바 + 가로 다단 조립 통합 행 */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-gray-400 mr-1">
+                  글자 강조:
+                </span>
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyFormatToFocusedBlock('**');
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+                  title="드래그한 텍스트를 진하게 표시합니다 (단축키: Ctrl + B)"
+                >
+                  <span className="font-black text-gray-950">B</span>
+                  <span>진하게</span>
+                  <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
+                    Ctrl+B
+                  </kbd>
+                </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyFormatToFocusedBlock('==');
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50/80 px-2 py-0.5 text-xs font-bold text-amber-950 hover:bg-amber-100 transition cursor-pointer shadow-2xs"
+                  title="드래그한 텍스트에 형광펜 강조 표시를 합니다 (단축키: Ctrl + E)"
+                >
+                  <span className="rounded bg-yellow-300/90 px-1 text-[11px] font-extrabold text-gray-900">
+                    🖍️ 형광펜
+                  </span>
+                  <kbd className="rounded bg-white/90 px-1 py-0.5 font-mono text-[10px] font-semibold text-amber-800">
+                    Ctrl+E
+                  </kbd>
+                </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyFormatToFocusedBlock('++');
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+                  title="드래그한 텍스트에 밑줄을 긋습니다 (단축키: Ctrl + U)"
+                >
+                  <span className="underline decoration-2 underline-offset-2 font-bold">
+                    U 밑줄
+                  </span>
+                  <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
+                    Ctrl+U
+                  </kbd>
+                </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyFormatToFocusedBlock('*');
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs font-bold text-gray-800 hover:bg-gray-100 transition cursor-pointer shadow-2xs"
+                  title="드래그한 텍스트를 기울임꼴로 표시합니다 (단축키: Ctrl + I)"
+                >
+                  <span className="italic font-serif font-bold">I 기울임</span>
+                  <kbd className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] font-semibold text-gray-500">
+                    Ctrl+I
+                  </kbd>
+                </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applyFormatToFocusedBlock('`');
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition cursor-pointer shadow-2xs"
+                  title="드래그한 텍스트를 인라인 코드 배지로 감쌉니다"
+                >
+                  <span className="font-mono text-[11px] bg-gray-100 px-1 rounded">
+                    `코드`
+                  </span>
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-indigo-700 mr-1">
+                  📐 가로 다단:
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    triggerSideBySideImageUpload(activeFocusedIdx, 'right')
+                  }
+                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/80 px-2 py-0.5 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition cursor-pointer shadow-2xs"
+                >
+                  <span>🖼️ 옆에 사진 넣기</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addSideBySideBlock(activeFocusedIdx, 'p', 'right')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2 py-0.5 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
+                >
+                  <span>📝 옆에 설명글</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    addSideBySideBlock(activeFocusedIdx, 'code', 'right')
+                  }
+                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2 py-0.5 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition cursor-pointer shadow-2xs"
+                >
+                  <span>💻 옆에 코드블록</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={activeFocusedIdx <= 0}
+                  onClick={() => joinBlockWithPrevRow(activeFocusedIdx)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-40 transition cursor-pointer shadow-2xs"
+                >
+                  <span>⬆️ 위 블록 옆으로 합치기</span>
+                </button>
+              </div>
+            </div>
           </div>
-
-          <span className="text-[11px] text-gray-500">
-            💡 블록/사진을 다른 블록의 <strong className="text-indigo-700">왼쪽·오른쪽 끝</strong>으로 드래그해 나란히 조립하고, <strong className="text-indigo-700">경계선 · 우측 끝 핸들(↔)</strong>을 드래그해 가로 폭을 늘려보세요!
-          </span>
-        </div>
+        )}
       </div>
 
       {/* 실시간 가로 폭 드래그 리사이즈 상태 배지 */}
