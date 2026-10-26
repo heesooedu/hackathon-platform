@@ -443,10 +443,10 @@ export default function ColabRunnerBlock({
     } catch {
       // clipboard fallback ignored
     }
-    const targetUrl =
-      externalUrl && externalUrl.trim()
-        ? externalUrl.trim()
-        : 'https://colab.new';
+    const trimmedUrl = externalUrl?.trim() || '';
+    const targetUrl = /^https?:\/\//i.test(trimmedUrl)
+      ? trimmedUrl
+      : 'https://colab.new';
     window.open(targetUrl, '_blank', 'noopener,noreferrer');
   }
 

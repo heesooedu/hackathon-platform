@@ -25,10 +25,10 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
     redirect('/login');
   }
 
-  // 클래스 정보 조회
+  // 클래스 정보 조회 (필요한 최소 프로필 항목만 조회)
   const { data: classData, error: classError } = await supabase
     .from('classes')
-    .select('*, teacher:teacher_id(*)')
+    .select('*, teacher:teacher_id(id, name, role)')
     .eq('id', classId)
     .single();
 
@@ -61,12 +61,16 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
     .map((l) => parseLessonMaterial(l).sourceMaterialId)
     .filter((id): id is string => Boolean(id));
 
-  // 참여 학생 목록 조회
-  const { data: members } = await supabase
-    .from('class_members')
-    .select('id, joined_at, student:student_id(id, name, avatar_url, role)')
-    .eq('class_id', classId)
-    .order('joined_at', { ascending: false });
+  // 참여 학생 목록 조회 (교사에게만 조회 및 표시하여 학생 간 실명/참여일 노출 차단)
+  let members: { id: string; joined_at: string; student: unknown }[] | null = null;
+  if (isTeacher) {
+    const { data: memberRows } = await supabase
+      .from('class_members')
+      .select('id, joined_at, student:student_id(id, name, role)')
+      .eq('class_id', classId)
+      .order('joined_at', { ascending: false });
+    members = memberRows;
+  }
 
   const teacherProfile = classData.teacher as unknown as Profile;
 
@@ -150,10 +154,10 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
         </div>
       )}
 
-      {/* 메인 2열 그리드: 레슨 목록 & 참여 학생 목록 */}
-      <div className="grid gap-8 lg:grid-cols-3">
-        {/* 왼쪽 2열: 레슨 목록 영역 (드래그 앤 드롭 순서 변경 지원) */}
-        <div className="lg:col-span-2">
+      {/* 메인 그리드: 교사는 레슨 목록 + 참여 학생 명단, 학생은 레슨 목록만 표시 */}
+      <div className={isTeacher ? 'grid gap-8 lg:grid-cols-3' : 'space-y-8'}>
+        {/* 왼쪽 2열(교사) 또는 전체(학생): 레슨 목록 영역 */}
+        <div className={isTeacher ? 'lg:col-span-2' : ''}>
           <LessonListWithReorder
             classId={classId}
             initialLessons={lessons}
@@ -161,44 +165,46 @@ export default async function ClassDetailPage({ params }: ClassDetailPageProps) 
           />
         </div>
 
-        {/* 오른쪽 1열: 참여 학생 명단 */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-gray-200 pb-3">
-            <h2 className="text-lg font-bold text-gray-900">참여 학생 명단</h2>
-            <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-600">
-              {members?.length || 0}명
-            </span>
-          </div>
+        {/* 오른쪽 1열: 참여 학생 명단 (교사 전용) */}
+        {isTeacher && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-gray-200 pb-3">
+              <h2 className="text-lg font-bold text-gray-900">참여 학생 명단</h2>
+              <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-600">
+                {members?.length || 0}명
+              </span>
+            </div>
 
-          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm divide-y divide-gray-50 max-h-96 overflow-y-auto">
-            {members && members.length > 0 ? (
-              members.map((m) => {
-                const student = m.student as unknown as Profile;
-                return (
-                  <div key={m.id} className="flex items-center justify-between py-2.5">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-700">
-                        {student?.name?.charAt(0) || '학'}
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {student?.name || '익명 학생'}
+            <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm divide-y divide-gray-50 max-h-96 overflow-y-auto">
+              {members && members.length > 0 ? (
+                members.map((m) => {
+                  const student = m.student as unknown as Profile;
+                  return (
+                    <div key={m.id} className="flex items-center justify-between py-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-700">
+                          {student?.name?.charAt(0) || '학'}
                         </div>
-                        <div className="text-xs text-gray-400">
-                          {new Date(m.joined_at).toLocaleDateString('ko-KR')} 참여
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {student?.name || '익명 학생'}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            {new Date(m.joined_at).toLocaleDateString('ko-KR')} 참여
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="py-8 text-center text-sm text-gray-400">
-                아직 참여한 학생이 없습니다.
-              </div>
-            )}
+                  );
+                })
+              ) : (
+                <div className="py-8 text-center text-sm text-gray-400">
+                  아직 참여한 학생이 없습니다.
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

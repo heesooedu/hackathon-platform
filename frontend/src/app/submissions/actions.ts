@@ -27,11 +27,23 @@ export async function submitLearningStatus(formData: FormData) {
     redirect('/login');
   }
 
-  // 1. 레슨 마감 상태 검사
+  // 1. 수강생 소속 및 레슨 마감 상태 검사
+  const { data: membership } = await supabase
+    .from('class_members')
+    .select('id')
+    .eq('class_id', classId)
+    .eq('student_id', user.id)
+    .single();
+
+  if (!membership) {
+    return { error: '이 클래스에 참여 중인 학생만 제출할 수 있습니다.' };
+  }
+
   const { data: lesson, error: lessonError } = await supabase
     .from('lessons')
-    .select('status, deadline')
+    .select('status, deadline, class_id')
     .eq('id', lessonId)
+    .eq('class_id', classId)
     .single();
 
   if (lessonError || !lesson) {

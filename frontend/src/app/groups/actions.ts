@@ -23,6 +23,16 @@ export async function createQuestionGroup(formData: FormData) {
     redirect('/login');
   }
 
+  // 교사 권한 확인
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+  if (!classData || classData.teacher_id !== user.id) {
+    return { error: '선생님만 대표 질문을 묶을 수 있습니다.' };
+  }
+
   // 1. 대표 질문 그룹 생성
   const { data: group, error: groupError } = await supabase
     .from('question_groups')
@@ -71,10 +81,20 @@ export async function toggleGroupResolved(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+  if (!classData || classData.teacher_id !== user.id) {
+    return { error: '선생님만 질문 해결 상태를 변경할 수 있습니다.' };
+  }
+
   const { error } = await supabase
     .from('question_groups')
     .update({ is_resolved: !currentStatus })
-    .eq('id', groupId);
+    .eq('id', groupId)
+    .eq('lesson_id', lessonId);
 
   if (error) {
     return { error: '상태 변경 중 오류: ' + error.message };
@@ -97,6 +117,27 @@ export async function createAnswer(formData: FormData) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
+
+  // 해당 학급의 담당 교사 또는 수강 학생인지 확인
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  const isTeacher = classData?.teacher_id === user.id;
+  if (!isTeacher) {
+    const { data: membership } = await supabase
+      .from('class_members')
+      .select('id')
+      .eq('class_id', classId)
+      .eq('student_id', user.id)
+      .single();
+
+    if (!membership) {
+      return { error: '소속된 학급의 질문에만 답변을 작성할 수 있습니다.' };
+    }
+  }
 
   const { error } = await supabase.from('answers').insert({
     group_id: groupId,
@@ -123,6 +164,15 @@ export async function toggleAnswerChecked(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+  if (!classData || classData.teacher_id !== user.id) {
+    return { error: '선생님만 답변 검증 상태를 변경할 수 있습니다.' };
+  }
+
   const { error } = await supabase
     .from('answers')
     .update({ is_teacher_checked: !currentStatus })
@@ -143,6 +193,27 @@ export async function requestAiCluster(
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  // 해당 레슨의 담당 교사인지 확인 (학생의 무단 AI 호출 차단)
+  const { data: lessonData } = await supabase
+    .from('lessons')
+    .select('id, class_id')
+    .eq('id', lessonId)
+    .single();
+
+  if (!lessonData) {
+    return { success: false, error: '레슨 정보를 찾을 수 없습니다.' };
+  }
+
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', lessonData.class_id)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 AI 질문 묶기 추천을 실행할 수 있습니다.' };
+  }
 
   const { data: submissions } = await supabase
     .from('submissions')

@@ -81,13 +81,23 @@ CREATE POLICY "classes_delete_policy"
   TO authenticated
   USING (teacher_id = auth.uid());
 
--- 6. class_members RLS 정책
--- ★ 중요: class_members에서는 classes 테이블을 다시 조회하지 않으므로 순환 참조가 100% 원천 차단됩니다.
+-- 6. class_members RLS 정책 (SECURITY DEFINER 보조 함수로 순환 참조 없이 최소 권한 적용)
+CREATE OR REPLACE FUNCTION public.is_class_teacher(p_class_id UUID)
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.classes
+    WHERE id = p_class_id AND teacher_id = auth.uid()
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public;
+
 CREATE POLICY "class_members_select_policy"
   ON public.class_members
   FOR SELECT
   TO authenticated
-  USING (true);
+  USING (
+    student_id = auth.uid()
+    OR public.is_class_teacher(class_id)
+  );
 
 CREATE POLICY "class_members_delete_policy"
   ON public.class_members

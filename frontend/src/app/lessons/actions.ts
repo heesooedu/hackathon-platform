@@ -3,7 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
-import { analyzeMaterialAndGenerateQuizWithGemini } from '@/utils/gemini';
+import {
+  analyzeMaterialAndGenerateQuizWithGemini,
+  generateInlineQuizFromContextWithGemini,
+} from '@/utils/gemini';
 import { parseUploadedDocument } from '@/utils/documentParser';
 import {
   parseLessonMaterial,
@@ -20,9 +23,96 @@ import {
   MaterialType,
   AiLessonAnalysisResult,
   GeneratedQuizDraft,
+  QuizQuestionType,
 } from '@/types/database.types';
+import {
+  QUIZ_GROUP_PREFIX,
+  INLINE_QUIZ_GROUP_PREFIX,
+  checkShortAnswerMatch,
+} from '@/utils/quizHelper';
+import {
+  markdownToBlocks,
+  blocksToMarkdown,
+  InlineQuizBlockData,
+  createInlineQuizId,
+  createBlockId,
+} from '@/utils/notionBlocks';
 
-import { QUIZ_GROUP_PREFIX } from '@/utils/quizHelper';
+/**
+ * 교안 마크다운 내 ```quiz 블록들을 해당 수업(lessonId)의 question_groups([__INLINE_QUIZ__]) 레코드와 동기화합니다.
+ * - 교사 권한으로 교안을 저장/배포할 때 자동으로 호출되어, 학생들이 기존 RLS 정책 아래에서도
+ *   인라인 퀴즈 풀이(answers)를 안전하게 제출할 수 있게 보장합니다.
+ * - 기존 quizId와 매칭되는 그룹은 ID를 유지한 채 내용만 업데이트하여 학생 풀이 기록을 보존합니다.
+ */
+export async function syncInlineQuizGroupsForLesson(
+  lessonId: string,
+  markdownContent: string
+): Promise<void> {
+  if (!lessonId) return;
+  try {
+    const supabase = await createClient();
+    const blocks = markdownToBlocks(markdownContent || '');
+    const quizBlocks = blocks.filter((b) => b.type === 'quiz' && b.quizData);
+
+    const { data: existingGroups } = await supabase
+      .from('question_groups')
+      .select('id, representative_title, representative_content')
+      .eq('lesson_id', lessonId);
+
+    const existingInlineGroups = (existingGroups || []).filter((g) =>
+      g.representative_title.startsWith(INLINE_QUIZ_GROUP_PREFIX)
+    );
+
+    const existingByQuizId = new Map<string, { id: string }>();
+    for (const g of existingInlineGroups) {
+      try {
+        const parsed = JSON.parse(g.representative_content);
+        if (parsed.inline_block_id) {
+          existingByQuizId.set(String(parsed.inline_block_id), { id: g.id });
+        }
+      } catch {
+        // ignore malformed
+      }
+    }
+
+    for (let idx = 0; idx < quizBlocks.length; idx++) {
+      const qData = quizBlocks[idx].quizData!;
+      const repTitle = `${INLINE_QUIZ_GROUP_PREFIX}체크포인트 Q${idx + 1}. ${qData.questionText}`;
+      const repContent = JSON.stringify({
+        inline_block_id: qData.quizId,
+        question_type: qData.questionType,
+        question_text: qData.questionText,
+        options: qData.options,
+        correct_option_index: qData.correctOptionIndex,
+        answer_text: qData.answerText || '',
+        explanation: qData.explanation || '',
+        target_concept: qData.targetConcept || '핵심 개념 확인',
+      });
+
+      const matched = existingByQuizId.get(qData.quizId);
+      if (matched) {
+        await supabase
+          .from('question_groups')
+          .update({
+            representative_title: repTitle,
+            representative_content: repContent,
+            is_published: true,
+          })
+          .eq('id', matched.id);
+      } else {
+        await supabase.from('question_groups').insert({
+          lesson_id: lessonId,
+          representative_title: repTitle,
+          representative_content: repContent,
+          is_published: true,
+          is_resolved: false,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Error syncing inline quiz groups for lesson:', err);
+  }
+}
 
 function generateLibraryJoinCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -42,6 +132,17 @@ export async function ensureTeacherMaterialLibrary(
   teacherId: string
 ): Promise<{ libraryClassId: string | null; error?: string }> {
   const supabase = await createClient();
+
+  // 교사 역할 확인 (학생 계정이 교안 보관함을 생성하지 못하도록 차단)
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', teacherId)
+    .single();
+
+  if (!profile || profile.role !== 'teacher') {
+    return { libraryClassId: null, error: '선생님 계정만 교안 보관함을 사용할 수 있습니다.' };
+  }
 
   const { data: allTeacherClasses, error: classErr } = await supabase
     .from('classes')
@@ -201,6 +302,8 @@ async function syncMasterToAllClassLessons(
         material_html: syncedSerialized || null,
       })
       .eq('id', classLesson.id);
+
+    await syncInlineQuizGroupsForLesson(classLesson.id, masterParsed.markdownContent);
   }
 }
 
@@ -208,9 +311,33 @@ async function syncMasterToAllClassLessons(
  * 1. 워드(.docx), 한글(.hwp, .hwpx), 마크다운(.md), 텍스트(.txt) 파일에서 교안 본문 추출 서버 액션
  */
 export async function parseMaterialFileAction(formData: FormData) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: '로그인이 필요합니다.' };
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  if (!profile || profile.role !== 'teacher') {
+    return { success: false, error: '선생님 계정만 교안 문서를 업로드할 수 있습니다.' };
+  }
+
   const file = formData.get('file') as File | null;
   if (!file) {
     return { success: false, error: '파일이 선택되지 않았습니다.' };
+  }
+
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB 제한
+  if (file.size > MAX_FILE_SIZE) {
+    return { success: false, error: '파일 크기는 10MB 이하여야 합니다.' };
   }
 
   try {
@@ -459,16 +586,24 @@ async function deployMaterialToClassesInternal(
       sourceMaterialId: masterLesson.id,
     });
 
-    const { error: insertErr } = await supabase.from('lessons').insert({
-      class_id: classId,
-      title: masterLesson.title,
-      learning_objective: masterLesson.learning_objective,
-      deadline,
-      status: 'open',
-      material_html: linkedSerialized || null,
-    });
+    const { data: insertedLesson, error: insertErr } = await supabase
+      .from('lessons')
+      .insert({
+        class_id: classId,
+        title: masterLesson.title,
+        learning_objective: masterLesson.learning_objective,
+        deadline,
+        status: 'open',
+        material_html: linkedSerialized || null,
+      })
+      .select('id')
+      .single();
 
-    if (!insertErr) {
+    if (!insertErr && insertedLesson?.id) {
+      await syncInlineQuizGroupsForLesson(
+        insertedLesson.id,
+        masterParsed.markdownContent
+      );
       deployedCount++;
       revalidatePath(`/classes/${classId}`);
     }
@@ -658,7 +793,12 @@ export async function deleteMasterMaterialAction(
     .select('id, name, join_code')
     .eq('teacher_id', user.id);
 
-  const normalClassIds = (teacherClasses || [])
+  if (!teacherClasses || teacherClasses.length === 0) {
+    return { success: false, error: '교안을 삭제할 권한이 없습니다.' };
+  }
+
+  const allTeacherClassIds = teacherClasses.map((c) => c.id);
+  const normalClassIds = teacherClasses
     .filter((c) => !isMaterialLibraryClass(c))
     .map((c) => c.id);
 
@@ -689,7 +829,11 @@ export async function deleteMasterMaterialAction(
     }
   }
 
-  const { error } = await supabase.from('lessons').delete().eq('id', materialId);
+  const { error } = await supabase
+    .from('lessons')
+    .delete()
+    .eq('id', materialId)
+    .in('class_id', allTeacherClassIds);
   if (error) {
     return { success: false, error: '교안 삭제 중 오류: ' + error.message };
   }
@@ -858,6 +1002,8 @@ export async function createLesson(formData: FormData) {
     return { error: '레슨 개설 중 오류가 발생했습니다: ' + lessonError?.message };
   }
 
+  await syncInlineQuizGroupsForLesson(newLesson.id, materialMarkdown);
+
   revalidatePath('/materials');
   revalidatePath(`/classes/${classId}`);
   redirect(`/classes/${classId}/lessons/${newLesson.id}`);
@@ -950,6 +1096,8 @@ export async function updateLessonAction(formData: FormData) {
   if (updateError) {
     return { error: '레슨 수정 중 오류가 발생했습니다: ' + updateError.message };
   }
+
+  await syncInlineQuizGroupsForLesson(lessonId, materialMarkdown);
 
   // 연결된 원본 교안(sourceMaterialId)이 있으면 원본 및 다른 분반(B·C·D반)도 동기화
   if (existingParsed.sourceMaterialId) {
@@ -1111,12 +1259,23 @@ export async function toggleLessonStatus(
     redirect('/login');
   }
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { error: '담당 선생님만 수업 상태를 변경할 수 있습니다.' };
+  }
+
   const newStatus: LessonStatus = currentStatus === 'open' ? 'closed' : 'open';
 
   const { error } = await supabase
     .from('lessons')
     .update({ status: newStatus })
-    .eq('id', lessonId);
+    .eq('id', lessonId)
+    .eq('class_id', classId);
 
   if (error) {
     return { error: '상태 변경 중 오류: ' + error.message };
@@ -1145,11 +1304,23 @@ export async function requestAiLessonReview(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  // 교사 권한 확인 (학생 계정의 무단 AI 분석 호출 차단)
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 AI 수업 진단 리포트를 실행할 수 있습니다.' };
+  }
+
   // 1. 레슨 교안 원문 조회
   const { data: lessonData } = await supabase
     .from('lessons')
     .select('*')
     .eq('id', lessonId)
+    .eq('class_id', classId)
     .single();
 
   if (!lessonData) {
@@ -1225,10 +1396,21 @@ export async function applyMaterialPatchAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 교안 보충 패치를 적용할 수 있습니다.' };
+  }
+
   const { data: lessonData, error: fetchErr } = await supabase
     .from('lessons')
     .select('*')
     .eq('id', lessonId)
+    .eq('class_id', classId)
     .single();
 
   if (fetchErr || !lessonData) {
@@ -1308,10 +1490,21 @@ export async function removeMaterialPatchAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 교안 보충 패치를 삭제할 수 있습니다.' };
+  }
+
   const { data: lessonData } = await supabase
     .from('lessons')
     .select('*')
     .eq('id', lessonId)
+    .eq('class_id', classId)
     .single();
 
   if (!lessonData) {
@@ -1403,10 +1596,21 @@ export async function updateLessonMaterialAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 교안을 수정할 수 있습니다.' };
+  }
+
   const { data: lessonData } = await supabase
     .from('lessons')
     .select('*')
     .eq('id', lessonId)
+    .eq('class_id', classId)
     .single();
 
   if (!lessonData) {
@@ -1436,6 +1640,8 @@ export async function updateLessonMaterialAction(
   if (error) {
     return { success: false, error: '교안 수정 중 오류가 발생했습니다: ' + error.message };
   }
+
+  await syncInlineQuizGroupsForLesson(lessonId, nextMarkdown);
 
   if (parsed.sourceMaterialId) {
     const { data: masterData } = await supabase
@@ -1486,10 +1692,21 @@ export async function clearLessonMaterialAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 교안을 삭제할 수 있습니다.' };
+  }
+
   const { data: lessonData } = await supabase
     .from('lessons')
     .select('*')
     .eq('id', lessonId)
+    .eq('class_id', classId)
     .single();
 
   const existingParsed = lessonData ? parseLessonMaterial(lessonData as Lesson) : null;
@@ -1535,6 +1752,16 @@ export async function publishFormativeQuizzesAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return { success: false, error: '담당 선생님만 형성평가를 배포할 수 있습니다.' };
+  }
 
   if (!quizzes || quizzes.length === 0) {
     return { success: false, error: '배포할 문항이 없습니다.' };
@@ -1582,25 +1809,70 @@ export async function publishFormativeQuizzesAction(
 }
 
 /**
- * 9. 학생의 형성평가 문항 풀이 제출 및 즉시 채점 기록
+ * 9. 학생의 형성평가 문항 풀이 제출 및 서버 측 즉시 채점 기록
  */
 export async function submitQuizAnswerAction(
   lessonId: string,
   classId: string,
   quizId: string,
   selectedOptionIndex: number,
-  isCorrect: boolean
-): Promise<{ success: boolean; error?: string }> {
+  _clientIsCorrect?: boolean
+): Promise<{ success: boolean; isCorrect?: boolean; error?: string }> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
+  // 1. 해당 클래스 구성원인지 확인
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData) {
+    return { success: false, error: '클래스 정보를 찾을 수 없습니다.' };
+  }
+
+  if (classData.teacher_id !== user.id) {
+    const { data: membership } = await supabase
+      .from('class_members')
+      .select('id')
+      .eq('class_id', classId)
+      .eq('student_id', user.id)
+      .single();
+
+    if (!membership) {
+      return { success: false, error: '소속된 클래스의 형성평가만 응시할 수 있습니다.' };
+    }
+  }
+
+  // 2. 클라이언트 채점값을 신뢰하지 않고 서버에서 실제 정답(correct_option_index)을 직접 대조하여 채점
+  const { data: quizGroup, error: quizFetchErr } = await supabase
+    .from('question_groups')
+    .select('id, representative_title, representative_content')
+    .eq('id', quizId)
+    .eq('lesson_id', lessonId)
+    .single();
+
+  if (quizFetchErr || !quizGroup || !quizGroup.representative_title.startsWith(QUIZ_GROUP_PREFIX)) {
+    return { success: false, error: '유효하지 않은 형성평가 문항입니다.' };
+  }
+
+  let serverIsCorrect = false;
+  try {
+    const parsedQuiz = JSON.parse(quizGroup.representative_content);
+    const correctIndex = Number(parsedQuiz.correct_option_index ?? 0);
+    serverIsCorrect = Number(selectedOptionIndex) === correctIndex;
+  } catch {
+    return { success: false, error: '문항 정보를 확인할 수 없습니다.' };
+  }
+
   const payloadStr = JSON.stringify({
     __type: 'QUIZ_ATTEMPT',
-    selected_option_index: selectedOptionIndex,
-    is_correct: isCorrect,
+    selected_option_index: Number(selectedOptionIndex),
+    is_correct: serverIsCorrect,
   });
 
   const { data: existingAnswers } = await supabase
@@ -1612,7 +1884,10 @@ export async function submitQuizAnswerAction(
   if (existingAnswers && existingAnswers.length > 0) {
     const { error } = await supabase
       .from('answers')
-      .update({ content: payloadStr })
+      .update({
+        content: payloadStr,
+        is_teacher_checked: serverIsCorrect,
+      })
       .eq('id', existingAnswers[0].id);
 
     if (error) {
@@ -1623,7 +1898,7 @@ export async function submitQuizAnswerAction(
       group_id: quizId,
       author_id: user.id,
       content: payloadStr,
-      is_teacher_checked: isCorrect,
+      is_teacher_checked: serverIsCorrect,
     });
 
     if (error) {
@@ -1632,5 +1907,305 @@ export async function submitQuizAnswerAction(
   }
 
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
-  return { success: true };
+  return { success: true, isCorrect: serverIsCorrect };
+}
+
+/**
+ * 10. 노션 블록 에디터 내에서 위쪽 교안 문맥을 기반으로 인라인 퀴즈 1문항(객관식/OX/단답형) AI 자동 생성
+ */
+export async function generateInlineQuizDraftAction(
+  contextText: string,
+  questionType: QuizQuestionType,
+  learningObjective?: string
+): Promise<{
+  success: boolean;
+  quiz?: Omit<InlineQuizBlockData, 'quizId'>;
+  usedAi?: boolean;
+  error?: string;
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { success: false, error: '로그인이 필요합니다.' };
+  }
+
+  return generateInlineQuizFromContextWithGemini(
+    contextText,
+    questionType,
+    learningObjective
+  );
+}
+
+/**
+ * 11. 교안 내 인라인 체크포인트 퀴즈(/퀴즈 블록) 학생 풀이 제출 및 서버 채점·DB 기록
+ */
+export async function submitInlineQuizAttemptAction(
+  lessonId: string,
+  classId: string,
+  inlineQuiz: InlineQuizBlockData,
+  payload: {
+    selectedOptionIndex?: number;
+    submittedText?: string;
+  }
+): Promise<{
+  success: boolean;
+  isCorrect?: boolean;
+  persisted?: boolean;
+  error?: string;
+}> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  if (!lessonId || !classId) {
+    return { success: false, error: '수업 정보가 올바르지 않습니다.' };
+  }
+
+  // 1. 해당 클래스 구성원인지 확인
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData) {
+    return { success: false, error: '클래스 정보를 찾을 수 없습니다.' };
+  }
+
+  if (classData.teacher_id !== user.id) {
+    const { data: membership } = await supabase
+      .from('class_members')
+      .select('id')
+      .eq('class_id', classId)
+      .eq('student_id', user.id)
+      .single();
+
+    if (!membership) {
+      return { success: false, error: '소속된 클래스의 퀴즈만 응시할 수 있습니다.' };
+    }
+  }
+
+  // 2. 레슨 원문에서 해당 quizId 블록의 실제 정답 정보 조회 (서버 측 신뢰성 보장)
+  let authoritativeQuiz: InlineQuizBlockData = inlineQuiz;
+  const { data: lessonRow } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', lessonId)
+    .single();
+
+  if (lessonRow) {
+    const parsedMat = parseLessonMaterial(lessonRow as Lesson);
+    const blocks = markdownToBlocks(parsedMat.markdownContent || '');
+    const foundBlock = blocks.find(
+      (b) => b.type === 'quiz' && b.quizData?.quizId === inlineQuiz.quizId
+    );
+    if (foundBlock?.quizData) {
+      authoritativeQuiz = foundBlock.quizData;
+    }
+  }
+
+  // 3. question_groups에서 [__INLINE_QUIZ__] 그룹 조회 (없으면 생성 시도)
+  const { data: existingGroups } = await supabase
+    .from('question_groups')
+    .select('id, representative_title, representative_content')
+    .eq('lesson_id', lessonId);
+
+  let targetGroupId: string | null = null;
+  for (const g of existingGroups || []) {
+    if (!g.representative_title.startsWith(INLINE_QUIZ_GROUP_PREFIX)) continue;
+    try {
+      const parsed = JSON.parse(g.representative_content);
+      if (parsed.inline_block_id === authoritativeQuiz.quizId) {
+        targetGroupId = g.id;
+        break;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!targetGroupId) {
+    const repTitle = `${INLINE_QUIZ_GROUP_PREFIX}체크포인트. ${authoritativeQuiz.questionText}`;
+    const repContent = JSON.stringify({
+      inline_block_id: authoritativeQuiz.quizId,
+      question_type: authoritativeQuiz.questionType,
+      question_text: authoritativeQuiz.questionText,
+      options: authoritativeQuiz.options,
+      correct_option_index: authoritativeQuiz.correctOptionIndex,
+      answer_text: authoritativeQuiz.answerText || '',
+      explanation: authoritativeQuiz.explanation || '',
+      target_concept: authoritativeQuiz.targetConcept || '핵심 개념 확인',
+    });
+
+    const { data: createdGroup } = await supabase
+      .from('question_groups')
+      .insert({
+        lesson_id: lessonId,
+        representative_title: repTitle,
+        representative_content: repContent,
+        is_published: true,
+        is_resolved: false,
+      })
+      .select('id')
+      .single();
+
+    if (createdGroup?.id) {
+      targetGroupId = createdGroup.id;
+    }
+  }
+
+  // 4. 서버 측 정답 채점 (객관식 / OX / 단답형)
+  let serverIsCorrect = false;
+  if (authoritativeQuiz.questionType === 'short_answer') {
+    serverIsCorrect = checkShortAnswerMatch(
+      payload.submittedText || '',
+      authoritativeQuiz.answerText || ''
+    );
+  } else {
+    serverIsCorrect =
+      Number(payload.selectedOptionIndex) ===
+      Number(authoritativeQuiz.correctOptionIndex ?? 0);
+  }
+
+  // 5. DB(answers)에 학생 풀이 기록 저장/업데이트
+  let persisted = false;
+  if (targetGroupId) {
+    const answerPayload = JSON.stringify({
+      __type: 'QUIZ_ATTEMPT',
+      selected_option_index:
+        typeof payload.selectedOptionIndex === 'number'
+          ? payload.selectedOptionIndex
+          : -1,
+      submitted_text:
+        typeof payload.submittedText === 'string'
+          ? payload.submittedText.trim()
+          : undefined,
+      is_correct: serverIsCorrect,
+    });
+
+    const { data: existingAnswers } = await supabase
+      .from('answers')
+      .select('id')
+      .eq('group_id', targetGroupId)
+      .eq('author_id', user.id);
+
+    if (existingAnswers && existingAnswers.length > 0) {
+      const { error } = await supabase
+        .from('answers')
+        .update({
+          content: answerPayload,
+          is_teacher_checked: serverIsCorrect,
+        })
+        .eq('id', existingAnswers[0].id);
+      if (!error) persisted = true;
+    } else {
+      const { error } = await supabase.from('answers').insert({
+        group_id: targetGroupId,
+        author_id: user.id,
+        content: answerPayload,
+        is_teacher_checked: serverIsCorrect,
+      });
+      if (!error) persisted = true;
+    }
+  }
+
+  revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
+  return {
+    success: true,
+    isCorrect: serverIsCorrect,
+    persisted,
+  };
+}
+
+/**
+ * 12. 사후 AI 진단 스튜디오에서 생성된 형성평가 문항을 교안 본문 하단 인라인 `/퀴즈` 블록으로 원클릭 추가
+ * - 원본 교안(Master Library) 및 연동된 다른 분반(B·C·D반) 교안에도 자동 동기화됩니다.
+ */
+export async function appendQuizToMaterialBlockAction(
+  lessonId: string,
+  classId: string,
+  quizDraft: GeneratedQuizDraft
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: '로그인이 필요합니다.' };
+
+  const { data: classData } = await supabase
+    .from('classes')
+    .select('teacher_id')
+    .eq('id', classId)
+    .single();
+
+  if (!classData || classData.teacher_id !== user.id) {
+    return {
+      success: false,
+      error: '담당 선생님만 교안에 인라인 퀴즈 블록을 추가할 수 있습니다.',
+    };
+  }
+
+  const { data: lessonData } = await supabase
+    .from('lessons')
+    .select('*')
+    .eq('id', lessonId)
+    .eq('class_id', classId)
+    .single();
+
+  if (!lessonData) {
+    return { success: false, error: '레슨 정보를 찾을 수 없습니다.' };
+  }
+
+  const parsed = parseLessonMaterial(lessonData as Lesson);
+  const existingBlocks = markdownToBlocks(parsed.markdownContent || '');
+
+  const newQuizBlockData: InlineQuizBlockData = {
+    quizId: createInlineQuizId(),
+    questionType: quizDraft.question_type || 'multiple_choice',
+    questionText: quizDraft.question_text,
+    options:
+      Array.isArray(quizDraft.options) && quizDraft.options.length > 0
+        ? quizDraft.options
+        : ['보기 1', '보기 2', '보기 3', '보기 4'],
+    correctOptionIndex:
+      typeof quizDraft.correct_option_index === 'number'
+        ? quizDraft.correct_option_index
+        : 0,
+    answerText: quizDraft.answer_text || '',
+    explanation: quizDraft.explanation || '',
+    targetConcept: quizDraft.target_concept || '핵심 오개념 점검',
+  };
+
+  // 만약 기존 교안이 비어있다면 기본 빈 단락을 제거하고 추가
+  const cleanBlocks =
+    existingBlocks.length === 1 &&
+    existingBlocks[0].type === 'p' &&
+    !existingBlocks[0].content.trim()
+      ? []
+      : existingBlocks;
+
+  const nextBlocks = [
+    ...cleanBlocks,
+    {
+      id: createBlockId(),
+      type: 'quiz' as const,
+      content: newQuizBlockData.questionText,
+      quizData: newQuizBlockData,
+    },
+  ];
+
+  const nextMarkdown = blocksToMarkdown(nextBlocks);
+
+  return updateLessonMaterialAction(
+    lessonId,
+    classId,
+    'markdown',
+    nextMarkdown,
+    parsed.htmlContent,
+    parsed.fileName
+  );
 }

@@ -570,7 +570,11 @@ export default function VPythonRunnerBlock({
     } catch {
       // ignore
     }
-    window.open(externalUrl || 'https://www.glowscript.org/', '_blank', 'noopener,noreferrer')
+    const trimmedUrl = externalUrl?.trim() || ''
+    const safeUrl = /^https?:\/\//i.test(trimmedUrl)
+      ? trimmedUrl
+      : 'https://www.glowscript.org/'
+    window.open(safeUrl, '_blank', 'noopener,noreferrer')
   }
 
   return (

@@ -14,19 +14,22 @@ import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview from '@/components/SimulationBlockPreview';
 import ColabRunnerBlock from '@/components/ColabRunnerBlock';
 import VPythonRunnerBlock from '@/components/VPythonRunnerBlock';
+import InlineQuizBlockView from '@/components/InlineQuizBlockView';
 import {
   updateLessonMaterialAction,
   clearLessonMaterialAction,
   removeMaterialPatchAction,
   parseMaterialFileAction,
 } from '@/app/lessons/actions';
-import { MaterialType } from '@/types/database.types';
+import { FormativeQuiz, MaterialType } from '@/types/database.types';
 
 interface LessonMaterialViewerProps {
   lessonId: string;
   classId: string;
   isTeacher: boolean;
   material: ParsedLessonMaterial;
+  currentUserId?: string;
+  inlineQuizzesMap?: Record<string, FormativeQuiz>;
 }
 
 /**
@@ -102,7 +105,21 @@ export function renderInlineMarkdown(text: string): React.ReactNode[] {
  * 노션 스타일 교안 블록 렌더러
  * (제목 H1~H3, 콜아웃 박스, 인용구/제시문, 드래그 앤 드롭 이미지 및 캡션, 글머리 기호, 구분선 지원)
  */
-export function SimpleMarkdownRenderer({ content }: { content: string }) {
+export function SimpleMarkdownRenderer({
+  content,
+  lessonId,
+  classId,
+  currentUserId,
+  isTeacher = false,
+  inlineQuizzesMap,
+}: {
+  content: string;
+  lessonId?: string;
+  classId?: string;
+  currentUserId?: string;
+  isTeacher?: boolean;
+  inlineQuizzesMap?: Record<string, FormativeQuiz>;
+}) {
   const blocks = markdownToBlocks(content);
 
   return (
@@ -268,6 +285,23 @@ export function SimpleMarkdownRenderer({ content }: { content: string }) {
           );
         }
 
+        if (block.type === 'quiz') {
+          const rawJson = block.quizData
+            ? JSON.stringify(block.quizData)
+            : block.content;
+          return (
+            <InlineQuizBlockView
+              key={block.id}
+              rawJson={rawJson}
+              lessonId={lessonId}
+              classId={classId}
+              currentUserId={currentUserId}
+              isTeacher={isTeacher}
+              inlineQuizzesMap={inlineQuizzesMap}
+            />
+          );
+        }
+
         if (block.type === 'table') {
           const rows = block.tableRows || [];
           if (rows.length === 0) return null;
@@ -414,6 +448,8 @@ export default function LessonMaterialViewer({
   classId,
   isTeacher,
   material,
+  currentUserId,
+  inlineQuizzesMap,
 }: LessonMaterialViewerProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [isExpandedWide, setIsExpandedWide] = useState(true);
@@ -755,7 +791,14 @@ export default function LessonMaterialViewer({
       {/* 1. 노션 페이지 스타일 교안 뷰어 */}
       {!isEditing && material.markdownContent.trim() ? (
         <div className="rounded-2xl border border-gray-200 bg-white p-6 sm:p-8 shadow-xs">
-          <SimpleMarkdownRenderer content={material.markdownContent} />
+          <SimpleMarkdownRenderer
+            content={material.markdownContent}
+            lessonId={lessonId}
+            classId={classId}
+            currentUserId={currentUserId}
+            isTeacher={isTeacher}
+            inlineQuizzesMap={inlineQuizzesMap}
+          />
         </div>
       ) : !isEditing &&
         material.materialType === 'html' &&
@@ -821,7 +864,14 @@ export default function LessonMaterialViewer({
               </div>
 
               <div className="pt-1">
-                <SimpleMarkdownRenderer content={patch.content_markdown} />
+                <SimpleMarkdownRenderer
+                  content={patch.content_markdown}
+                  lessonId={lessonId}
+                  classId={classId}
+                  currentUserId={currentUserId}
+                  isTeacher={isTeacher}
+                  inlineQuizzesMap={inlineQuizzesMap}
+                />
               </div>
             </div>
           ))}

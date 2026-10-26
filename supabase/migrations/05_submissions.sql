@@ -66,23 +66,35 @@ CREATE POLICY "submissions_insert_policy"
     )
   );
 
--- (3) 수정: 학생 본인만 수정 가능
+-- (3) 수정: 학생 본인만 수업이 열려 있을 때(마감 전) 수정 가능
 CREATE POLICY "submissions_update_policy"
   ON public.submissions
   FOR UPDATE
   TO authenticated
   USING (
     student_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.lessons l
+      WHERE l.id = submissions.lesson_id
+        AND l.status = 'open'
+        AND (l.deadline IS NULL OR l.deadline > now())
+    )
   )
   WITH CHECK (
     student_id = auth.uid()
   );
 
--- (4) 삭제: 학생 본인만 삭제 가능
+-- (4) 삭제: 학생 본인만 수업이 열려 있을 때 삭제 가능
 CREATE POLICY "submissions_delete_policy"
   ON public.submissions
   FOR DELETE
   TO authenticated
   USING (
     student_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.lessons l
+      WHERE l.id = submissions.lesson_id
+        AND l.status = 'open'
+        AND (l.deadline IS NULL OR l.deadline > now())
+    )
   );

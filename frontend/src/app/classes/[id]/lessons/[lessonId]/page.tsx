@@ -30,10 +30,10 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     redirect('/login');
   }
 
-  // 1. 클래스 정보 조회
+  // 1. 클래스 정보 조회 (필요한 최소 프로필 정보만 조회)
   const { data: classData, error: classError } = await supabase
     .from('classes')
-    .select('*, teacher:teacher_id(*)')
+    .select('*, teacher:teacher_id(id, name, role)')
     .eq('id', classId)
     .single();
 
@@ -55,25 +55,38 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   const lesson = lessonData as Lesson;
   const parsedMaterial = parseLessonMaterial(lesson);
   const isTeacher = classData.teacher_id === user.id;
+  // 학생 브라우저에는 교사용 AI 진단 리포트(aiAnalysis) 및 내부 원본 ID가 직렬화되지 않도록 제거
+  const viewerMaterial = isTeacher
+    ? parsedMaterial
+    : {
+        ...parsedMaterial,
+        aiAnalysis: null,
+        sourceMaterialId: null,
+      };
   const isDeadlinePassed = lesson.deadline
     ? new Date(lesson.deadline) < new Date()
     : false;
   const isClosed = lesson.status === 'closed' || isDeadlinePassed;
 
-  // 3. 해당 레슨의 전체 제출물 조회
+  // 3. 해당 레슨의 전체 제출물 조회 (교사만 작성자 실명 프로필 조회)
   const { data: allSubmissionsData } = await supabase
     .from('submissions')
-    .select('*, student:student_id(id, name, avatar_url, role)')
+    .select(
+      isTeacher
+        ? '*, student:student_id(id, name, role)'
+        : 'id, lesson_id, student_id, type, content, created_at, updated_at'
+    )
     .eq('lesson_id', lessonId)
     .order('created_at', { ascending: false });
 
-  const allSubmissions = (allSubmissionsData || []) as unknown as Submission[];
+  const rawSubmissions = (allSubmissionsData || []) as unknown as Submission[];
 
-  // 4. 대표 질문 그룹 및 배포된 형성평가 목록 조회
+  // 4. 대표 질문 그룹 및 배포된 형성평가 목록 조회 (교사만 답변 작성자 실명 프로필 조회)
   const { data: groupsData } = await supabase
     .from('question_groups')
     .select(
-      `
+      isTeacher
+        ? `
       *,
       members:question_group_members(
         id,
@@ -81,7 +94,22 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
       ),
       answers(
         *,
-        author:profiles(*)
+        author:profiles(id, name, role)
+      )
+    `
+        : `
+      *,
+      members:question_group_members(
+        id,
+        submission:submissions(id, lesson_id, type, content, created_at)
+      ),
+      answers(
+        id,
+        group_id,
+        author_id,
+        content,
+        is_teacher_checked,
+        created_at
       )
     `
     )
@@ -89,11 +117,15 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     .order('created_at', { ascending: false });
 
   const rawGroups = (groupsData || []) as unknown as QuestionGroup[];
-  const { normalGroups, publishedQuizzes } = separateGroupsAndQuizzes(rawGroups);
+  const separated = separateGroupsAndQuizzes(rawGroups);
 
-  // 5. 교사용 / 학생용 특화 데이터
+  // 5. 교사용 / 학생용 특화 데이터 및 학생 화면용 개인정보 비식별화(Sanitization)
   let totalClassStudents = 0;
   let mySubmission: Submission | null = null;
+  let allSubmissions: Submission[] = rawSubmissions;
+  let normalGroups: QuestionGroup[] = separated.normalGroups;
+  let publishedQuizzes = separated.publishedQuizzes;
+  let inlineQuizzesMap = separated.inlineQuizzesMap;
 
   if (isTeacher) {
     const { count } = await supabase
@@ -102,7 +134,60 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
       .eq('class_id', classId);
     totalClassStudents = count || 0;
   } else {
-    mySubmission = allSubmissions.find((s) => s.student_id === user.id) || null;
+    mySubmission = rawSubmissions.find((s) => s.student_id === user.id) || null;
+
+    // 다른 학생의 제출물 고유번호(student_id) 및 프로필이 학생 브라우저로 전달되지 않도록 마스킹
+    allSubmissions = rawSubmissions.map((s) => ({
+      ...s,
+      student_id: s.student_id === user.id ? user.id : 'anonymous',
+      student: undefined,
+    }));
+
+    // 대표 질문 내 묶인 질문 및 동료 답변에서도 타 학생 고유번호/실명 제거
+    normalGroups = separated.normalGroups.map((g) => ({
+      ...g,
+      members: (g.members || [])
+        .filter((m) => Boolean(m.submission))
+        .map((m) => ({
+          ...m,
+          submission: {
+            ...m.submission,
+            student_id: 'anonymous',
+            student: undefined,
+          },
+        })),
+      answers: (g.answers || []).map((ans) => ({
+        ...ans,
+        author_id: ans.author_id === user.id ? user.id : 'anonymous',
+        author: undefined,
+      })),
+    }));
+
+    // 형성평가(퀴즈)에서는 본인 풀이 기록만 남기고 다른 학생의 점수·선택지·실명 기록 제거
+    publishedQuizzes = separated.publishedQuizzes.map((q) => ({
+      ...q,
+      attempts: (q.attempts || [])
+        .filter((a) => a.student_id === user.id)
+        .map((a) => ({
+          ...a,
+          student: undefined,
+        })),
+    }));
+
+    // 교안 인라인 체크포인트 퀴즈에서도 본인 풀이 기록만 남기고 다른 학생 기록 제거
+    const sanitizedInlineMap: typeof separated.inlineQuizzesMap = {};
+    for (const [blockId, iq] of Object.entries(separated.inlineQuizzesMap)) {
+      sanitizedInlineMap[blockId] = {
+        ...iq,
+        attempts: (iq.attempts || [])
+          .filter((a) => a.student_id === user.id)
+          .map((a) => ({
+            ...a,
+            student: undefined,
+          })),
+      };
+    }
+    inlineQuizzesMap = sanitizedInlineMap;
   }
 
   return (
@@ -194,7 +279,9 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         lessonId={lesson.id}
         classId={classId}
         isTeacher={isTeacher}
-        material={parsedMaterial}
+        material={viewerMaterial}
+        currentUserId={user.id}
+        inlineQuizzesMap={inlineQuizzesMap}
       />
 
       {/* 4. 본문 영역: 교사는 탭 전환 지원, 학생은 형성평가 + 제출 폼 + 질문 보드 */}

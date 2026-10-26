@@ -125,52 +125,137 @@ CREATE POLICY "groups_delete_policy"
     )
   );
 
--- 7. question_group_members RLS 정책
+-- 7. question_group_members RLS 정책 (소속 학급 구성원만 조회, 교사만 묶기/해제 가능)
 CREATE POLICY "group_members_select_policy"
   ON public.question_group_members
   FOR SELECT
   TO authenticated
-  USING (true);
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = question_group_members.group_id AND (
+        c.teacher_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.class_members cm
+          WHERE cm.class_id = c.id AND cm.student_id = auth.uid()
+        )
+      )
+    )
+  );
 
 CREATE POLICY "group_members_insert_policy"
   ON public.question_group_members
   FOR INSERT
   TO authenticated
-  WITH CHECK (true);
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = question_group_members.group_id AND c.teacher_id = auth.uid()
+    )
+  );
 
 CREATE POLICY "group_members_delete_policy"
   ON public.question_group_members
   FOR DELETE
   TO authenticated
-  USING (true);
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = question_group_members.group_id AND c.teacher_id = auth.uid()
+    )
+  );
 
 -- 8. answers RLS 정책
--- (1) 조회: 같은 반 구성원 누구나 조회 가능
+-- (1) 조회: 같은 반 구성원만 조회 가능하며, 형성평가([__QUIZ__]) 답안은 본인과 담당 교사만 조회 가능
 CREATE POLICY "answers_select_policy"
   ON public.answers
   FOR SELECT
   TO authenticated
-  USING (true);
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = answers.group_id
+        AND (
+          c.teacher_id = auth.uid()
+          OR (
+            EXISTS (
+              SELECT 1 FROM public.class_members cm
+              WHERE cm.class_id = c.id AND cm.student_id = auth.uid()
+            )
+            AND (
+              qg.representative_title NOT LIKE '[__QUIZ__]%'
+              OR answers.author_id = auth.uid()
+            )
+          )
+        )
+    )
+  );
 
--- (2) 생성: 학생 및 교사 본인 작성
+-- (2) 생성: 해당 학급 소속 학생 또는 담당 교사 본인만 작성
 CREATE POLICY "answers_insert_policy"
   ON public.answers
   FOR INSERT
   TO authenticated
-  WITH CHECK (author_id = auth.uid());
+  WITH CHECK (
+    author_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = answers.group_id AND (
+        c.teacher_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.class_members cm
+          WHERE cm.class_id = c.id AND cm.student_id = auth.uid()
+        )
+      )
+    )
+  );
 
--- (3) 수정: 교사(is_teacher_checked 토글 등) 또는 본인 작성자
+-- (3) 수정: 담당 교사(검증 도장 토글) 또는 작성자 본인(퀴즈 재응시 등)만 가능
 CREATE POLICY "answers_update_policy"
   ON public.answers
   FOR UPDATE
   TO authenticated
-  USING (true)
-  WITH CHECK (true);
+  USING (
+    author_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = answers.group_id AND c.teacher_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    author_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = answers.group_id AND c.teacher_id = auth.uid()
+    )
+  );
 
--- (4) 삭제: 본인 작성자만 삭제
+-- (4) 삭제: 본인 작성자 또는 담당 교사만 삭제
 CREATE POLICY "answers_delete_policy"
   ON public.answers
   FOR DELETE
   TO authenticated
-  USING (author_id = auth.uid());
+  USING (
+    author_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.question_groups qg
+      JOIN public.lessons l ON l.id = qg.lesson_id
+      JOIN public.classes c ON c.id = l.class_id
+      WHERE qg.id = answers.group_id AND c.teacher_id = auth.uid()
+    )
+  );
 

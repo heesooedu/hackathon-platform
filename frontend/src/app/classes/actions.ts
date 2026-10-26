@@ -28,6 +28,17 @@ export async function createClass(formData: FormData) {
     redirect('/login');
   }
 
+  // 교사 역할 확인 (학생 계정의 클래스 개설 차단)
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  if (!profile || profile.role !== 'teacher') {
+    return { error: '선생님 계정만 클래스를 개설할 수 있습니다.' };
+  }
+
   // 중복되지 않는 코드 생성 시도 (최대 3회)
   let classId: string | null = null;
   let attempts = 0;

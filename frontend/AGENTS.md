@@ -8,6 +8,7 @@ The first release is an MVP for validating the classroom learning loop. Prefer a
 ## Repository & Project Structure
 - All frontend Next.js code lives under the `frontend/` directory. Commands (`npm run dev`, `npm install`, etc.) must run in `frontend/`.
 - Root contains configuration, `.gitignore`, `.venv/` (for optional Python backend/scripts), and documentation.
+- **Git Auto-Push Rule**: After completing any code or file modifications and verifying the build/types, ALWAYS stage, commit with a clear message, and push (`git add`, `git commit`, `git push`) to the remote repository immediately without waiting for a separate user prompt.
 
 ## Assumed Stack
 - **Framework**: Next.js with App Router (`frontend/src/app`)

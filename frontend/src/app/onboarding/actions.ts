@@ -20,6 +20,17 @@ export async function saveRole(formData: FormData) {
     redirect('/login');
   }
 
+  // 이미 역할이 부여된 계정이 임의로 역할을 변경(권한 상승)하는 것을 차단
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  if (existingProfile?.role === 'teacher' || existingProfile?.role === 'student') {
+    redirect('/');
+  }
+
   const updatePayload: { role: UserRole; name?: string } = { role };
   if (name && name.trim()) {
     updatePayload.name = name.trim();

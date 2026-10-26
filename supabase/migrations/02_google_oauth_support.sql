@@ -8,7 +8,7 @@ ALTER TABLE public.profiles ALTER COLUMN role DROP NOT NULL;
 ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_role_check;
 ALTER TABLE public.profiles ADD CONSTRAINT profiles_role_check CHECK (role IN ('teacher', 'student') OR role IS NULL);
 
--- 2. 신규 가입 트리거 개선 (Google OAuth의 full_name, picture 메타데이터 반영)
+-- 2. 신규 가입 트리거 개선 (Google OAuth의 full_name 반영, 불필요한 프로필 사진 picture/avatar_url은 수집 제외)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
@@ -21,14 +21,11 @@ BEGIN
       new.raw_user_meta_data->>'full_name',
       split_part(new.email, '@', 1)
     ),
-    COALESCE(
-      new.raw_user_meta_data->>'avatar_url',
-      new.raw_user_meta_data->>'picture'
-    )
+    NULL
   )
   ON CONFLICT (id) DO UPDATE SET
     name = COALESCE(EXCLUDED.name, public.profiles.name),
-    avatar_url = COALESCE(EXCLUDED.avatar_url, public.profiles.avatar_url);
+    avatar_url = NULL;
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

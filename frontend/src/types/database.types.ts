@@ -28,6 +28,7 @@ export interface ClassMember {
 
 export type LessonStatus = 'open' | 'closed';
 export type MaterialType = 'markdown' | 'html';
+export type QuizQuestionType = 'multiple_choice' | 'ox' | 'short_answer';
 
 export interface MaterialGapItem {
   id: string;
@@ -40,9 +41,11 @@ export interface MaterialGapItem {
 }
 
 export interface GeneratedQuizDraft {
+  question_type?: QuizQuestionType;
   question_text: string;
   options: string[];
   correct_option_index: number;
+  answer_text?: string;
   explanation: string;
   rationale: string;
   target_concept: string;
@@ -125,6 +128,7 @@ export interface QuizAttempt {
   lesson_id: string;
   student_id: string;
   selected_option_index: number;
+  submitted_text?: string;
   is_correct: boolean;
   created_at: string;
   student?: Profile;
@@ -133,9 +137,12 @@ export interface QuizAttempt {
 export interface FormativeQuiz {
   id: string;
   lesson_id: string;
+  inline_block_id?: string | null;
+  question_type?: QuizQuestionType;
   question_text: string;
   options: string[];
   correct_option_index: number;
+  answer_text?: string;
   explanation: string;
   rationale: string;
   target_concept?: string | null;

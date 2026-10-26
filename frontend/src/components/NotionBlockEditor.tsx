@@ -7,10 +7,16 @@ import {
   NotionImageItem,
   ImageSizeOption,
   CodeLanguage,
+  InlineQuizBlockData,
   createBlockId,
+  createInlineQuizId,
+  createDefaultQuizData,
+  blocksToMarkdown,
   getBlockImages,
   createDefaultTableRows,
 } from '@/utils/notionBlocks';
+import { QuizQuestionType } from '@/types/database.types';
+import { generateInlineQuizDraftAction } from '@/app/lessons/actions';
 import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview, {
   SIMULATION_TEMPLATES,
@@ -206,6 +212,24 @@ const BLOCK_TYPE_META: {
       '운동',
       '자바스크립트',
       '인터랙티브',
+    ],
+  },
+  {
+    type: 'quiz',
+    label: '체크포인트 퀴즈 (형성평가)',
+    desc: '교안 중간에 객관식·OX·단답형 확인 문제를 넣고 위 내용 기반으로 AI 자동 출제합니다',
+    badge: '🎯',
+    keywords: [
+      'quiz',
+      'ox',
+      'question',
+      'test',
+      '퀴즈',
+      '형성평가',
+      '문제',
+      '체크포인트',
+      '객관식',
+      '단답형',
     ],
   },
   {
@@ -425,6 +449,12 @@ export default function NotionBlockEditor({
   const [hiddenSimCodeBlockIds, setHiddenSimCodeBlockIds] = useState<
     Record<string, boolean>
   >({});
+  const [generatingQuizBlockId, setGeneratingQuizBlockId] = useState<
+    string | null
+  >(null);
+  const [quizAiNoticeByBlockId, setQuizAiNoticeByBlockId] = useState<
+    Record<string, string>
+  >({});
 
   const blockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const tableCellRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -472,6 +502,7 @@ export default function NotionBlockEditor({
       block.type === 'vpython' ||
       block.type === 'mermaid' ||
       block.type === 'simulation' ||
+      block.type === 'quiz' ||
       block.type === 'image' ||
       block.type === 'divider' ||
       block.type === 'table'
@@ -508,7 +539,8 @@ export default function NotionBlockEditor({
     if (
       newBlock.type !== 'image' &&
       newBlock.type !== 'divider' &&
-      newBlock.type !== 'table'
+      newBlock.type !== 'table' &&
+      newBlock.type !== 'quiz'
     ) {
       focusBlock(newBlock.id);
     } else if (newBlock.type === 'table') {
@@ -592,6 +624,10 @@ export default function NotionBlockEditor({
           : block.tableRows,
       hasTableHeader:
         targetType === 'table' ? block.hasTableHeader ?? true : block.hasTableHeader,
+      quizData:
+        targetType === 'quiz'
+          ? block.quizData || createDefaultQuizData('multiple_choice')
+          : block.quizData,
     });
     setSlashMenuBlockId(null);
     setSlashFilterQuery('');
@@ -600,11 +636,72 @@ export default function NotionBlockEditor({
     if (
       targetType !== 'image' &&
       targetType !== 'divider' &&
-      targetType !== 'table'
+      targetType !== 'table' &&
+      targetType !== 'quiz'
     ) {
       focusBlock(block.id);
     } else if (targetType === 'table') {
       focusTableCell(block.id, 0, 0);
+    }
+  }
+
+  async function handleGenerateAiQuizForBlock(
+    block: NotionBlock,
+    blockIdx: number,
+    overrideType?: QuizQuestionType
+  ) {
+    const currentQuizData =
+      block.quizData || createDefaultQuizData('multiple_choice');
+    const targetType = overrideType || currentQuizData.questionType;
+
+    // 현재 퀴즈 블록 앞쪽의 교안 블록들을 마크다운 문맥으로 추출 (앞쪽 블록이 없으면 전체 교안 문맥 사용)
+    const precedingBlocks = blocks
+      .slice(0, blockIdx)
+      .filter((b) => b.type !== 'quiz');
+    const fallbackBlocks = blocks.filter(
+      (b) => b.id !== block.id && b.type !== 'quiz'
+    );
+    const contextSource =
+      precedingBlocks.length > 0 ? precedingBlocks : fallbackBlocks;
+    const contextMarkdown = blocksToMarkdown(contextSource);
+
+    setGeneratingQuizBlockId(block.id);
+    setQuizAiNoticeByBlockId((prev) => ({ ...prev, [block.id]: '' }));
+
+    try {
+      const res = await generateInlineQuizDraftAction(
+        contextMarkdown,
+        targetType
+      );
+      if (res.success && res.quiz) {
+        const nextQuizData: InlineQuizBlockData = {
+          quizId: currentQuizData.quizId || createInlineQuizId(),
+          questionType: res.quiz.questionType,
+          questionText: res.quiz.questionText,
+          options: res.quiz.options,
+          correctOptionIndex: res.quiz.correctOptionIndex,
+          answerText: res.quiz.answerText,
+          explanation: res.quiz.explanation,
+          targetConcept: res.quiz.targetConcept,
+        };
+        updateBlock(block.id, {
+          content: nextQuizData.questionText,
+          quizData: nextQuizData,
+        });
+        setQuizAiNoticeByBlockId((prev) => ({
+          ...prev,
+          [block.id]: res.usedAi
+            ? '✨ 위 교안 문맥을 분석해 AI 문항을 자동으로 생성했습니다!'
+            : '✨ 위 교안 소제목/문맥을 바탕으로 맞춤형 문항 템플릿을 채웠습니다!',
+        }));
+      }
+    } catch {
+      setQuizAiNoticeByBlockId((prev) => ({
+        ...prev,
+        [block.id]: '⚠️ 문항 자동 생성 중 일시적 오류가 발생했습니다.',
+      }));
+    } finally {
+      setGeneratingQuizBlockId(null);
     }
   }
 
@@ -900,6 +997,14 @@ export default function NotionBlockEditor({
                     };
                     onChange([...blocks, newTableBlock]);
                     focusTableCell(newTableBlock.id, 0, 0);
+                  } else if (item.type === 'quiz') {
+                    const newQuizBlock: NotionBlock = {
+                      id: createBlockId(),
+                      type: 'quiz',
+                      content: '',
+                      quizData: createDefaultQuizData('multiple_choice'),
+                    };
+                    onChange([...blocks, newQuizBlock]);
                   } else {
                     const newBlock: NotionBlock = {
                       id: createBlockId(),
@@ -1070,7 +1175,8 @@ export default function NotionBlockEditor({
                   block.type !== 'vpython' &&
                   block.type !== 'mermaid' &&
                   block.type !== 'simulation' &&
-                  block.type !== 'table')
+                  block.type !== 'table' &&
+                  block.type !== 'quiz')
               }
               onDragStart={(e) => {
                 setDraggedBlockIdx(idx);
@@ -2385,6 +2491,312 @@ export default function NotionBlockEditor({
                   );
                 })()}
 
+                {/* 9-2. 교안 인라인 체크포인트 퀴즈 블록 (Quiz) */}
+                {block.type === 'quiz' && (() => {
+                  const qData: InlineQuizBlockData =
+                    block.quizData || createDefaultQuizData('multiple_choice');
+                  const qType: QuizQuestionType = qData.questionType || 'multiple_choice';
+                  const isGeneratingAi = generatingQuizBlockId === block.id;
+                  const aiNotice = quizAiNoticeByBlockId[block.id];
+
+                  const updateQuizData = (patch: Partial<InlineQuizBlockData>) => {
+                    const nextData: InlineQuizBlockData = {
+                      ...qData,
+                      ...patch,
+                    };
+                    updateBlock(block.id, {
+                      content: nextData.questionText,
+                      quizData: nextData,
+                    });
+                  };
+
+                  const handleChangeQuestionType = (nextType: QuizQuestionType) => {
+                    if (nextType === qType) return;
+                    if (nextType === 'ox') {
+                      updateQuizData({
+                        questionType: 'ox',
+                        options: ['O (맞음)', 'X (틀림)'],
+                        correctOptionIndex: qData.correctOptionIndex === 1 ? 1 : 0,
+                      });
+                    } else if (nextType === 'short_answer') {
+                      updateQuizData({
+                        questionType: 'short_answer',
+                        options: [],
+                        correctOptionIndex: 0,
+                        answerText: qData.answerText || '',
+                      });
+                    } else {
+                      updateQuizData({
+                        questionType: 'multiple_choice',
+                        options:
+                          qData.options && qData.options.length === 4
+                            ? qData.options
+                            : ['선택지 1', '선택지 2', '선택지 3', '선택지 4'],
+                        correctOptionIndex:
+                          qData.correctOptionIndex >= 0 && qData.correctOptionIndex < 4
+                            ? qData.correctOptionIndex
+                            : 0,
+                      });
+                    }
+                  };
+
+                  return (
+                    <div className="my-2.5 overflow-hidden rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/50 via-white to-violet-50/40 shadow-xs">
+                      {/* 상단 헤더 바: 유형 탭 + AI 문항 자동 채우기 */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-extrabold text-white shadow-2xs">
+                            <span>🎯</span>
+                            <span>체크포인트 퀴즈</span>
+                          </span>
+
+                          <div className="inline-flex rounded-xl border border-indigo-200 bg-white p-0.5 shadow-2xs">
+                            {(
+                              [
+                                { id: 'multiple_choice', label: '4지선다 객관식' },
+                                { id: 'ox', label: 'OX 퀴즈' },
+                                { id: 'short_answer', label: '단답형' },
+                              ] as const
+                            ).map((tab) => (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                onClick={() => handleChangeQuestionType(tab.id)}
+                                className={`rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition cursor-pointer ${
+                                  qType === tab.id
+                                    ? 'bg-indigo-600 text-white shadow-2xs'
+                                    : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
+                                }`}
+                              >
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleGenerateAiQuizForBlock(block, idx, qType)}
+                          disabled={isGeneratingAi}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-violet-300 bg-gradient-to-r from-violet-600 to-indigo-600 px-3 py-1.5 text-xs font-extrabold text-white shadow-xs hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 transition cursor-pointer"
+                          title="이 블록 위쪽에 작성된 교안 본문 내용을 분석하여 AI가 자동으로 문항·보기·해설을 채워줍니다"
+                        >
+                          <span>✨</span>
+                          <span>
+                            {isGeneratingAi
+                              ? '위 교안 맥락 분석 중...'
+                              : '위 교안 내용으로 AI 문항 자동 채우기'}
+                          </span>
+                        </button>
+                      </div>
+
+                      {aiNotice && (
+                        <div className="border-b border-indigo-100 bg-violet-50/90 px-4 py-1.5 text-[11px] font-bold text-violet-800 flex items-center justify-between">
+                          <span>💡 {aiNotice}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setQuizAiNoticeByBlockId((prev) => ({
+                                ...prev,
+                                [block.id]: '',
+                              }))
+                            }
+                            className="text-violet-500 hover:text-violet-800 text-xs font-bold cursor-pointer"
+                          >
+                            닫기
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="p-4 space-y-3.5">
+                        {/* 핵심 개념 태그 + 발문 입력 */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
+                          <div className="md:col-span-1">
+                            <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                              연계 핵심 개념 (선택)
+                            </label>
+                            <input
+                              type="text"
+                              value={qData.targetConcept || ''}
+                              onChange={(e) =>
+                                updateQuizData({ targetConcept: e.target.value })
+                              }
+                              placeholder="예: 옴의 법칙, 조건문"
+                              className="w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-gray-800 focus:border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="md:col-span-3">
+                            <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                              질문 (발문) <span className="text-rose-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={qData.questionText}
+                              onChange={(e) =>
+                                updateQuizData({ questionText: e.target.value })
+                              }
+                              placeholder="방금 읽은 교안 내용을 바탕으로 학생들에게 물어볼 체크포인트 질문을 입력하세요"
+                              className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-sm font-bold text-gray-900 focus:border-indigo-500 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        {/* 유형별 정답 및 보기 설정 */}
+                        {qType === 'multiple_choice' && (
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[11px] font-bold text-indigo-900">
+                                4지선다 보기 입력 (정답 번호를 클릭해 지정하세요)
+                              </span>
+                              <span className="text-[11px] font-extrabold text-emerald-700">
+                                현재 정답: {(qData.correctOptionIndex ?? 0) + 1}번
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {(qData.options && qData.options.length === 4
+                                ? qData.options
+                                : ['선택지 1', '선택지 2', '선택지 3', '선택지 4']
+                              ).map((opt, optIdx) => {
+                                const isCorrect = (qData.correctOptionIndex ?? 0) === optIdx;
+                                return (
+                                  <div
+                                    key={optIdx}
+                                    className={`flex items-center gap-2 rounded-xl border p-2 transition ${
+                                      isCorrect
+                                        ? 'border-emerald-400 bg-emerald-50/60 shadow-2xs'
+                                        : 'border-gray-200 bg-white'
+                                    }`}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateQuizData({ correctOptionIndex: optIdx })
+                                      }
+                                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-extrabold transition cursor-pointer ${
+                                        isCorrect
+                                          ? 'bg-emerald-600 text-white'
+                                          : 'bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700'
+                                      }`}
+                                      title="클릭하여 이 보기를 정답으로 지정"
+                                    >
+                                      {optIdx + 1}
+                                    </button>
+                                    <input
+                                      type="text"
+                                      value={opt}
+                                      onChange={(e) => {
+                                        const baseOpts =
+                                          qData.options && qData.options.length === 4
+                                            ? [...qData.options]
+                                            : ['선택지 1', '선택지 2', '선택지 3', '선택지 4'];
+                                        baseOpts[optIdx] = e.target.value;
+                                        updateQuizData({ options: baseOpts });
+                                      }}
+                                      placeholder={`선택지 ${optIdx + 1}`}
+                                      className="w-full bg-transparent text-xs font-semibold text-gray-800 focus:outline-none"
+                                    />
+                                    {isCorrect && (
+                                      <span className="shrink-0 rounded-md bg-emerald-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+                                        정답
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {qType === 'ox' && (
+                          <div>
+                            <span className="block text-[11px] font-bold text-indigo-900 mb-1.5">
+                              OX 정답 선택
+                            </span>
+                            <div className="grid grid-cols-2 gap-3">
+                              {[
+                                { idx: 0, symbol: '⭕ O (맞음)', desc: '진술이 참일 때 정답' },
+                                { idx: 1, symbol: '❌ X (틀림)', desc: '진술이 거짓일 때 정답' },
+                              ].map((item) => {
+                                const isCorrect = (qData.correctOptionIndex ?? 0) === item.idx;
+                                return (
+                                  <button
+                                    key={item.idx}
+                                    type="button"
+                                    onClick={() =>
+                                      updateQuizData({
+                                        options: ['O (맞음)', 'X (틀림)'],
+                                        correctOptionIndex: item.idx,
+                                      })
+                                    }
+                                    className={`flex items-center justify-between rounded-xl border-2 px-4 py-3 text-left transition cursor-pointer ${
+                                      isCorrect
+                                        ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 shadow-2xs'
+                                        : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-200'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="text-sm font-extrabold">{item.symbol}</div>
+                                      <div className="text-[11px] text-gray-500">{item.desc}</div>
+                                    </div>
+                                    {isCorrect && (
+                                      <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[11px] font-extrabold text-white">
+                                        정답 지정됨
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {qType === 'short_answer' && (
+                          <div>
+                            <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                              단답형 모범 정답 (복수 허용 정답은 쉼표 <code className="bg-indigo-100 px-1 rounded">,</code> 로 구분)
+                            </label>
+                            <input
+                              type="text"
+                              value={qData.answerText || ''}
+                              onChange={(e) =>
+                                updateQuizData({ answerText: e.target.value })
+                              }
+                              placeholder="예: 옴의 법칙, Ohm의 법칙 (공백/대소문자 무시하고 자동 채점됩니다)"
+                              className="w-full rounded-xl border border-emerald-300 bg-emerald-50/40 px-3.5 py-2 text-xs font-extrabold text-emerald-950 focus:border-emerald-600 focus:bg-white focus:outline-none"
+                            />
+                          </div>
+                        )}
+
+                        {/* 해설 및 힌트 */}
+                        <div>
+                          <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                            정답 해설 및 오개념 교정 피드백 (학생 채점 직후 즉시 노출)
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={qData.explanation}
+                            onChange={(e) =>
+                              updateQuizData({ explanation: e.target.value })
+                            }
+                            placeholder="학생이 문제를 푼 직후 확인하게 될 해설이나 오답 포인트를 적어주세요"
+                            className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-800 focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-indigo-100 bg-indigo-50/40 px-4 py-1.5 text-[11px] text-indigo-900/70">
+                        <span>
+                          💡 학생 화면에서는 교안 중간에 즉시 풀어볼 수 있는 인터랙티브 카드로 표시되며, 오답 시 <strong>[🙋 이 개념 바로 질문하기]</strong>가 연결됩니다.
+                        </span>
+                        <span className="font-mono text-[10px] text-indigo-400">
+                          ID: {qData.quizId}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 10. 구분선 블록 (Divider) */}
                 {block.type === 'divider' && (
                   <div className="py-3">
@@ -2823,6 +3235,7 @@ export default function NotionBlockEditor({
                   <option value="vpython">Web VPython 3D</option>
                   <option value="mermaid">순서도(Mermaid)</option>
                   <option value="simulation">시뮬레이션(HTML/JS)</option>
+                  <option value="quiz">체크포인트 퀴즈(/퀴즈)</option>
                   <option value="image">사진</option>
                   <option value="divider">구분선</option>
                 </select>

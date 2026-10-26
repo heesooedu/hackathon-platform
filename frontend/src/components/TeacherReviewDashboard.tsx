@@ -5,6 +5,7 @@ import {
   requestAiLessonReview,
   applyMaterialPatchAction,
   publishFormativeQuizzesAction,
+  appendQuizToMaterialBlockAction,
 } from '@/app/lessons/actions';
 import {
   Submission,
@@ -60,6 +61,8 @@ export default function TeacherReviewDashboard({
   // 형성평가 배포 상태
   const [publishingQuiz, setPublishingQuiz] = useState(false);
   const [quizPublishSuccess, setQuizPublishSuccess] = useState(false);
+  const [appendingQuizIdx, setAppendingQuizIdx] = useState<number | null>(null);
+  const [appendedQuizIndices, setAppendedQuizIndices] = useState<Record<number, boolean>>({});
 
   const submittedCount = submissions.length;
   const submissionRate =
@@ -156,6 +159,20 @@ export default function TeacherReviewDashboard({
       }
     } finally {
       setPublishingQuiz(false);
+    }
+  }
+
+  async function handleAppendQuizToMaterial(quiz: GeneratedQuizDraft, qIdx: number) {
+    setAppendingQuizIdx(qIdx);
+    try {
+      const res = await appendQuizToMaterialBlockAction(lessonId, classId, quiz);
+      if (res.success) {
+        setAppendedQuizIndices((prev) => ({ ...prev, [qIdx]: true }));
+      } else {
+        alert(res.error || '교안 인라인 퀴즈 블록 추가에 실패했습니다.');
+      }
+    } finally {
+      setAppendingQuizIdx(null);
     }
   }
 
@@ -639,10 +656,33 @@ export default function TeacherReviewDashboard({
                       })}
                     </div>
 
-                    {/* 해설 편집 */}
-                    <div className="rounded-xl bg-slate-50 p-3 text-xs text-gray-700">
-                      <span className="font-bold text-gray-900">💡 학생용 해설: </span>
-                      <span>{quiz.explanation}</span>
+                    {/* 해설 편집 및 교안 인라인 블록 추가 버튼 */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl bg-slate-50 p-3 text-xs text-gray-700">
+                      <div>
+                        <span className="font-bold text-gray-900">💡 학생용 해설: </span>
+                        <span>{quiz.explanation}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={appendingQuizIdx === qIdx}
+                        onClick={() => handleAppendQuizToMaterial(quiz, qIdx)}
+                        className={`shrink-0 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-extrabold transition cursor-pointer ${
+                          appendedQuizIndices[qIdx]
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                            : 'border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50'
+                        }`}
+                        title="이 문항을 교안 본문 내부의 체크포인트 퀴즈(/퀴즈) 블록으로도 즉시 삽입합니다 (원본 보관함 교안 및 연결 학급 자동 동기화)"
+                      >
+                        <span>{appendedQuizIndices[qIdx] ? '✅' : '📌'}</span>
+                        <span>
+                          {appendingQuizIdx === qIdx
+                            ? '교안 블록 추가 중...'
+                            : appendedQuizIndices[qIdx]
+                            ? '교안 본문 인라인 퀴즈로 추가됨'
+                            : '교안 본문 인라인 퀴즈 블록으로 추가'}
+                        </span>
+                      </button>
                     </div>
                   </div>
                 ))}

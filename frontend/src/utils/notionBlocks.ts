@@ -1,3 +1,5 @@
+import { QuizQuestionType } from '@/types/database.types';
+
 export type NotionBlockType =
   | 'h1'
   | 'h2'
@@ -12,6 +14,7 @@ export type NotionBlockType =
   | 'vpython'
   | 'mermaid'
   | 'simulation'
+  | 'quiz'
   | 'image'
   | 'divider';
 
@@ -20,6 +23,17 @@ export type ImageSizeOption = 'sm' | 'md' | 'full';
 export interface NotionImageItem {
   url: string;
   caption?: string;
+}
+
+export interface InlineQuizBlockData {
+  quizId: string;
+  questionType: QuizQuestionType;
+  questionText: string;
+  options: string[];
+  correctOptionIndex: number;
+  answerText: string;
+  explanation: string;
+  targetConcept: string;
 }
 
 export type CodeLanguage =
@@ -47,10 +61,59 @@ export interface NotionBlock {
   images?: NotionImageItem[]; // 가로 다단(여러 장) 이미지 배열
   tableRows?: string[][]; // 표(table) 블록의 2차원 셀 배열 (행 x 열)
   hasTableHeader?: boolean; // 표 첫 행 머리글 여부 (기본 true)
+  quizData?: InlineQuizBlockData; // 인라인 체크포인트 퀴즈 블록 데이터
 }
 
 export function createBlockId(): string {
   return `blk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function createInlineQuizId(): string {
+  return `iq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+export function createDefaultQuizData(
+  questionType: QuizQuestionType = 'multiple_choice'
+): InlineQuizBlockData {
+  if (questionType === 'ox') {
+    return {
+      quizId: createInlineQuizId(),
+      questionType: 'ox',
+      questionText: '위 개념 설명에 따르면, 조건이 참일 때만 블록 내부의 코드가 실행된다.',
+      options: ['O (맞다)', 'X (틀리다)'],
+      correctOptionIndex: 0,
+      answerText: '',
+      explanation: '조건문의 조건식이 참(True)일 때만 들여쓰기된 블록이 실행됩니다.',
+      targetConcept: '핵심 개념 OX 확인',
+    };
+  }
+  if (questionType === 'short_answer') {
+    return {
+      quizId: createInlineQuizId(),
+      questionType: 'short_answer',
+      questionText: '위 예시에서 출력되는 최종 결과값(또는 핵심 키워드)을 적어보세요.',
+      options: [],
+      correctOptionIndex: 0,
+      answerText: '정답키워드',
+      explanation: '위 개념의 핵심 원리에 따라 도출되는 결과입니다.',
+      targetConcept: '핵심 키워드 / 출력값 확인',
+    };
+  }
+  return {
+    quizId: createInlineQuizId(),
+    questionType: 'multiple_choice',
+    questionText: '방금 학습한 내용에서 가장 핵심이 되는 원리로 올바른 것은?',
+    options: [
+      '핵심 원리가 적용된 올바른 설명입니다.',
+      '자주 헷갈리기 쉬운 오개념 선지 1입니다.',
+      '자주 헷갈리기 쉬운 오개념 선지 2입니다.',
+      '조건이 반대로 설명된 오개념 선지 3입니다.',
+    ],
+    correctOptionIndex: 0,
+    answerText: '',
+    explanation: '1번 선지가 방금 다룬 핵심 개념의 정확한 설명입니다.',
+    targetConcept: '핵심 개념 점검',
+  };
 }
 
 export function getBlockImages(block: NotionBlock): NotionImageItem[] {
@@ -279,6 +342,46 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           type: 'simulation',
           caption: simCaption || '인터랙티브 실험 시뮬레이션',
           content: codeLines.join('\n'),
+        });
+      } else if (langRaw === 'quiz' || langRaw.startsWith('quiz:')) {
+        const rawJson = codeLines.join('\n').trim();
+        let quizData = createDefaultQuizData('multiple_choice');
+        try {
+          const parsed = JSON.parse(rawJson) as Partial<InlineQuizBlockData>;
+          const qType: QuizQuestionType =
+            parsed.questionType === 'ox' ||
+            parsed.questionType === 'short_answer' ||
+            parsed.questionType === 'multiple_choice'
+              ? parsed.questionType
+              : 'multiple_choice';
+
+          quizData = {
+            quizId: parsed.quizId || createInlineQuizId(),
+            questionType: qType,
+            questionText:
+              parsed.questionText || '방금 학습한 핵심 개념을 확인해 볼까요?',
+            options:
+              qType === 'ox'
+                ? ['O (맞다)', 'X (틀리다)']
+                : Array.isArray(parsed.options) && parsed.options.length >= 2
+                ? parsed.options
+                : ['보기 1', '보기 2', '보기 3', '보기 4'],
+            correctOptionIndex:
+              typeof parsed.correctOptionIndex === 'number'
+                ? parsed.correctOptionIndex
+                : 0,
+            answerText: parsed.answerText || '',
+            explanation: parsed.explanation || '정답 해설입니다.',
+            targetConcept: parsed.targetConcept || '핵심 개념 점검',
+          };
+        } catch {
+          // JSON 파싱 실패 시 기본 퀴즈 데이터 유지
+        }
+        blocks.push({
+          id: createBlockId(),
+          type: 'quiz',
+          content: quizData.questionText,
+          quizData,
         });
       } else {
         const supportedLangs: CodeLanguage[] = [
@@ -515,6 +618,7 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
     (b) =>
       b.type === 'divider' ||
       b.type === 'table' ||
+      b.type === 'quiz' ||
       (b.type === 'image' && getBlockImages(b).length > 0) ||
       b.content.trim().length > 0
   );
@@ -639,6 +743,32 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           lines.push(`\`\`\`${header}\n${b.content.trim().replace(/\r\n/g, '\n')}\n\`\`\``);
         }
         break;
+      case 'quiz': {
+        const qData = b.quizData || createDefaultQuizData('multiple_choice');
+        const normalizedQuiz: InlineQuizBlockData = {
+          quizId: qData.quizId || createInlineQuizId(),
+          questionType: qData.questionType || 'multiple_choice',
+          questionText:
+            qData.questionText.trim() ||
+            b.content.trim() ||
+            '방금 학습한 핵심 개념을 확인해 볼까요?',
+          options:
+            qData.questionType === 'ox'
+              ? ['O (맞다)', 'X (틀리다)']
+              : qData.options && qData.options.length > 0
+              ? qData.options
+              : ['보기 1', '보기 2', '보기 3', '보기 4'],
+          correctOptionIndex:
+            typeof qData.correctOptionIndex === 'number'
+              ? qData.correctOptionIndex
+              : 0,
+          answerText: qData.answerText || '',
+          explanation: qData.explanation || '정답 해설입니다.',
+          targetConcept: qData.targetConcept || '핵심 개념 점검',
+        };
+        lines.push(`\`\`\`quiz\n${JSON.stringify(normalizedQuiz, null, 2)}\n\`\`\``);
+        break;
+      }
       case 'divider':
         lines.push('---');
         break;

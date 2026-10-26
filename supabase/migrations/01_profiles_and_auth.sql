@@ -39,6 +39,7 @@ CREATE POLICY "Users can insert their own profile"
   WITH CHECK (auth.uid() = id);
 
 -- 4. 신규 회원가입 시 auth.users -> public.profiles 자동 동기화 트리거 함수
+-- (개인정보 최소수집 원칙에 따라 불필요한 프로필 사진 avatar_url은 수집하지 않음)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
@@ -47,7 +48,7 @@ BEGIN
     new.id,
     COALESCE(new.raw_user_meta_data->>'role', 'student'),
     COALESCE(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
-    new.raw_user_meta_data->>'avatar_url'
+    NULL
   );
   RETURN new;
 END;

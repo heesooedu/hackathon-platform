@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { submitLearningStatus } from '@/app/submissions/actions';
 import { Submission, SubmissionType } from '@/types/database.types';
 
@@ -59,6 +59,38 @@ export default function StudentSubmissionForm({
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [prefillBanner, setPrefillBanner] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    function handlePrefillEvent(e: Event) {
+      if (isClosed) return;
+      const customEvent = e as CustomEvent<{
+        type?: SubmissionType;
+        content?: string;
+      }>;
+      const nextType = customEvent.detail?.type || 'confusion';
+      const nextContent = customEvent.detail?.content || '';
+      setIsEditing(true);
+      setSelectedType(nextType);
+      if (nextContent) {
+        setContent((prev) =>
+          prev.trim() && !prev.includes(nextContent)
+            ? `${prev.trim()}\n\n${nextContent}`
+            : nextContent
+        );
+      }
+      setPrefillBanner(true);
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 200);
+    }
+
+    window.addEventListener('qclass:prefill-question', handlePrefillEvent);
+    return () => {
+      window.removeEventListener('qclass:prefill-question', handlePrefillEvent);
+    };
+  }, [isClosed]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -90,7 +122,10 @@ export default function StudentSubmissionForm({
   }
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+    <div
+      id="student-submission-form"
+      className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm scroll-mt-24"
+    >
       {/* 상단 헤더 */}
       <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
         <div>
@@ -109,6 +144,21 @@ export default function StudentSubmissionForm({
           </button>
         )}
       </div>
+
+      {prefillBanner && isEditing && (
+        <div className="mb-4 rounded-xl bg-indigo-50 border border-indigo-200 p-3 text-xs font-bold text-indigo-800 flex items-center justify-between gap-2">
+          <span>
+            🎯 교안 체크포인트 퀴즈에서 질문 초안이 자동으로 채워졌습니다. 자유롭게 덧붙여 제출해 보세요!
+          </span>
+          <button
+            type="button"
+            onClick={() => setPrefillBanner(false)}
+            className="text-indigo-500 hover:text-indigo-800 shrink-0 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {successMessage && (
         <div className="mb-4 rounded-xl bg-emerald-50 border border-emerald-100 p-3 text-sm text-emerald-700">
@@ -206,6 +256,7 @@ export default function StudentSubmissionForm({
                   내용 작성
                 </label>
                 <textarea
+                  ref={textareaRef}
                   rows={4}
                   required
                   value={content}
