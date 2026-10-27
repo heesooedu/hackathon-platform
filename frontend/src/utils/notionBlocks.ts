@@ -16,6 +16,8 @@ export type NotionBlockType =
   | 'simulation'
   | 'quiz'
   | 'image'
+  | 'youtube'
+  | 'link'
   | 'divider';
 
 export type ImageSizeOption = 'sm' | 'md' | 'full';
@@ -55,12 +57,14 @@ export interface NotionBlock {
   icon?: string; // callout 아이콘 (예: 💡, 📌, ⚠️)
   language?: CodeLanguage; // code 블록의 프로그래밍 언어 (기본값: 'python')
   imageUrl?: string; // 단일 image 블록의 data URL 또는 외부 URL (하위 호환)
-  caption?: string; // 단일 image, simulation, colab, vpython 블록의 제목/캡션
-  externalUrl?: string; // colab 노트북 공유 URL 또는 glowscript/trinket 외부 공유 링크
+  caption?: string; // 단일 image, simulation, colab, vpython, youtube, link 블록의 제목/캡션
+  externalUrl?: string; // colab 노트북 공유 URL, glowscript/trinket 링크, youtube 영상 URL, link 외부 주소
   imageSize?: ImageSizeOption;
   images?: NotionImageItem[]; // 가로 다단(여러 장) 이미지 배열
   tableRows?: string[][]; // 표(table) 블록의 2차원 셀 배열 (행 x 열)
   hasTableHeader?: boolean; // 표 첫 행 머리글 여부 (기본 true)
+  tableColWidths?: number[]; // 표 각 열(column)의 사용자 지정 가로 너비(px, 0이면 자동)
+  tableRowHeights?: number[]; // 표 각 행(row)의 사용자 지정 세로 높이(px, 0이면 자동)
   quizData?: InlineQuizBlockData; // 인라인 체크포인트 퀴즈 블록 데이터
   rowId?: string; // 같은 rowId를 공유하는 인접 블록들은 가로 다단(Side-by-Side Row)으로 나란히 조립됨
   widthPercent?: number; // 블록의 가로 너비 비율 (18~100%, 다단 행 내에서는 열 너비 비중, 단독 블록에서는 가로 폭 %)
@@ -226,8 +230,72 @@ export function createDefaultTableRows(rows = 3, cols = 3): string[][] {
   );
 }
 
+/**
+ * 유튜브 URL, 짧은 공유 링크(youtu.be), Shorts, Embed URL 또는 iframe 태그에서
+ * 11자리 유튜브 비디오 ID를 추출합니다.
+ */
+export function extractYouTubeVideoId(input: string): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // iframe 코드가 붙여넣어진 경우 src 추출
+  const iframeSrcMatch = trimmed.match(/src=["']([^"']+)["']/i);
+  const target = iframeSrcMatch ? iframeSrcMatch[1].trim() : trimmed;
+
+  // 11자리 순수 ID만 입력한 경우
+  if (/^[a-zA-Z0-9_-]{11}$/.test(target)) {
+    return target;
+  }
+
+  // 일반적인 YouTube URL 패턴 매칭
+  const patterns = [
+    /(?:youtube\.com\/watch\?(?:[^&#]*&)*v=)([a-zA-Z0-9_-]{11})/i,
+    /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/i,
+    /(?:youtube(?:-nocookie)?\.com\/embed\/)([a-zA-Z0-9_-]{11})/i,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/i,
+    /(?:youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/i,
+    /(?:youtube\.com\/v\/)([a-zA-Z0-9_-]{11})/i,
+  ];
+
+  for (const regex of patterns) {
+    const match = target.match(regex);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 외부 링크 URL에 프로토콜(https://)이 누락된 경우 안전하게 보정합니다.
+ */
+export function normalizeExternalUrl(raw: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  if (/^(https?:\/\/|mailto:|tel:)/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
+/**
+ * 블록 내부 텍스트의 줄바꿈(\n)을 `<br>`로 변환하면서,
+ * 줄 맨 앞/뒤의 공백(스페이스·탭)이 마크다운 파서나 `.trim()`에 의해 사라지지 않도록
+ * 제로폭 공백(\u200B) 가드로 감싸 보존합니다.
+ */
 function encodeInlineNewlines(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
+  return text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((l) => {
+      if (!l) return '\u200B';
+      const leadGuard = /^[ \t]/.test(l) ? '\u200B' : '';
+      const trailGuard = /[ \t]$/.test(l) ? '\u200B' : '';
+      return `${leadGuard}${l}${trailGuard}`;
+    })
+    .join('<br>');
 }
 
 function decodeInlineNewlines(text: string): string {
@@ -312,7 +380,12 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
 
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const blocks: NotionBlock[] = [];
-  let pendingLayout: { rowId?: string; widthPercent?: number } | null = null;
+  let pendingLayout: {
+    rowId?: string;
+    widthPercent?: number;
+    tableColWidths?: number[];
+    tableRowHeights?: number[];
+  } | null = null;
   let prevBlocksLen = 0;
 
   const applyPendingLayoutIfAny = () => {
@@ -324,6 +397,18 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           }
           if (typeof pendingLayout.widthPercent === 'number') {
             blocks[bIdx].widthPercent = pendingLayout.widthPercent;
+          }
+          if (
+            Array.isArray(pendingLayout.tableColWidths) &&
+            pendingLayout.tableColWidths.length > 0
+          ) {
+            blocks[bIdx].tableColWidths = pendingLayout.tableColWidths;
+          }
+          if (
+            Array.isArray(pendingLayout.tableRowHeights) &&
+            pendingLayout.tableRowHeights.length > 0
+          ) {
+            blocks[bIdx].tableRowHeights = pendingLayout.tableRowHeights;
           }
         }
         pendingLayout = null;
@@ -344,13 +429,15 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       continue;
     }
 
-    // 0-0. 블록 가로 다단 조립 및 가로 폭 레이아웃 메타데이터 주석 (<!--block-layout:{"rowId":"...","widthPercent":50}-->)
+    // 0-0. 블록 가로 다단 조립 및 가로 폭/표 크기 레이아웃 메타데이터 주석 (<!--block-layout:{"rowId":"...","widthPercent":50}-->)
     if (line.startsWith('<!--block-layout:') && line.endsWith('-->')) {
       const jsonStr = line.slice('<!--block-layout:'.length, -3).trim();
       try {
         const parsedLayout = JSON.parse(jsonStr) as {
           rowId?: unknown;
           widthPercent?: unknown;
+          tableColWidths?: unknown;
+          tableRowHeights?: unknown;
         };
         if (parsedLayout && typeof parsedLayout === 'object') {
           pendingLayout = {
@@ -367,6 +454,20 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
                     Math.max(15, Math.round(parsedLayout.widthPercent))
                   )
                 : undefined,
+            tableColWidths: Array.isArray(parsedLayout.tableColWidths)
+              ? parsedLayout.tableColWidths.map((n) =>
+                  typeof n === 'number' && Number.isFinite(n) && n > 0
+                    ? Math.max(48, Math.min(1200, Math.round(n)))
+                    : 0
+                )
+              : undefined,
+            tableRowHeights: Array.isArray(parsedLayout.tableRowHeights)
+              ? parsedLayout.tableRowHeights.map((n) =>
+                  typeof n === 'number' && Number.isFinite(n) && n > 0
+                    ? Math.max(28, Math.min(800, Math.round(n)))
+                    : 0
+                )
+              : undefined,
           };
         }
       } catch {
@@ -537,6 +638,43 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           type: 'quiz',
           content: quizData.questionText,
           quizData,
+        });
+      } else if (
+        langRaw === 'youtube' ||
+        langRaw.startsWith('youtube:') ||
+        langRaw === 'yt' ||
+        langRaw.startsWith('yt:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        const bodyUrl = codeLines.join('\n').trim();
+        const finalUrl = (rawUrl || bodyUrl || '').trim();
+        blocks.push({
+          id: createBlockId(),
+          type: 'youtube',
+          caption: (rawCaption || '').trim(),
+          externalUrl: finalUrl || undefined,
+          content: finalUrl,
+        });
+      } else if (
+        langRaw === 'link' ||
+        langRaw.startsWith('link:') ||
+        langRaw === 'bookmark' ||
+        langRaw.startsWith('bookmark:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        const bodyText = codeLines.join('\n').trim();
+        blocks.push({
+          id: createBlockId(),
+          type: 'link',
+          caption: (rawCaption || '').trim(),
+          externalUrl: (rawUrl || '').trim() || undefined,
+          content: bodyText,
         });
       } else {
         const supportedLangs: CodeLanguage[] = [
@@ -779,8 +917,11 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       b.type === 'quiz' ||
       b.type === 'vpython' ||
       b.type === 'colab' ||
+      b.type === 'youtube' ||
+      b.type === 'link' ||
       (b.type === 'image' && getBlockImages(b).length > 0) ||
-      b.content.trim().length > 0
+      Boolean(b.externalUrl && b.externalUrl.trim()) ||
+      b.content.length > 0
   );
   if (!hasAnyContent) {
     return '';
@@ -793,46 +934,46 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
 
     switch (b.type) {
       case 'h1':
-        if (b.content.trim()) {
-          lines.push(`# ${encodeInlineNewlines(b.content.trim())}`);
+        if (b.content.length > 0) {
+          lines.push(`# ${encodeInlineNewlines(b.content)}`);
         } else {
           lines.push('<br>');
         }
         break;
       case 'h2':
-        if (b.content.trim()) {
-          lines.push(`## ${encodeInlineNewlines(b.content.trim())}`);
+        if (b.content.length > 0) {
+          lines.push(`## ${encodeInlineNewlines(b.content)}`);
         } else {
           lines.push('<br>');
         }
         break;
       case 'h3':
-        if (b.content.trim()) {
-          lines.push(`### ${encodeInlineNewlines(b.content.trim())}`);
+        if (b.content.length > 0) {
+          lines.push(`### ${encodeInlineNewlines(b.content)}`);
         } else {
           lines.push('<br>');
         }
         break;
       case 'bullet':
-        if (b.content.trim()) {
-          lines.push(`- ${encodeInlineNewlines(b.content.trim())}`);
+        if (b.content.length > 0) {
+          lines.push(`- ${encodeInlineNewlines(b.content)}`);
         } else {
           lines.push('<br>');
         }
         break;
       case 'callout':
-        if (b.content.trim()) {
+        if (b.content.length > 0) {
           const icon = b.icon || '💡';
           lines.push(
-            `> [!CALLOUT:${icon}] ${encodeInlineNewlines(b.content.trim())}`
+            `> [!CALLOUT:${icon}] ${encodeInlineNewlines(b.content)}`
           );
         } else {
           lines.push('<br>');
         }
         break;
       case 'quote':
-        if (b.content.trim()) {
-          lines.push(`> ${encodeInlineNewlines(b.content.trim())}`);
+        if (b.content.length > 0) {
+          lines.push(`> ${encodeInlineNewlines(b.content)}`);
         } else {
           lines.push('<br>');
         }
@@ -846,7 +987,7 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         const formatRow = (row: string[]) => {
           const cells = Array.from({ length: colCount }, (_, cIdx) => {
             const raw = row[cIdx] ?? '';
-            return encodeInlineNewlines(raw.trim()).replace(/\|/g, '\\|');
+            return encodeInlineNewlines(raw).replace(/\|/g, '\\|');
           });
           return `| ${cells.join(' | ')} |`;
         };
@@ -889,6 +1030,34 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
             : '';
         lines.push(
           `\`\`\`vpython${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+        );
+        break;
+      }
+      case 'youtube': {
+        const safeTitle = (b.caption || '')
+          .replace(/[\n|]/g, ' ')
+          .trim();
+        const safeUrl = (b.externalUrl || b.content || '')
+          .replace(/\s+/g, '')
+          .trim();
+        const meta =
+          safeTitle || safeUrl
+            ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+            : '';
+        lines.push(`\`\`\`youtube${meta}\n${safeUrl}\n\`\`\``);
+        break;
+      }
+      case 'link': {
+        const safeTitle = (b.caption || '')
+          .replace(/[\n|]/g, ' ')
+          .trim();
+        const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+        const meta =
+          safeTitle || safeUrl
+            ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+            : '';
+        lines.push(
+          `\`\`\`link${meta}\n${(b.content || '').replace(/\r\n/g, '\n')}\n\`\`\``
         );
         break;
       }
@@ -955,15 +1124,16 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       }
       case 'p':
       default:
-        if (b.content.trim()) {
+        if (b.content.length > 0) {
           const pLines = b.content
             .replace(/\r\n/g, '\n')
             .split('\n')
             .map((l) => {
-              const trimmed = l.trim();
-              if (!trimmed) return '\u200B';
-              if (isSpecialBlockLine(trimmed)) return `\u200B${l}`;
-              return l;
+              if (!l) return '\u200B';
+              const needsLeadingGuard =
+                /^[ \t]/.test(l) || isSpecialBlockLine(l.trim());
+              const needsTrailingGuard = /[ \t]$/.test(l);
+              return `${needsLeadingGuard ? '\u200B' : ''}${l}${needsTrailingGuard ? '\u200B' : ''}`;
             });
           lines.push(pLines.join('\n'));
         } else {
@@ -979,8 +1149,22 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         typeof b.widthPercent === 'number' &&
         Number.isFinite(b.widthPercent) &&
         (hasRowId || (b.widthPercent >= 15 && b.widthPercent < 100));
-      if (hasRowId || hasCustomWidth) {
-        const layoutMeta: { rowId?: string; widthPercent?: number } = {};
+      const hasTableColWidths =
+        b.type === 'table' &&
+        Array.isArray(b.tableColWidths) &&
+        b.tableColWidths.some((w) => typeof w === 'number' && w > 0);
+      const hasTableRowHeights =
+        b.type === 'table' &&
+        Array.isArray(b.tableRowHeights) &&
+        b.tableRowHeights.some((h) => typeof h === 'number' && h > 0);
+
+      if (hasRowId || hasCustomWidth || hasTableColWidths || hasTableRowHeights) {
+        const layoutMeta: {
+          rowId?: string;
+          widthPercent?: number;
+          tableColWidths?: number[];
+          tableRowHeights?: number[];
+        } = {};
         if (hasRowId) layoutMeta.rowId = b.rowId!.trim();
         if (
           typeof b.widthPercent === 'number' &&
@@ -989,6 +1173,20 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           layoutMeta.widthPercent = Math.min(
             100,
             Math.max(15, Math.round(b.widthPercent))
+          );
+        }
+        if (hasTableColWidths && b.tableColWidths) {
+          layoutMeta.tableColWidths = b.tableColWidths.map((w) =>
+            typeof w === 'number' && Number.isFinite(w) && w > 0
+              ? Math.max(48, Math.min(1200, Math.round(w)))
+              : 0
+          );
+        }
+        if (hasTableRowHeights && b.tableRowHeights) {
+          layoutMeta.tableRowHeights = b.tableRowHeights.map((h) =>
+            typeof h === 'number' && Number.isFinite(h) && h > 0
+              ? Math.max(28, Math.min(800, Math.round(h)))
+              : 0
           );
         }
         lines[lastIdx] = `<!--block-layout:${JSON.stringify(layoutMeta)}-->\n${lines[lastIdx]}`;

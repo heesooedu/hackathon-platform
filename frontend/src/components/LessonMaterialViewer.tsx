@@ -9,6 +9,8 @@ import {
   getBlockImages,
   groupBlocksIntoRows,
   getNormalizedRowWidths,
+  extractYouTubeVideoId,
+  normalizeExternalUrl,
   NotionBlock,
 } from '@/utils/notionBlocks';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
@@ -35,13 +37,46 @@ interface LessonMaterialViewerProps {
 }
 
 /**
- * 마크다운 인라인 문법(**굵게**, ==형광펜==, ++밑줄++, *기울임*, `코드`)을 안전하게 렌더링합니다.
+ * 마크다운 인라인 문법(**굵게**, ==형광펜==, ++밑줄++, *기울임*, `코드`, [링크](URL), 순수 URL)을 안전하게 렌더링합니다.
  */
 export function renderInlineMarkdown(text: string): React.ReactNode[] {
   const tokenRegex =
-    /(\*\*==[^=*]+==\*\*|==\*\*[^=*]+\*\*==|\*\*[^*]+\*\*|==[^=]+==|\+\+[^+]+\+\+|`[^`]+`|\*[^*\n]+\*)/g;
+    /(\[[^\]]+\]\([^)\s]+\)|\*\*==[^=*]+==\*\*|==\*\*[^=*]+\*\*==|\*\*[^*]+\*\*|==[^=]+==|\+\+[^+]+\+\+|`[^`]+`|\*[^*\n]+\*|https?:\/\/[^\s<]+)/g;
   const parts = text.split(tokenRegex);
   return parts.map((part, idx) => {
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
+    if (linkMatch) {
+      const label = linkMatch[1];
+      const href = normalizeExternalUrl(linkMatch[2]);
+      return (
+        <a
+          key={idx}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-0.5 font-semibold text-blue-600 underline decoration-blue-400 underline-offset-4 hover:text-blue-800 break-all"
+        >
+          <span>{label}</span>
+          <span className="text-[11px] opacity-80 select-none">↗</span>
+        </a>
+      );
+    }
+    if (/^https?:\/\/[^\s<]+$/i.test(part)) {
+      return (
+        <a
+          key={idx}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-0.5 font-semibold text-blue-600 underline decoration-blue-400 underline-offset-4 hover:text-blue-800 break-all"
+        >
+          <span>{part}</span>
+          <span className="text-[11px] opacity-80 select-none">↗</span>
+        </a>
+      );
+    }
     if (
       (part.startsWith('**==') && part.endsWith('==**')) ||
       (part.startsWith('==**') && part.endsWith('**=='))
@@ -310,46 +345,183 @@ export function SimpleMarkdownRenderer({
       const rows = block.tableRows || [];
       if (rows.length === 0) return null;
       const hasHeader = block.hasTableHeader !== false;
+      const colWidths = block.tableColWidths || [];
+      const rowHeights = block.tableRowHeights || [];
+      const hasCustomColWidths = colWidths.some((w) => typeof w === 'number' && w > 0);
 
       return (
         <div
           key={block.id}
           className="my-2 overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-2xs"
         >
-          <table className="w-full border-collapse text-left text-sm">
+          <table
+            className="w-full border-collapse text-left text-sm"
+            style={hasCustomColWidths ? { tableLayout: 'fixed' } : undefined}
+          >
             {hasHeader && rows.length > 0 && (
               <thead>
-                <tr className="border-b border-gray-200 bg-slate-50/90">
-                  {rows[0].map((cell, cIdx) => (
-                    <th
-                      key={cIdx}
-                      className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 font-extrabold text-gray-900 leading-snug whitespace-pre-wrap"
-                    >
-                      {renderInlineMarkdown(cell)}
-                    </th>
-                  ))}
+                <tr
+                  className="border-b border-gray-200 bg-slate-50/90"
+                  style={
+                    rowHeights[0] && rowHeights[0] > 0
+                      ? { height: `${rowHeights[0]}px` }
+                      : undefined
+                  }
+                >
+                  {rows[0].map((cell, cIdx) => {
+                    const cw = colWidths[cIdx];
+                    return (
+                      <th
+                        key={cIdx}
+                        style={
+                          cw && cw > 0
+                            ? { width: `${cw}px`, minWidth: `${cw}px` }
+                            : undefined
+                        }
+                        className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 font-extrabold text-gray-900 leading-snug whitespace-pre-wrap break-words"
+                      >
+                        {renderInlineMarkdown(cell)}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
             )}
             <tbody className="divide-y divide-gray-200">
-              {(hasHeader ? rows.slice(1) : rows).map((row, rIdx) => (
-                <tr
-                  key={rIdx}
-                  className="hover:bg-slate-50/40 transition-colors"
-                >
-                  {row.map((cell, cIdx) => (
-                    <td
-                      key={cIdx}
-                      className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 text-gray-700 leading-snug whitespace-pre-wrap align-top"
-                    >
-                      {renderInlineMarkdown(cell)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {(hasHeader ? rows.slice(1) : rows).map((row, rIdx) => {
+                const actualRowIdx = hasHeader ? rIdx + 1 : rIdx;
+                const rh = rowHeights[actualRowIdx];
+                return (
+                  <tr
+                    key={rIdx}
+                    style={
+                      rh && rh > 0 ? { height: `${rh}px` } : undefined
+                    }
+                    className="hover:bg-slate-50/40 transition-colors"
+                  >
+                    {row.map((cell, cIdx) => {
+                      const cw = colWidths[cIdx];
+                      return (
+                        <td
+                          key={cIdx}
+                          style={
+                            cw && cw > 0
+                              ? { width: `${cw}px`, minWidth: `${cw}px` }
+                              : undefined
+                          }
+                          className="border-r border-gray-200 last:border-r-0 px-4 py-2.5 text-gray-700 leading-snug whitespace-pre-wrap align-top break-words"
+                        >
+                          {renderInlineMarkdown(cell)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+      );
+    }
+
+    if (block.type === 'youtube') {
+      const rawUrl = (block.externalUrl || block.content || '').trim();
+      const videoId = extractYouTubeVideoId(rawUrl);
+      if (!videoId) {
+        return (
+          <div
+            key={block.id}
+            className="my-2 rounded-2xl border border-rose-200 bg-rose-50/60 px-4 py-3 text-xs text-rose-700 font-medium"
+          >
+            ▶️ 유튜브 영상 주소가 올바르지 않거나 비어 있습니다.
+          </div>
+        );
+      }
+
+      const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      return (
+        <div
+          key={block.id}
+          className="my-3 overflow-hidden rounded-2xl border border-rose-200/80 bg-slate-950 shadow-sm"
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-slate-800 bg-slate-900 px-4 py-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2 py-0.5 text-[10px] font-extrabold text-white shrink-0">
+                ▶ YouTube
+              </span>
+              <span className="truncate text-xs font-bold text-slate-100">
+                {block.caption?.trim() || '수업 참고 영상'}
+              </span>
+            </div>
+            <a
+              href={watchUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition"
+            >
+              YouTube에서 열기 ↗
+            </a>
+          </div>
+          <div className="relative aspect-video w-full bg-black">
+            <iframe
+              src={`https://www.youtube.com/embed/${videoId}?rel=0`}
+              title={block.caption?.trim() || 'YouTube video player'}
+              className="h-full w-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allowFullScreen
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (block.type === 'link') {
+      const rawUrl = (block.externalUrl || block.content || '').trim();
+      if (!rawUrl) return null;
+      const href = normalizeExternalUrl(rawUrl);
+      let hostname = href;
+      try {
+        hostname = new URL(href).hostname;
+      } catch {
+        // URL 파싱 실패 시 원본 유지
+      }
+
+      return (
+        <a
+          key={block.id}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group my-2 flex items-center justify-between gap-4 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50/40 via-white to-blue-50/30 p-4 shadow-2xs hover:border-indigo-400 hover:shadow-md transition-all"
+        >
+          <div className="flex items-start gap-3.5 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100/80 text-indigo-700 font-bold text-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+              🔗
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-extrabold text-gray-900 group-hover:text-indigo-700 transition-colors truncate">
+                  {block.caption?.trim() || rawUrl}
+                </span>
+                <span className="rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-600">
+                  {hostname}
+                </span>
+              </div>
+              {block.content?.trim() && block.content.trim() !== rawUrl && (
+                <p className="mt-1 text-xs text-gray-600 line-clamp-2 whitespace-pre-wrap">
+                  {block.content}
+                </p>
+              )}
+              <p className="mt-1 truncate font-mono text-[11px] text-gray-400">
+                {href}
+              </p>
+            </div>
+          </div>
+          <span className="shrink-0 rounded-xl bg-white border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-indigo-600 transition-colors">
+            열기 ↗
+          </span>
+        </a>
       );
     }
 
@@ -432,7 +604,7 @@ export function SimpleMarkdownRenderer({
       );
     }
 
-    if (!block.content.trim()) {
+    if (!block.content) {
       return (
         <div
           key={block.id}

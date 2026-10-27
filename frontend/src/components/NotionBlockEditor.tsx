@@ -18,6 +18,8 @@ import {
   groupBlocksIntoRows,
   getNormalizedRowWidths,
   cleanupOrphanRowIds,
+  extractYouTubeVideoId,
+  normalizeExternalUrl,
 } from '@/utils/notionBlocks';
 import { QuizQuestionType } from '@/types/database.types';
 import { generateInlineQuizDraftAction } from '@/app/lessons/actions';
@@ -246,6 +248,37 @@ const BLOCK_TYPE_META: {
     keywords: ['image', 'photo', 'pic', '사진', '이미지', '그림', '가로'],
   },
   {
+    type: 'youtube',
+    label: '유튜브 영상 (바로 재생)',
+    desc: '유튜브 URL을 입력하여 교안 안에서 바로 영상을 재생합니다',
+    badge: '▶️',
+    keywords: [
+      'youtube',
+      'video',
+      'yt',
+      '유튜브',
+      '영상',
+      '동영상',
+      '비디오',
+    ],
+  },
+  {
+    type: 'link',
+    label: '링크 / 북마크 카드',
+    desc: '참고 웹사이트나 외부 자료 링크를 카드 형태로 삽입합니다',
+    badge: '🔗',
+    keywords: [
+      'link',
+      'url',
+      'bookmark',
+      '링크',
+      '주소',
+      '북마크',
+      '사이트',
+      '하이퍼링크',
+    ],
+  },
+  {
     type: 'divider',
     label: '구분선',
     desc: '단락 사이를 시각적으로 나눕니다',
@@ -255,11 +288,11 @@ const BLOCK_TYPE_META: {
 ];
 
 /**
- * 텍스트 내에 인라인 서식(**진하게**, ==형광펜==, ++밑줄++, *기울임*, `코드`)이 포함되어 있는지 확인합니다.
+ * 텍스트 내에 인라인 서식(**진하게**, ==형광펜==, ++밑줄++, *기울임*, `코드`, [링크](URL), 순수 URL)이 포함되어 있는지 확인합니다.
  */
 function hasInlineFormatting(text: string): boolean {
   if (!text) return false;
-  return /(\*\*[^*]+\*\*|==[^=]+==|\+\+[^+]+\+\+|`[^`]+`|\*[^*\s][^*]*\*)/.test(
+  return /(\[[^\]]+\]\([^)\s]+\)|\*\*[^*]+\*\*|==[^=]+==|\+\+[^+]+\+\+|`[^`]+`|\*[^*\s][^*]*\*|https?:\/\/[^\s<]+)/.test(
     text
   );
 }
@@ -463,7 +496,7 @@ export default function NotionBlockEditor({
     string | null
   >(null);
   const [resizingInfo, setResizingInfo] = useState<{
-    mode: 'column-split' | 'block-width';
+    mode: 'column-split' | 'block-width' | 'table-col' | 'table-row';
     label: string;
     activeId?: string;
   } | null>(null);
@@ -857,6 +890,196 @@ export default function NotionBlockEditor({
   }
 
   /**
+   * 표(Table) 열의 우측 구분선을 좌우로 드래그하여 해당 열의 너비(px)를 조절합니다.
+   */
+  function startTableColResize(
+    e: React.MouseEvent,
+    blockId: string,
+    colIdx: number,
+    colCount: number
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const cellEl = e.currentTarget.parentElement;
+    const measuredW = cellEl?.getBoundingClientRect().width || 160;
+    const startX = e.clientX;
+
+    const currentBlock = blocksRef.current.find((b) => b.id === blockId);
+    const existingWidths = Array.from(
+      { length: colCount },
+      (_, ci) => currentBlock?.tableColWidths?.[ci] || 0
+    );
+    const startW =
+      existingWidths[colIdx] > 0
+        ? existingWidths[colIdx]
+        : Math.max(80, Math.round(measuredW));
+
+    setResizingInfo({
+      mode: 'table-col',
+      label: `${colIdx + 1}열 너비 ${startW}px`,
+      activeId: `${blockId}_col_${colIdx}`,
+    });
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      const deltaX = moveEvent.clientX - startX;
+      const nextW = Math.min(900, Math.max(70, Math.round(startW + deltaX)));
+
+      setResizingInfo({
+        mode: 'table-col',
+        label: `${colIdx + 1}열 너비 ${nextW}px`,
+        activeId: `${blockId}_col_${colIdx}`,
+      });
+
+      const updated = blocksRef.current.map((b) => {
+        if (b.id !== blockId) return b;
+        const nextColWidths = Array.from(
+          { length: colCount },
+          (_, ci) =>
+            ci === colIdx
+              ? nextW
+              : b.tableColWidths?.[ci] || existingWidths[ci] || 0
+        );
+        return {
+          ...b,
+          tableColWidths: nextColWidths,
+        };
+      });
+      onChange(updated);
+    }
+
+    function handleMouseUp() {
+      setResizingInfo(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  /**
+   * 표(Table) 행의 하단 구분선을 상하로 드래그하여 해당 행의 높이(px)를 조절합니다.
+   */
+  function startTableRowResize(
+    e: React.MouseEvent,
+    blockId: string,
+    rowIdx: number,
+    rowCount: number
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const cellEl = e.currentTarget.parentElement;
+    const rowEl = cellEl?.parentElement;
+    const measuredH =
+      rowEl?.getBoundingClientRect().height ||
+      cellEl?.getBoundingClientRect().height ||
+      42;
+    const startY = e.clientY;
+
+    const currentBlock = blocksRef.current.find((b) => b.id === blockId);
+    const existingHeights = Array.from(
+      { length: rowCount },
+      (_, ri) => currentBlock?.tableRowHeights?.[ri] || 0
+    );
+    const startH =
+      existingHeights[rowIdx] > 0
+        ? existingHeights[rowIdx]
+        : Math.max(34, Math.round(measuredH));
+
+    setResizingInfo({
+      mode: 'table-row',
+      label: `${rowIdx + 1}행 높이 ${startH}px`,
+      activeId: `${blockId}_row_${rowIdx}`,
+    });
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      const deltaY = moveEvent.clientY - startY;
+      const nextH = Math.min(480, Math.max(32, Math.round(startH + deltaY)));
+
+      setResizingInfo({
+        mode: 'table-row',
+        label: `${rowIdx + 1}행 높이 ${nextH}px`,
+        activeId: `${blockId}_row_${rowIdx}`,
+      });
+
+      const updated = blocksRef.current.map((b) => {
+        if (b.id !== blockId) return b;
+        const nextRowHeights = Array.from(
+          { length: rowCount },
+          (_, ri) =>
+            ri === rowIdx
+              ? nextH
+              : b.tableRowHeights?.[ri] || existingHeights[ri] || 0
+        );
+        return {
+          ...b,
+          tableRowHeights: nextRowHeights,
+        };
+      });
+      onChange(updated);
+    }
+
+    function handleMouseUp() {
+      setResizingInfo(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  /**
+   * 현재 포커스된 텍스트 블록에 인라인 링크 `[표시 텍스트](https://)` 서식을 삽입합니다.
+   */
+  function insertInlineLinkToFocusedBlock() {
+    const activeId = focusedBlockId || blocks[0]?.id;
+    if (!activeId) return;
+    const block = blocks.find((b) => b.id === activeId);
+    if (
+      !block ||
+      block.type === 'code' ||
+      block.type === 'colab' ||
+      block.type === 'vpython' ||
+      block.type === 'mermaid' ||
+      block.type === 'simulation' ||
+      block.type === 'quiz' ||
+      block.type === 'image' ||
+      block.type === 'youtube' ||
+      block.type === 'link' ||
+      block.type === 'divider' ||
+      block.type === 'table'
+    ) {
+      handleQuickAddBlock('link');
+      return;
+    }
+
+    const el = blockRefs.current[activeId];
+    const start = el ? el.selectionStart : block.content.length;
+    const end = el ? el.selectionEnd : block.content.length;
+    const selected = block.content.slice(start, end);
+    const labelText = selected || '링크 텍스트';
+    const defaultUrl = 'https://';
+    const inserted = `[${labelText}](${defaultUrl})`;
+    const newValue =
+      block.content.slice(0, start) + inserted + block.content.slice(end);
+    const urlSelectStart = start + labelText.length + 3;
+    const urlSelectEnd = urlSelectStart + defaultUrl.length;
+
+    updateBlock(activeId, { content: newValue });
+    setFocusedBlockId(activeId);
+    requestAnimationFrame(() => {
+      const targetEl = blockRefs.current[activeId];
+      if (targetEl) {
+        targetEl.focus();
+        targetEl.setSelectionRange(urlSelectStart, urlSelectEnd);
+      }
+    });
+  }
+
+  /**
    * 현재 포커스된 텍스트 블록에 인라인 서식(**진하게**, ==형광펜==, ++밑줄++, *기울임*, `코드`)을 적용합니다.
    */
   function applyFormatToFocusedBlock(marker: string) {
@@ -872,6 +1095,8 @@ export default function NotionBlockEditor({
       block.type === 'simulation' ||
       block.type === 'quiz' ||
       block.type === 'image' ||
+      block.type === 'youtube' ||
+      block.type === 'link' ||
       block.type === 'divider' ||
       block.type === 'table'
     ) {
@@ -983,6 +1208,8 @@ export default function NotionBlockEditor({
     const defaultSimulation = SIMULATION_TEMPLATES[0].code;
     const defaultColab = COLAB_TEMPLATES[0].code;
 
+    const isUrlContent = /^https?:\/\//i.test(cleanedContent.trim());
+
     updateBlock(block.id, {
       type: targetType,
       content:
@@ -992,7 +1219,15 @@ export default function NotionBlockEditor({
           ? defaultSimulation
           : targetType === 'colab' && !cleanedContent.trim()
           ? defaultColab
+          : targetType === 'youtube' || targetType === 'link'
+          ? isUrlContent
+            ? ''
+            : cleanedContent
           : cleanedContent,
+      externalUrl:
+        targetType === 'youtube' || targetType === 'link'
+          ? block.externalUrl || (isUrlContent ? cleanedContent.trim() : '')
+          : block.externalUrl,
       caption:
         targetType === 'simulation'
           ? block.caption || SIMULATION_TEMPLATES[0].caption
@@ -1523,6 +1758,10 @@ export default function NotionBlockEditor({
                     ? '실험'
                     : item.type === 'quiz'
                     ? '퀴즈'
+                    : item.type === 'youtube'
+                    ? '유튜브'
+                    : item.type === 'link'
+                    ? '링크'
                     : item.label.split(' ')[0];
                 return (
                   <button
@@ -1595,6 +1834,17 @@ export default function NotionBlockEditor({
                 title="인라인 코드 배지"
               >
                 `코드`
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  insertInlineLinkToFocusedBlock();
+                }}
+                className="inline-flex h-6 items-center justify-center rounded-md border border-blue-200 bg-blue-50/70 px-1.5 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition cursor-pointer"
+                title="선택한 텍스트에 하이퍼링크 삽입 (단축키: Ctrl+K)"
+              >
+                🔗링크
               </button>
 
               <span className="mx-0.5 h-3.5 w-px bg-gray-200 select-none" />
@@ -1799,6 +2049,21 @@ export default function NotionBlockEditor({
                     `코드`
                   </span>
                 </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    insertInlineLinkToFocusedBlock();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50/80 px-2 py-0.5 text-xs font-bold text-blue-700 hover:bg-blue-100 transition cursor-pointer shadow-2xs"
+                  title="드래그한 텍스트에 하이퍼링크를 삽입합니다 (단축키: Ctrl + K)"
+                >
+                  <span>🔗 링크</span>
+                  <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] font-semibold text-blue-600">
+                    Ctrl+K
+                  </kbd>
+                </button>
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1844,13 +2109,17 @@ export default function NotionBlockEditor({
         )}
       </div>
 
-      {/* 실시간 가로 폭 드래그 리사이즈 상태 배지 */}
+      {/* 실시간 가로 폭 / 표 행·열 드래그 리사이즈 상태 배지 */}
       {resizingInfo && (
         <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-2xl border border-indigo-300 bg-indigo-950/90 px-4 py-2.5 text-xs font-extrabold text-white shadow-xl backdrop-blur-xs">
-          <span>↔</span>
+          <span>{resizingInfo.mode === 'table-row' ? '↕' : '↔'}</span>
           <span>
             {resizingInfo.mode === 'column-split'
               ? `열 비율 조절 중: ${resizingInfo.label}`
+              : resizingInfo.mode === 'table-col'
+              ? `표 열 너비 조절 중: ${resizingInfo.label}`
+              : resizingInfo.mode === 'table-row'
+              ? `표 행 높이 조절 중: ${resizingInfo.label}`
               : `블록 가로 폭 조절 중: ${resizingInfo.label}`}
           </span>
         </div>
@@ -3038,6 +3307,11 @@ export default function NotionBlockEditor({
                     ...rows.map((r) => r.length)
                   );
                   const hasHeader = block.hasTableHeader !== false;
+                  const colWidths = block.tableColWidths || [];
+                  const rowHeights = block.tableRowHeights || [];
+                  const hasCustomDimensions =
+                    colWidths.some((w) => w > 0) ||
+                    rowHeights.some((h) => h > 0);
 
                   const updateCell = (
                     rIdx: number,
@@ -3065,7 +3339,21 @@ export default function NotionBlockEditor({
                         ? afterRowIdx + 1
                         : nextRows.length;
                     nextRows.splice(insertIdx, 0, newRow);
-                    updateBlock(block.id, { tableRows: nextRows });
+                    const nextRowHeights =
+                      rowHeights.length > 0
+                        ? (() => {
+                            const copy = Array.from(
+                              { length: rows.length },
+                              (_, ri) => rowHeights[ri] || 0
+                            );
+                            copy.splice(insertIdx, 0, 0);
+                            return copy;
+                          })()
+                        : undefined;
+                    updateBlock(block.id, {
+                      tableRows: nextRows,
+                      tableRowHeights: nextRowHeights,
+                    });
                     focusTableCell(block.id, insertIdx, 0);
                   };
 
@@ -3080,14 +3368,37 @@ export default function NotionBlockEditor({
                         ri === 0 && hasHeader ? `항목 ${colCount + 1}` : '',
                       ];
                     });
-                    updateBlock(block.id, { tableRows: nextRows });
+                    const nextColWidths =
+                      colWidths.length > 0
+                        ? [
+                            ...Array.from(
+                              { length: colCount },
+                              (_, ci) => colWidths[ci] || 0
+                            ),
+                            0,
+                          ]
+                        : undefined;
+                    updateBlock(block.id, {
+                      tableRows: nextRows,
+                      tableColWidths: nextColWidths,
+                    });
                     focusTableCell(block.id, 0, colCount);
                   };
 
                   const deleteRow = (rIdx: number) => {
                     if (rows.length <= 1) return;
                     const nextRows = rows.filter((_, ri) => ri !== rIdx);
-                    updateBlock(block.id, { tableRows: nextRows });
+                    const nextRowHeights =
+                      rowHeights.length > 0
+                        ? Array.from(
+                            { length: rows.length },
+                            (_, ri) => rowHeights[ri] || 0
+                          ).filter((_, ri) => ri !== rIdx)
+                        : undefined;
+                    updateBlock(block.id, {
+                      tableRows: nextRows,
+                      tableRowHeights: nextRowHeights,
+                    });
                   };
 
                   const deleteColumn = (cIdx: number) => {
@@ -3098,7 +3409,17 @@ export default function NotionBlockEditor({
                         (_, ci) => r[ci] ?? ''
                       ).filter((_, ci) => ci !== cIdx)
                     );
-                    updateBlock(block.id, { tableRows: nextRows });
+                    const nextColWidths =
+                      colWidths.length > 0
+                        ? Array.from(
+                            { length: colCount },
+                            (_, ci) => colWidths[ci] || 0
+                          ).filter((_, ci) => ci !== cIdx)
+                        : undefined;
+                    updateBlock(block.id, {
+                      tableRows: nextRows,
+                      tableColWidths: nextColWidths,
+                    });
                   };
 
                   return (
@@ -3127,6 +3448,21 @@ export default function NotionBlockEditor({
                           >
                             {hasHeader ? '✓ 첫 줄 제목 행(Header) 사용 중' : '첫 줄 제목 행 켜기'}
                           </button>
+                          {hasCustomDimensions && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateBlock(block.id, {
+                                  tableColWidths: undefined,
+                                  tableRowHeights: undefined,
+                                })
+                              }
+                              title="조절한 표 열 너비와 행 높이를 기본값으로 초기화합니다"
+                              className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-800 hover:bg-amber-100 transition cursor-pointer"
+                            >
+                              ↔↕ 열 너비 · 행 높이 초기화
+                            </button>
+                          )}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -3150,37 +3486,74 @@ export default function NotionBlockEditor({
                       {/* 표 본문 그리드 */}
                       <div className="overflow-x-auto">
                         <table className="w-full border-collapse text-left text-sm">
-                          {colCount > 1 && (
-                            <thead>
-                              <tr className="bg-slate-100/70 border-b border-gray-200">
-                                {Array.from({ length: colCount }).map((_, cIdx) => (
+                          <thead>
+                            <tr className="bg-slate-100/70 border-b border-gray-200">
+                              {Array.from({ length: colCount }).map((_, cIdx) => {
+                                const cw = colWidths[cIdx];
+                                return (
                                   <th
                                     key={cIdx}
-                                    className="px-2 py-1 text-center border-r border-gray-200 last:border-r-0"
+                                    style={
+                                      cw && cw > 0
+                                        ? {
+                                            width: `${cw}px`,
+                                            minWidth: `${cw}px`,
+                                          }
+                                        : { minWidth: '120px' }
+                                    }
+                                    className="relative px-2 py-1 text-center border-r border-gray-200 last:border-r-0 select-none"
                                   >
-                                    <div className="flex items-center justify-between text-[10px] font-semibold text-gray-400">
-                                      <span>{cIdx + 1}열</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => deleteColumn(cIdx)}
-                                        title={`${cIdx + 1}열 삭제`}
-                                        className="rounded px-1 text-gray-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
-                                      >
-                                        열 삭제 ✕
-                                      </button>
+                                    <div className="flex items-center justify-between text-[10px] font-semibold text-gray-500">
+                                      <span>
+                                        {cIdx + 1}열
+                                        {cw && cw > 0 ? ` (${cw}px)` : ''}
+                                      </span>
+                                      {colCount > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => deleteColumn(cIdx)}
+                                          title={`${cIdx + 1}열 삭제`}
+                                          className="rounded px-1 text-gray-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
+                                        >
+                                          열 삭제 ✕
+                                        </button>
+                                      )}
+                                    </div>
+                                    {/* 열 너비 조절 드래그 핸들 (우측 경계선) */}
+                                    <div
+                                      onMouseDown={(e) =>
+                                        startTableColResize(
+                                          e,
+                                          block.id,
+                                          cIdx,
+                                          colCount
+                                        )
+                                      }
+                                      title="좌우로 드래그하여 이 열의 너비를 조절합니다"
+                                      className="group/colresize absolute top-0 right-0 bottom-0 z-10 w-2 cursor-col-resize flex items-center justify-end"
+                                    >
+                                      <div className="h-full w-0.5 bg-transparent group-hover/colresize:bg-blue-500 transition-colors" />
                                     </div>
                                   </th>
-                                ))}
-                                <th className="w-10 bg-slate-100/70" />
-                              </tr>
-                            </thead>
-                          )}
+                                );
+                              })}
+                              <th className="w-14 bg-slate-100/70 px-1 text-center text-[10px] font-semibold text-gray-400">
+                                행
+                              </th>
+                            </tr>
+                          </thead>
                           <tbody>
                             {rows.map((row, rIdx) => {
                               const isHeaderRow = hasHeader && rIdx === 0;
+                              const rh = rowHeights[rIdx];
                               return (
                                 <tr
                                   key={rIdx}
+                                  style={
+                                    rh && rh > 0
+                                      ? { height: `${rh}px` }
+                                      : undefined
+                                  }
                                   className={
                                     isHeaderRow
                                       ? 'bg-indigo-50/50 border-b-2 border-indigo-100'
@@ -3190,10 +3563,22 @@ export default function NotionBlockEditor({
                                   {Array.from({ length: colCount }).map(
                                     (_, cIdx) => {
                                       const cellVal = row[cIdx] ?? '';
+                                      const cw = colWidths[cIdx];
                                       return (
                                         <td
                                           key={cIdx}
-                                          className="border-r border-gray-200 last:border-r-0 p-1.5 align-top min-w-[120px]"
+                                          style={{
+                                            ...(cw && cw > 0
+                                              ? {
+                                                  width: `${cw}px`,
+                                                  minWidth: `${cw}px`,
+                                                }
+                                              : { minWidth: '120px' }),
+                                            ...(rh && rh > 0
+                                              ? { height: `${rh}px` }
+                                              : {}),
+                                          }}
+                                          className="relative border-r border-gray-200 last:border-r-0 p-1.5 align-top"
                                         >
                                           <input
                                             ref={(el) => {
@@ -3257,7 +3642,7 @@ export default function NotionBlockEditor({
                                                       (pCell, pci) => {
                                                         nextRows[rIdx + pri][
                                                           cIdx + pci
-                                                        ] = pCell.trim();
+                                                        ] = pCell.replace(/\r/g, '');
                                                       }
                                                     );
                                                   }
@@ -3393,25 +3778,78 @@ export default function NotionBlockEditor({
                                             }`}
                                           />
                                           {hasInlineFormatting(cellVal) && (
-                                            <div className="mt-0.5 px-2 text-xs text-gray-700">
+                                            <div className="mt-0.5 px-2 text-xs text-gray-700 whitespace-pre-wrap">
                                               {renderInlineMarkdown(cellVal)}
                                             </div>
                                           )}
+
+                                          {/* 셀 우측 경계선: 열 너비 조절 드래그 핸들 */}
+                                          <div
+                                            onMouseDown={(e) =>
+                                              startTableColResize(
+                                                e,
+                                                block.id,
+                                                cIdx,
+                                                colCount
+                                              )
+                                            }
+                                            title="좌우로 드래그하여 이 열의 너비를 조절합니다"
+                                            className="group/colresize absolute top-0 right-0 bottom-0 z-10 w-1.5 cursor-col-resize flex items-center justify-end"
+                                          >
+                                            <div className="h-full w-0.5 bg-transparent group-hover/colresize:bg-blue-500 transition-colors" />
+                                          </div>
+
+                                          {/* 셀 하단 경계선: 행 높이 조절 드래그 핸들 */}
+                                          <div
+                                            onMouseDown={(e) =>
+                                              startTableRowResize(
+                                                e,
+                                                block.id,
+                                                rIdx,
+                                                rows.length
+                                              )
+                                            }
+                                            title="상하로 드래그하여 이 행의 높이를 조절합니다"
+                                            className="group/rowresize absolute left-0 right-0 bottom-0 z-10 h-1.5 cursor-row-resize flex items-end"
+                                          >
+                                            <div className="w-full h-0.5 bg-transparent group-hover/rowresize:bg-blue-500 transition-colors" />
+                                          </div>
                                         </td>
                                       );
                                     }
                                   )}
-                                  <td className="w-10 px-1 text-center align-middle">
-                                    {rows.length > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => deleteRow(rIdx)}
-                                        title={`${rIdx + 1}행 삭제`}
-                                        className="rounded p-1 text-[11px] text-gray-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
-                                      >
-                                        ✕
-                                      </button>
-                                    )}
+                                  <td className="relative w-14 px-1 text-center align-middle select-none">
+                                    <div className="flex items-center justify-center gap-0.5">
+                                      <span className="text-[10px] font-semibold text-gray-400">
+                                        {rIdx + 1}
+                                        {rh && rh > 0 ? `(${rh})` : ''}
+                                      </span>
+                                      {rows.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => deleteRow(rIdx)}
+                                          title={`${rIdx + 1}행 삭제`}
+                                          className="rounded p-0.5 text-[11px] text-gray-400 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
+                                        >
+                                          ✕
+                                        </button>
+                                      )}
+                                    </div>
+                                    {/* 행 우측 끝 셀에서도 하단 드래그로 행 높이 조절 지원 */}
+                                    <div
+                                      onMouseDown={(e) =>
+                                        startTableRowResize(
+                                          e,
+                                          block.id,
+                                          rIdx,
+                                          rows.length
+                                        )
+                                      }
+                                      title="상하로 드래그하여 이 행의 높이를 조절합니다"
+                                      className="group/rowresize absolute left-0 right-0 bottom-0 z-10 h-1.5 cursor-row-resize flex items-end"
+                                    >
+                                      <div className="w-full h-0.5 bg-transparent group-hover/rowresize:bg-blue-500 transition-colors" />
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -3422,13 +3860,174 @@ export default function NotionBlockEditor({
 
                       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 bg-slate-50/50 px-3.5 py-1.5 text-[11px] text-gray-500">
                         <span>
-                          💡 <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Tab</kbd> 다음 칸 ·{' '}
-                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Enter</kbd> 아래 칸(또는 행 추가) ·{' '}
-                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Ctrl+B</kbd> 진하게 ·{' '}
-                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Ctrl+E</kbd> 형광펜
+                          💡 셀의 <strong className="text-blue-700">오른쪽 경계선(↔)</strong>을 드래그해 열 너비를, <strong className="text-blue-700">아래쪽 경계선(↕)</strong>을 드래그해 행 높이를 조절하세요 ·{' '}
+                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Tab</kbd> 다음 칸 ·{' '}
+                          <kbd className="rounded bg-white px-1 py-0.5 font-mono text-[10px] border border-gray-200">Enter</kbd> 아래 칸
                         </span>
                         <span>엑셀·한글 표 복사 후 셀에 붙여넣기(Ctrl+V) 지원</span>
                       </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 9-4. 유튜브 영상 임베드 블록 (YouTube) */}
+                {block.type === 'youtube' && (() => {
+                  const rawUrl = block.externalUrl ?? block.content ?? '';
+                  const videoId = extractYouTubeVideoId(rawUrl);
+
+                  return (
+                    <div className="my-2 overflow-hidden rounded-2xl border border-red-200 bg-red-50/20 p-4 space-y-3 shadow-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-0.5 text-[11px] font-extrabold text-white shadow-2xs">
+                            ▶ 유튜브 영상 (YouTube)
+                          </span>
+                          <span className="text-xs font-medium text-gray-500">
+                            유튜브 주소를 붙여넣으면 교안 안에서 바로 영상을 재생할 수 있습니다
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <input
+                          ref={(el) => {
+                            blockRefs.current[block.id] =
+                              el as unknown as HTMLTextAreaElement | null;
+                          }}
+                          type="url"
+                          value={rawUrl}
+                          onChange={(e) =>
+                            updateBlock(block.id, {
+                              externalUrl: e.target.value,
+                              content: e.target.value,
+                            })
+                          }
+                          placeholder="https://www.youtube.com/watch?v=... 또는 https://youtu.be/..."
+                          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-800 focus:border-red-400 focus:outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={block.caption || ''}
+                          onChange={(e) =>
+                            updateBlock(block.id, { caption: e.target.value })
+                          }
+                          placeholder="영상 제목 또는 시청 안내 메모 (선택)"
+                          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 focus:border-red-400 focus:outline-none"
+                        />
+                      </div>
+
+                      {videoId ? (
+                        <div className="overflow-hidden rounded-xl border border-gray-200 bg-black shadow-xs">
+                          <div className="relative aspect-video w-full">
+                            <iframe
+                              src={`https://www.youtube.com/embed/${videoId}?rel=0`}
+                              title={block.caption || 'YouTube video player'}
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                              allowFullScreen
+                              className="h-full w-full border-0"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-red-200 bg-white/80 py-8 text-center">
+                          <span className="text-2xl">🎬</span>
+                          <p className="mt-1.5 text-xs font-bold text-gray-600">
+                            위 입력창에 유튜브 영상 링크(watch, shorts, youtu.be)를 붙여넣으세요
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-gray-400">
+                            입력 즉시 이곳에 재생 가능한 유튜브 플레이어가 표시됩니다
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* 9-5. 외부 웹 링크 카드 블록 (Link) */}
+                {block.type === 'link' && (() => {
+                  const rawUrl = block.externalUrl ?? '';
+                  const safeHref = rawUrl ? normalizeExternalUrl(rawUrl) : '';
+                  const titleText = block.caption || '';
+                  const descText = block.content || '';
+
+                  return (
+                    <div className="my-2 overflow-hidden rounded-2xl border border-blue-200 bg-blue-50/20 p-4 space-y-3 shadow-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-0.5 text-[11px] font-extrabold text-white shadow-2xs">
+                            🔗 웹 링크 카드 (Link)
+                          </span>
+                          <span className="text-xs font-medium text-gray-500">
+                            참고 웹사이트나 학습 자료 링크를 클릭 가능한 카드로 삽입합니다 (글자 안 인라인 링크는 Ctrl+K)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <input
+                          ref={(el) => {
+                            blockRefs.current[block.id] =
+                              el as unknown as HTMLTextAreaElement | null;
+                          }}
+                          type="url"
+                          value={rawUrl}
+                          onChange={(e) =>
+                            updateBlock(block.id, {
+                              externalUrl: e.target.value,
+                            })
+                          }
+                          placeholder="이동할 웹 주소 입력 (예: https://www.ebs.co.kr)"
+                          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-800 focus:border-blue-400 focus:outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={titleText}
+                          onChange={(e) =>
+                            updateBlock(block.id, { caption: e.target.value })
+                          }
+                          placeholder="링크 카드 제목 (예: EBS 학습 자료실 바로가기)"
+                          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                        />
+                      </div>
+
+                      <input
+                        type="text"
+                        value={descText}
+                        onChange={(e) =>
+                          updateBlock(block.id, { content: e.target.value })
+                        }
+                        placeholder="링크에 대한 간단한 설명 (선택 사항)"
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 focus:border-blue-400 focus:outline-none"
+                      />
+
+                      {safeHref && (
+                        <a
+                          href={safeHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="group/linkpreview flex items-center justify-between gap-3 rounded-xl border border-blue-200 bg-white px-4 py-3 shadow-2xs hover:border-blue-400 hover:bg-blue-50/40 transition"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 text-sm font-extrabold text-blue-700 group-hover/linkpreview:underline">
+                              <span>🔗</span>
+                              <span className="truncate">
+                                {titleText || safeHref}
+                              </span>
+                            </div>
+                            {descText && (
+                              <p className="mt-0.5 text-xs text-gray-600 line-clamp-1">
+                                {descText}
+                              </p>
+                            )}
+                            <p className="mt-0.5 truncate font-mono text-[11px] text-gray-400">
+                              {safeHref}
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-lg bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-600 group-hover/linkpreview:bg-blue-600 group-hover/linkpreview:text-white transition">
+                            새 창으로 열기 ↗
+                          </span>
+                        </a>
+                      )}
                     </div>
                   );
                 })()}
@@ -4297,6 +4896,8 @@ export default function NotionBlockEditor({
                   <option value="simulation">시뮬레이션(HTML/JS)</option>
                   <option value="quiz">체크포인트 퀴즈(/퀴즈)</option>
                   <option value="image">사진</option>
+                  <option value="youtube">유튜브 영상</option>
+                  <option value="link">링크 카드</option>
                   <option value="divider">구분선</option>
                 </select>
 
@@ -4435,8 +5036,34 @@ export default function NotionBlockEditor({
     // - Ctrl+E (또는 Cmd+E): ==형광펜== 토글
     // - Ctrl+U (또는 Cmd+U): ++밑줄++ 토글
     // - Ctrl+I (또는 Cmd+I): *기울임* 토글
+    // - Ctrl+K (또는 Cmd+K): [표시 텍스트](https://) 인라인 링크 삽입
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.nativeEvent.isComposing) {
       const key = e.key.toLowerCase();
+      if (key === 'k') {
+        e.preventDefault();
+        const el = e.currentTarget;
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        const selected = block.content.slice(start, end);
+        const labelText = selected || '링크 텍스트';
+        const defaultUrl = 'https://';
+        const inserted = `[${labelText}](${defaultUrl})`;
+        const newValue =
+          block.content.slice(0, start) + inserted + block.content.slice(end);
+        const urlSelectStart = start + labelText.length + 3;
+        const urlSelectEnd = urlSelectStart + defaultUrl.length;
+
+        updateBlock(block.id, { content: newValue });
+        requestAnimationFrame(() => {
+          const targetEl = blockRefs.current[block.id];
+          if (targetEl) {
+            targetEl.focus();
+            targetEl.setSelectionRange(urlSelectStart, urlSelectEnd);
+          }
+        });
+        return;
+      }
+
       const marker =
         key === 'b'
           ? '**'
@@ -4589,6 +5216,29 @@ export default function NotionBlockEditor({
     if (imageFiles.length > 0) {
       e.preventDefault();
       await handleImageFilesDrop(imageFiles, idx);
+      return;
+    }
+
+    // 빈 일반 문단(p)에 유튜브 영상 URL을 단독으로 붙여넣으면 자동으로 유튜브 영상 블록으로 변환
+    const pastedText = e.clipboardData?.getData('text/plain')?.trim() || '';
+    const targetBlock = blocks[idx];
+    if (
+      targetBlock &&
+      targetBlock.type === 'p' &&
+      !targetBlock.content.trim() &&
+      pastedText &&
+      !pastedText.includes('\n') &&
+      !pastedText.includes(' ')
+    ) {
+      const ytId = extractYouTubeVideoId(pastedText);
+      if (ytId) {
+        e.preventDefault();
+        updateBlock(targetBlock.id, {
+          type: 'youtube',
+          externalUrl: pastedText,
+          content: pastedText,
+        });
+      }
     }
   }
 }
