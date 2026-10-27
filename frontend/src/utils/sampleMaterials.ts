@@ -618,4 +618,106 @@ export const SAMPLE_PHYSICS_MARKDOWN = `> [!CALLOUT:🔬] **탐구 핵심 질문
 
 - 발사각 $\\theta = 45^\\circ$일 때 수평 도달 거리($R$)가 최대가 되는 것을 위 시뮬레이터로 확인했나요?`;
 
+export const SAMPLE_PHYSICAL_COMPUTING_MARKDOWN = `# 1. 피지컬 컴퓨팅(Physical Computing)의 원리와 구조
+> [!CALLOUT:🤖] **핵심 질문:** 소프트웨어 알고리즘이 어떻게 현실 세계의 빛·소리·온도·거리 데이터를 읽고 물리적인 장치(LED·모터·부저)를 움직일 수 있을까요?
+
+- **피지컬 컴퓨팅(Physical Computing)**은 **센서(Sensor)**를 통해 물리적 환경의 아날로그·디지털 신호를 입력받고, **마이크로컨트롤러(MCU)**의 프로그램 논리로 처리한 뒤, **액추에이터(Actuator)**로 현실 세계에 물리적 출력을 내보내는 시스템입니다.
+- 정보 교과에서는 대표적으로 **BBC 마이크로비트(micro:bit)**, **아두이노 우노(Arduino Uno)**, **라즈베리파이 피코(Raspberry Pi Pico)** 3가지 보드를 실습에 활용합니다.
+
+\`\`\`mermaid
+flowchart LR
+    S["📡 입력(Input): 센서\\n조도·온도·초음파·버튼"] --> M["🧠 처리(Process): 마이크로컨트롤러\\nmicro:bit / Arduino Uno / RPi Pico"]
+    M --> A["💡 출력(Output): 액추에이터\\nLED·서보모터·피에조 부저"]
+\`\`\`
+
+## 마이크로컨트롤러 3종 비교 및 핀(Pin) 구성표
+| 구분 | 🤖 BBC micro:bit V2 | ♾️ Arduino Uno R3 | 🍓 Raspberry Pi Pico |
+| --- | --- | --- | --- |
+| 주 사용 언어 | MicroPython / 블록코딩 | Arduino C/C++ (\`setup\`, \`loop\`) | MicroPython (\`machine\` 모듈) |
+| 동작 전압 | 3.3V | 5V | 3.3V |
+| 주요 입출력 핀 | \`P0\`, \`P1\`, \`P2\` (악어클립 패드) | 디지털 \`D2~D13\`, 아날로그 \`A0~A5\` | \`GP0~GP22\`, ADC \`GP26~GP28\` |
+| 내장 특화 기능 | 5×5 LED 행렬, A/B 버튼, 온도·조도·가속도 센서 | 내장 LED(\`D13\`), 풍부한 실드 생태계 | 내장 LED(\`GP25\`), 고속 듀얼코어 RP2040 |
+
+---
+
+# 2. 실습 ① BBC 마이크로비트: 스마트 자동 야간 가로등
+> [!CALLOUT:💡] **실습 방법:** 아래 시뮬레이터에서 **[▶ 시뮬레이션 시작]**을 누른 뒤, **주변 밝기(조도) 슬라이더**를 \`100\` 미만으로 낮추어 5×5 LED 행렬과 \`P0\` 외부 가로등 LED가 자동으로 켜지는지 확인해 보세요!
+
+\`\`\`physical:실습 1. 마이크로비트 조도 센서 기반 스마트 야간 가로등
+# @physical_config: {"board":"microbit","components":[{"id":"c1","type":"light_sensor","pin":"P1","label":"주변 밝기(조도)"},{"id":"c2","type":"led","pin":"P0","label":"가로등 LED","color":"yellow"}],"missionPrompt":"조도 센서 슬라이더 값을 100 미만으로 낮추었을 때 5x5 LED 행렬과 P0 가로등 LED가 자동으로 켜지도록 기준값(100)을 150으로 수정해 보세요!"}
+from microbit import *
+
+while True:
+    light = display.read_light_level()
+    print("현재 조도 밝기:", light)
+    if light < 100:
+        display.show(Image.HEART)
+        pin0.write_digital(1)
+    else:
+        display.clear()
+        pin0.write_digital(0)
+\`\`\`
+
+---
+
+# 3. 실습 ② 아두이노 Uno R3: 초음파 후방 주차 경보기
+> [!CALLOUT:🔊] **실습 방법:** 아두이노 C/C++ 코드에서 \`pulseIn()\`으로 측정한 거리가 \`20cm\` 이하일 때 \`D8\` 피에조 부저와 \`D12\` 경고등 LED가 동시에 작동합니다. **장애물 거리 슬라이더**를 움직여 보세요!
+
+\`\`\`physical:실습 2. 아두이노 Uno 초음파 거리 센서 & 부저 경보기
+# @physical_config: {"board":"arduino_uno","components":[{"id":"u1","type":"ultrasonic","pin":"D9","label":"초음파 센서(cm)"},{"id":"u2","type":"buzzer","pin":"D8","label":"경보 피에조 부저"},{"id":"u3","type":"led","pin":"D12","label":"위험 경고 LED","color":"red"}],"missionPrompt":"초음파 센서 거리 슬라이더를 20cm 이하로 줄여 부저 경보음과 빨간 경고 LED가 켜지는지 확인하고, 위험 기준 거리를 30cm로 변경해 보세요!"}
+void setup() {
+    Serial.begin(9600);
+    pinMode(9, OUTPUT);
+    pinMode(8, OUTPUT);
+    pinMode(12, OUTPUT);
+}
+
+void loop() {
+    int distance = ultrasonicRead(9);
+    Serial.println(distance);
+
+    if (distance <= 20) {
+        digitalWrite(12, HIGH);
+        tone(8, 880);
+    } else {
+        digitalWrite(12, LOW);
+        noTone(8);
+    }
+    delay(200);
+}
+\`\`\`
+
+---
+
+# 4. 실습 ③ 라즈베리파이 피코: ADC 가변저항 & 서보모터 스마트 차단기
+> [!CALLOUT:🍓] **실습 방법:** 라즈베리파이 피코의 16비트 ADC(\`read_u16() : 0 ~ 65535\`) 값을 \`0° ~ 180°\` 각도로 변환하여 서보모터 회전각을 제어합니다.
+
+\`\`\`physical:실습 3. 라즈베리파이 피코(RP2040) 가변저항 & 서보모터 제어
+# @physical_config: {"board":"rpi_pico","components":[{"id":"p1","type":"potentiometer","pin":"GP26","label":"가변저항 다이얼(ADC0)"},{"id":"p2","type":"servo","pin":"GP16","label":"차단기 서보모터"},{"id":"p3","type":"led","pin":"GP15","label":"개방 표시 LED","color":"green"}],"missionPrompt":"가변저항 다이얼(GP26) 슬라이더를 돌려 서보모터 각도가 90도 이상일 때 초록색 개방 표시 LED(GP15)가 켜지도록 확인해 보세요!"}
+from machine import Pin, PWM, ADC
+import time
+
+adc = ADC(Pin(26))
+servo = PWM(Pin(16))
+servo.freq(50)
+led = Pin(15, Pin.OUT)
+
+while True:
+    raw = adc.read_u16()
+    angle = int(raw * 180 / 65535)
+    print("ADC:", raw, "-> 서보 각도:", angle)
+    servo_angle(16, angle)
+
+    if angle >= 90:
+        led.value(1)
+    else:
+        led.value(0)
+    time.sleep(0.2)
+\`\`\`
+
+\`\`\`quiz
+{"quizId":"quiz_physical_1","questionType":"multiple_choice","questionText":"피지컬 컴퓨팅 시스템에서 조도 센서나 초음파 센서처럼 외부 물리적 환경의 변화를 전기 신호로 측정하여 마이크로컨트롤러에 전달하는 장치를 무엇이라고 하는가?","options":["센서 (Sensor — 입력 장치)","액추에이터 (Actuator — 출력 장치)","컴파일러 (Compiler)","라우터 (Router)"],"correctOptionIndex":0,"answerText":"","explanation":"외부 환경의 빛·소리·온도·거리 등을 감지하여 입력 신호로 바꾸는 장치는 센서(Sensor)이며, LED·서보모터·부저처럼 물리적 동작을 출력하는 장치는 액추에이터(Actuator)입니다.","targetConcept":"센서와 액추에이터의 구분"}
+\`\`\``;
+
+
 

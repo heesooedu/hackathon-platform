@@ -38,6 +38,17 @@ import VPythonRunnerBlock, {
   stripLegacyEarthMoonDefaultCode,
   stripLegacyEarthMoonDefaultTitle,
 } from '@/components/VPythonRunnerBlock';
+import PhysicalComputingBlock, {
+  PHYSICAL_COMPUTING_TEMPLATES,
+  BOARD_META,
+  COMPONENT_CATALOG,
+  parsePhysicalBlockContent,
+  serializePhysicalBlockContent,
+  generateWiringTableRows,
+  PhysicalBoardType,
+  VirtualComponent,
+  LedColorOption,
+} from '@/components/PhysicalComputingBlock';
 import { renderInlineMarkdown } from '@/components/LessonMaterialViewer';
 
 interface NotionBlockEditorProps {
@@ -196,6 +207,28 @@ const BLOCK_TYPE_META: {
       '물리',
       '정보',
       '3d시뮬레이션',
+    ],
+  },
+  {
+    type: 'physical',
+    label: '피지컬 컴퓨팅 실습실 (마이크로비트·아두이노·피코)',
+    desc: 'Tinkercad 스타일로 마이크로비트·아두이노 Uno·라즈베리파이 피코 회로 배선과 코드를 시뮬레이션합니다',
+    badge: '⚡',
+    keywords: [
+      'physical',
+      'microbit',
+      'arduino',
+      'pico',
+      'tinkercad',
+      '피지컬',
+      '피지컬컴퓨팅',
+      '마이크로비트',
+      '아두이노',
+      '라즈베리파이',
+      '피코',
+      '센서',
+      '회로',
+      '정보',
     ],
   },
   {
@@ -754,12 +787,19 @@ export default function NotionBlockEditor({
           ? SIMULATION_TEMPLATES[0].code
           : targetType === 'colab'
           ? COLAB_TEMPLATES[0].code
+          : targetType === 'physical'
+          ? serializePhysicalBlockContent(
+              PHYSICAL_COMPUTING_TEMPLATES[0].config,
+              PHYSICAL_COMPUTING_TEMPLATES[0].code
+            )
           : '',
       caption:
         targetType === 'simulation'
           ? SIMULATION_TEMPLATES[0].caption
           : targetType === 'colab'
           ? COLAB_TEMPLATES[0].caption
+          : targetType === 'physical'
+          ? PHYSICAL_COMPUTING_TEMPLATES[0].caption
           : undefined,
       icon: targetType === 'callout' ? '💡' : undefined,
       language: targetType === 'code' ? 'python' : undefined,
@@ -1539,6 +1579,7 @@ export default function NotionBlockEditor({
       block.type === 'code' ||
       block.type === 'colab' ||
       block.type === 'vpython' ||
+      block.type === 'physical' ||
       block.type === 'mermaid' ||
       block.type === 'simulation' ||
       block.type === 'quiz' ||
@@ -1587,6 +1628,7 @@ export default function NotionBlockEditor({
       block.type === 'code' ||
       block.type === 'colab' ||
       block.type === 'vpython' ||
+      block.type === 'physical' ||
       block.type === 'mermaid' ||
       block.type === 'simulation' ||
       block.type === 'quiz' ||
@@ -1703,6 +1745,10 @@ export default function NotionBlockEditor({
     const defaultMermaid = MERMAID_TEMPLATES[0].code;
     const defaultSimulation = SIMULATION_TEMPLATES[0].code;
     const defaultColab = COLAB_TEMPLATES[0].code;
+    const defaultPhysical = serializePhysicalBlockContent(
+      PHYSICAL_COMPUTING_TEMPLATES[0].config,
+      PHYSICAL_COMPUTING_TEMPLATES[0].code
+    );
 
     const isUrlContent = /^https?:\/\//i.test(cleanedContent.trim());
 
@@ -1715,6 +1761,8 @@ export default function NotionBlockEditor({
           ? defaultSimulation
           : targetType === 'colab' && !cleanedContent.trim()
           ? defaultColab
+          : targetType === 'physical' && !cleanedContent.trim()
+          ? defaultPhysical
           : targetType === 'youtube' || targetType === 'link'
           ? isUrlContent
             ? ''
@@ -1729,6 +1777,8 @@ export default function NotionBlockEditor({
           ? block.caption || SIMULATION_TEMPLATES[0].caption
           : targetType === 'colab'
           ? block.caption || COLAB_TEMPLATES[0].caption
+          : targetType === 'physical'
+          ? block.caption || PHYSICAL_COMPUTING_TEMPLATES[0].caption
           : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
@@ -1883,8 +1933,11 @@ export default function NotionBlockEditor({
       let indent = leadingSpacesMatch ? leadingSpacesMatch[1] : '';
 
       const trimmedLine = (
-        block.type === 'vpython' || block.type === 'colab' || block.type === 'code'
-          ? currentLine.replace(/#.*$/, '')
+        block.type === 'vpython' ||
+        block.type === 'colab' ||
+        block.type === 'code' ||
+        block.type === 'physical'
+          ? currentLine.replace(/(#|\/\/).*$/, '')
           : currentLine
       ).trimEnd();
       // Python의 콜론(:), 또는 중괄호/대괄호/소괄호 열림({, [, () 혹은 Mermaid의 subgraph 끝에서 자동 추가 들여쓰기
@@ -1899,7 +1952,10 @@ export default function NotionBlockEditor({
         indent += indentUnit;
       } else if (
         indent.length >= 4 &&
-        (block.type === 'vpython' || block.type === 'colab' || block.type === 'code') &&
+        (block.type === 'vpython' ||
+          block.type === 'colab' ||
+          block.type === 'code' ||
+          block.type === 'physical') &&
         /^(return|break|continue|pass|raise)(\b|\s|$)/.test(trimmedLine.trim())
       ) {
         indent = indent.slice(0, -4);
@@ -2139,12 +2195,19 @@ export default function NotionBlockEditor({
             ? SIMULATION_TEMPLATES[0].code
             : targetType === 'colab'
             ? COLAB_TEMPLATES[0].code
+            : targetType === 'physical'
+            ? serializePhysicalBlockContent(
+                PHYSICAL_COMPUTING_TEMPLATES[0].config,
+                PHYSICAL_COMPUTING_TEMPLATES[0].code
+              )
             : '',
         caption:
           targetType === 'simulation'
             ? SIMULATION_TEMPLATES[0].caption
             : targetType === 'colab'
             ? COLAB_TEMPLATES[0].caption
+            : targetType === 'physical'
+            ? PHYSICAL_COMPUTING_TEMPLATES[0].caption
             : undefined,
         icon: targetType === 'callout' ? '💡' : undefined,
         language: targetType === 'code' ? 'python' : undefined,
@@ -2294,6 +2357,8 @@ export default function NotionBlockEditor({
                     ? 'Colab'
                     : item.type === 'vpython'
                     ? '3D'
+                    : item.type === 'physical'
+                    ? '피지컬'
                     : item.type === 'simulation'
                     ? '실험'
                     : item.type === 'quiz'
@@ -3014,6 +3079,7 @@ export default function NotionBlockEditor({
                                   (block.type !== 'code' &&
                                     block.type !== 'colab' &&
                                     block.type !== 'vpython' &&
+                                    block.type !== 'physical' &&
                                     block.type !== 'mermaid' &&
                                     block.type !== 'simulation' &&
                                     block.type !== 'table' &&
@@ -4052,6 +4118,449 @@ export default function NotionBlockEditor({
                     </div>
                   </div>
                 )}
+
+                {/* 9-2D. ⚡ 정보 교과 특화: 피지컬 컴퓨팅 가상 회로 & 코드 시뮬레이터 (마이크로비트·아두이노 Uno·라즈베리파이 피코) */}
+                {block.type === 'physical' && (() => {
+                  const parsedPhysical = parsePhysicalBlockContent(block.content);
+                  const activeBoard = parsedPhysical.config.board;
+                  const activeBoardMeta = BOARD_META[activeBoard];
+                  const boardTemplates = PHYSICAL_COMPUTING_TEMPLATES.filter(
+                    (t) => t.config.board === activeBoard
+                  );
+
+                  return (
+                    <div className="my-2 overflow-hidden rounded-2xl border-2 border-teal-400 bg-teal-50/20 shadow-sm">
+                      {/* 상단 헤더: 보드/제목/외부 링크 & 부품 준비물·배선표 원클릭 생성 */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/80 bg-teal-50/90 px-4 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                          <span className="rounded-md bg-teal-700 px-2.5 py-0.5 text-[11px] font-extrabold text-white shrink-0">
+                            ⚡ 피지컬 컴퓨팅 실습실 (Tinkercad 스타일)
+                          </span>
+                          <input
+                            type="text"
+                            value={block.caption || ''}
+                            onChange={(e) =>
+                              updateBlock(block.id, { caption: e.target.value })
+                            }
+                            placeholder="(선택) 피지컬 컴퓨팅 실습 제목 입력..."
+                            className="flex-1 min-w-[180px] rounded-lg border border-teal-300 bg-white px-2.5 py-1 text-xs font-bold text-teal-950 placeholder:text-gray-400 focus:border-teal-500 focus:outline-none"
+                          />
+                          <input
+                            type="url"
+                            value={block.externalUrl || ''}
+                            onChange={(e) =>
+                              updateBlock(block.id, {
+                                externalUrl: e.target.value,
+                              })
+                            }
+                            placeholder="(선택) Tinkercad Circuits / Wokwi / MakeCode 공유 링크..."
+                            className="w-64 rounded-lg border border-teal-200 bg-white px-2.5 py-1 text-xs text-gray-700 placeholder:text-gray-400 focus:border-teal-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const tableRows = generateWiringTableRows(
+                                parsedPhysical.config
+                              );
+                              insertBlockAfter(idx, {
+                                id: createBlockId(),
+                                type: 'table',
+                                content: '',
+                                tableRows,
+                                hasTableHeader: true,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-300 bg-indigo-600 px-3 py-1 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer"
+                            title="현재 회로의 보드와 부품 핀 연결 상태를 표(Table) 블록으로 바로 아래에 자동 생성합니다"
+                          >
+                            <span>📋 아래에 부품 준비물·핀 배선표 자동 삽입</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 2단: 마이크로컨트롤러 3종 보드 선택 탭 & 보드별 교과 실습 템플릿 */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/60 bg-white/90 px-4 py-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] font-extrabold text-teal-900 mr-1">
+                            🎛️ 실습 보드 선택:
+                          </span>
+                          {(
+                            ['microbit', 'arduino_uno', 'rpi_pico'] as PhysicalBoardType[]
+                          ).map((bKey) => {
+                            const meta = BOARD_META[bKey];
+                            const isSelected = activeBoard === bKey;
+                            return (
+                              <button
+                                key={bKey}
+                                type="button"
+                                onClick={() => {
+                                  const firstTpl = PHYSICAL_COMPUTING_TEMPLATES.find(
+                                    (t) => t.config.board === bKey
+                                  );
+                                  if (firstTpl) {
+                                    updateBlock(block.id, {
+                                      content: serializePhysicalBlockContent(
+                                        firstTpl.config,
+                                        firstTpl.code
+                                      ),
+                                      caption: firstTpl.caption,
+                                    });
+                                  }
+                                }}
+                                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-extrabold transition cursor-pointer ${
+                                  isSelected
+                                    ? 'border-teal-600 bg-teal-600 text-white shadow-xs'
+                                    : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-teal-300 hover:bg-teal-50'
+                                }`}
+                              >
+                                <span>{meta.badge}</span>
+                                <span>{meta.shortLabel}</span>
+                                <span
+                                  className={`text-[10px] font-medium ${
+                                    isSelected ? 'text-teal-100' : 'text-gray-400'
+                                  }`}
+                                >
+                                  ({meta.languageLabel})
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] font-bold text-teal-900">
+                            📚 {activeBoardMeta.shortLabel} 실습 예제:
+                          </span>
+                          {boardTemplates.map((tpl) => (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              onClick={() =>
+                                updateBlock(block.id, {
+                                  content: serializePhysicalBlockContent(
+                                    tpl.config,
+                                    tpl.code
+                                  ),
+                                  caption: tpl.caption,
+                                })
+                              }
+                              className="rounded-lg border border-teal-300 bg-teal-50/70 px-2.5 py-1 text-[11px] font-bold text-teal-900 hover:bg-teal-100 transition cursor-pointer"
+                            >
+                              {tpl.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 3단: 브레드보드 센서·액추에이터 부품 조립 & 핀(Pin) 배선 설정 빌더 */}
+                      <div className="border-b border-teal-200/60 bg-slate-50/90 px-4 py-3 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <span className="text-[11px] font-extrabold text-slate-700 mr-1">
+                              🔌 브레드보드 부품 추가:
+                            </span>
+                            {COMPONENT_CATALOG.map((item) => (
+                              <button
+                                key={item.type}
+                                type="button"
+                                onClick={() => {
+                                  const nextPin =
+                                    activeBoardMeta.availablePins[
+                                      parsedPhysical.config.components.length %
+                                        activeBoardMeta.availablePins.length
+                                    ] || activeBoardMeta.availablePins[0];
+                                  const newComp: VirtualComponent = {
+                                    id: `${item.type}_${Date.now().toString(36)}`,
+                                    type: item.type,
+                                    pin: nextPin,
+                                    label: item.label,
+                                    color: item.type === 'led' ? 'red' : undefined,
+                                  };
+                                  const nextConfig = {
+                                    ...parsedPhysical.config,
+                                    components: [
+                                      ...parsedPhysical.config.components,
+                                      newComp,
+                                    ],
+                                  };
+                                  updateBlock(block.id, {
+                                    content: serializePhysicalBlockContent(
+                                      nextConfig,
+                                      parsedPhysical.code
+                                    ),
+                                  });
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-bold text-slate-700 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-900 transition cursor-pointer"
+                                title={`${item.label} (${item.ioType}) — ${item.wiringNote}`}
+                              >
+                                <span>{item.icon}</span>
+                                <span>+ {item.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 현재 연결된 부품 & 핀 배선 목록 */}
+                        {parsedPhysical.config.components.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            {parsedPhysical.config.components.map((comp, cIdx) => {
+                              const meta = COMPONENT_CATALOG.find(
+                                (m) => m.type === comp.type
+                              );
+                              return (
+                                <div
+                                  key={comp.id}
+                                  className="inline-flex items-center gap-1.5 rounded-xl border border-teal-300 bg-white px-2.5 py-1 text-xs shadow-2xs"
+                                >
+                                  <span>{meta?.icon || '🔌'}</span>
+                                  <input
+                                    type="text"
+                                    value={comp.label}
+                                    onChange={(e) => {
+                                      const nextComps = [
+                                        ...parsedPhysical.config.components,
+                                      ];
+                                      nextComps[cIdx] = {
+                                        ...comp,
+                                        label: e.target.value,
+                                      };
+                                      updateBlock(block.id, {
+                                        content: serializePhysicalBlockContent(
+                                          {
+                                            ...parsedPhysical.config,
+                                            components: nextComps,
+                                          },
+                                          parsedPhysical.code
+                                        ),
+                                      });
+                                    }}
+                                    className="w-24 rounded border border-gray-200 px-1.5 py-0.5 text-[11px] font-bold text-gray-800 focus:border-teal-500 focus:outline-none"
+                                  />
+                                  <span className="text-[10px] font-bold text-gray-400">
+                                    핀:
+                                  </span>
+                                  <select
+                                    value={comp.pin}
+                                    onChange={(e) => {
+                                      const nextComps = [
+                                        ...parsedPhysical.config.components,
+                                      ];
+                                      nextComps[cIdx] = {
+                                        ...comp,
+                                        pin: e.target.value,
+                                      };
+                                      updateBlock(block.id, {
+                                        content: serializePhysicalBlockContent(
+                                          {
+                                            ...parsedPhysical.config,
+                                            components: nextComps,
+                                          },
+                                          parsedPhysical.code
+                                        ),
+                                      });
+                                    }}
+                                    className="rounded border border-teal-300 bg-teal-50 px-1.5 py-0.5 font-mono text-[11px] font-extrabold text-teal-900 focus:outline-none"
+                                  >
+                                    {activeBoardMeta.availablePins.map((p) => (
+                                      <option key={p} value={p}>
+                                        {p}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {comp.type === 'led' && (
+                                    <select
+                                      value={comp.color || 'red'}
+                                      onChange={(e) => {
+                                        const nextComps = [
+                                          ...parsedPhysical.config.components,
+                                        ];
+                                        nextComps[cIdx] = {
+                                          ...comp,
+                                          color: e.target.value as LedColorOption,
+                                        };
+                                        updateBlock(block.id, {
+                                          content: serializePhysicalBlockContent(
+                                            {
+                                              ...parsedPhysical.config,
+                                              components: nextComps,
+                                            },
+                                            parsedPhysical.code
+                                          ),
+                                        });
+                                      }}
+                                      className="rounded border border-gray-200 bg-gray-50 px-1 py-0.5 text-[10px] font-bold text-gray-700"
+                                    >
+                                      <option value="red">🔴 빨강</option>
+                                      <option value="yellow">🟡 노랑</option>
+                                      <option value="green">🟢 초록</option>
+                                      <option value="blue">🔵 파랑</option>
+                                    </select>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const nextComps =
+                                        parsedPhysical.config.components.filter(
+                                          (_, i) => i !== cIdx
+                                        );
+                                      updateBlock(block.id, {
+                                        content: serializePhysicalBlockContent(
+                                          {
+                                            ...parsedPhysical.config,
+                                            components: nextComps,
+                                          },
+                                          parsedPhysical.code
+                                        ),
+                                      });
+                                    }}
+                                    className="ml-0.5 text-gray-400 hover:text-rose-600 font-bold cursor-pointer"
+                                    title="부품 제거"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* 학생 실습 미션 안내문 입력 */}
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <span className="text-[11px] font-extrabold text-amber-800 shrink-0">
+                            🎯 학생 실습 미션 안내:
+                          </span>
+                          <input
+                            type="text"
+                            value={parsedPhysical.config.missionPrompt || ''}
+                            onChange={(e) => {
+                              updateBlock(block.id, {
+                                content: serializePhysicalBlockContent(
+                                  {
+                                    ...parsedPhysical.config,
+                                    missionPrompt: e.target.value,
+                                  },
+                                  parsedPhysical.code
+                                ),
+                              });
+                            }}
+                            placeholder="예: 초음파 센서 거리 슬라이더를 10cm 이하로 줄였을 때 부저 경보음과 빨간 LED가 동시에 켜지도록 코드를 완성해 보세요!"
+                            className="flex-1 rounded-lg border border-amber-300 bg-amber-50/60 px-2.5 py-1 text-xs font-semibold text-amber-950 placeholder:text-amber-700/50 focus:border-amber-500 focus:bg-white focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4단: 좌측 펌웨어 코드 에디터 + 우측 Tinkercad 스타일 가상 회로 & 실시간 시뮬레이터 미리보기 */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+                        <div className="rounded-xl border border-slate-800 bg-slate-900 p-3.5 text-slate-100">
+                          <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
+                            <span className="font-bold text-teal-300">
+                              💻 {activeBoardMeta.label} 펌웨어 코드 ({activeBoardMeta.languageLabel})
+                            </span>
+                            <span>Enter 자동 들여쓰기 · Tab 4칸</span>
+                          </div>
+                          <AutoResizeTextarea
+                            value={parsedPhysical.code}
+                            spellCheck={false}
+                            inputRef={(el) => {
+                              blockRefs.current[block.id] = el;
+                            }}
+                            onChange={(val) =>
+                              updateBlock(block.id, {
+                                content: serializePhysicalBlockContent(
+                                  parsedPhysical.config,
+                                  val
+                                ),
+                              })
+                            }
+                            onKeyDown={(e) => {
+                              // Physical 블록은 JSON 메타데이터 헤더를 보존한 채 코드 영역만 스마트 들여쓰기 처리
+                              if (
+                                e.key === 'Enter' &&
+                                !e.shiftKey &&
+                                !e.ctrlKey &&
+                                !e.metaKey
+                              ) {
+                                e.preventDefault();
+                                const target = e.currentTarget;
+                                const start = target.selectionStart;
+                                const end = target.selectionEnd;
+                                const codeVal = parsedPhysical.code;
+                                const before = codeVal.slice(0, start);
+                                const after = codeVal.slice(end);
+                                const currentLine = before.split('\n').pop() || '';
+                                const leadingMatch = currentLine.match(/^(\s*)/);
+                                let indent = leadingMatch ? leadingMatch[1] : '';
+                                const stripped = currentLine
+                                  .replace(/(#|\/\/).*$/, '')
+                                  .trimEnd();
+                                if (
+                                  stripped.endsWith(':') ||
+                                  stripped.endsWith('{') ||
+                                  stripped.endsWith('(')
+                                ) {
+                                  indent += '    ';
+                                }
+                                const nextCode = before + '\n' + indent + after;
+                                const nextPos = start + 1 + indent.length;
+                                updateBlock(block.id, {
+                                  content: serializePhysicalBlockContent(
+                                    parsedPhysical.config,
+                                    nextCode
+                                  ),
+                                });
+                                requestAnimationFrame(() => {
+                                  target.focus();
+                                  target.setSelectionRange(nextPos, nextPos);
+                                });
+                                return;
+                              }
+                              if (e.key === 'Tab') {
+                                e.preventDefault();
+                                const target = e.currentTarget;
+                                const start = target.selectionStart;
+                                const end = target.selectionEnd;
+                                const codeVal = parsedPhysical.code;
+                                const nextCode =
+                                  codeVal.slice(0, start) +
+                                  '    ' +
+                                  codeVal.slice(end);
+                                const nextPos = start + 4;
+                                updateBlock(block.id, {
+                                  content: serializePhysicalBlockContent(
+                                    parsedPhysical.config,
+                                    nextCode
+                                  ),
+                                });
+                                requestAnimationFrame(() => {
+                                  target.focus();
+                                  target.setSelectionRange(nextPos, nextPos);
+                                });
+                              }
+                            }}
+                            placeholder="마이크로비트(MicroPython), 아두이노 Uno(C/C++), 라즈베리파이 피코(machine) 코드를 작성하세요..."
+                            className="font-mono text-xs sm:text-sm text-teal-200 leading-relaxed placeholder:text-slate-600"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="text-[11px] font-bold text-teal-900 px-1 mb-1">
+                            👁️ 실시간 가상 보드 & 브레드보드 회로 시뮬레이터 미리보기
+                          </div>
+                          <PhysicalComputingBlock
+                            key={block.id}
+                            rawContent={block.content}
+                            caption={block.caption}
+                            externalUrl={block.externalUrl}
+                            compact
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 9-3. 노션 스타일 표 블록 (Table) */}
                 {block.type === 'table' && (() => {

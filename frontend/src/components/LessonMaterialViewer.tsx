@@ -19,6 +19,7 @@ import MermaidDiagram from '@/components/MermaidDiagram';
 import SimulationBlockPreview from '@/components/SimulationBlockPreview';
 import ColabRunnerBlock from '@/components/ColabRunnerBlock';
 import VPythonRunnerBlock from '@/components/VPythonRunnerBlock';
+import PhysicalComputingBlock from '@/components/PhysicalComputingBlock';
 import InlineQuizBlockView from '@/components/InlineQuizBlockView';
 import {
   updateLessonMaterialAction,
@@ -320,6 +321,17 @@ export function SimpleMarkdownRenderer({
           key={block.id}
           initialCode={block.content}
           title={block.caption}
+          externalUrl={block.externalUrl}
+        />
+      );
+    }
+
+    if (block.type === 'physical') {
+      return (
+        <PhysicalComputingBlock
+          key={block.id}
+          rawContent={block.content}
+          caption={block.caption}
           externalUrl={block.externalUrl}
         />
       );

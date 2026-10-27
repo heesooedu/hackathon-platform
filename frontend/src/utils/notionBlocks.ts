@@ -12,6 +12,7 @@ export type NotionBlockType =
   | 'code'
   | 'colab'
   | 'vpython'
+  | 'physical'
   | 'mermaid'
   | 'simulation'
   | 'quiz'
@@ -824,6 +825,27 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           quizData,
         });
       } else if (
+        langRaw === 'physical' ||
+        langRaw.startsWith('physical:') ||
+        langRaw === 'microbit' ||
+        langRaw.startsWith('microbit:') ||
+        langRaw === 'arduino' ||
+        langRaw.startsWith('arduino:') ||
+        langRaw === 'pico' ||
+        langRaw.startsWith('pico:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        blocks.push({
+          id: createBlockId(),
+          type: 'physical',
+          caption: (rawCaption || '').trim(),
+          externalUrl: rawUrl ? rawUrl.trim() : undefined,
+          content: codeLines.join('\n'),
+        });
+      } else if (
         langRaw === 'youtube' ||
         langRaw.startsWith('youtube:') ||
         langRaw === 'yt' ||
@@ -1100,6 +1122,7 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
       b.type === 'table' ||
       b.type === 'quiz' ||
       b.type === 'vpython' ||
+      b.type === 'physical' ||
       b.type === 'colab' ||
       b.type === 'youtube' ||
       b.type === 'link' ||
@@ -1214,6 +1237,20 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
             : '';
         lines.push(
           `\`\`\`vpython${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+        );
+        break;
+      }
+      case 'physical': {
+        const safeTitle = (b.caption || '')
+          .replace(/[\n|]/g, ' ')
+          .trim();
+        const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+        const meta =
+          safeTitle || safeUrl
+            ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+            : '';
+        lines.push(
+          `\`\`\`physical${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
         );
         break;
       }

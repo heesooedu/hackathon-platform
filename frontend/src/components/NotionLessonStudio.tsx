@@ -23,6 +23,7 @@ import {
   SAMPLE_GENERAL_MARKDOWN,
   SAMPLE_MATH_MARKDOWN,
   SAMPLE_PHYSICS_MARKDOWN,
+  SAMPLE_PHYSICAL_COMPUTING_MARKDOWN,
 } from '@/utils/sampleMaterials';
 import { parseLessonMaterial } from '@/utils/materialPayload';
 import { Lesson, MaterialType, ClassItem } from '@/types/database.types';
@@ -167,7 +168,9 @@ export default function NotionLessonStudio({
     setSelectedDeployClassIds(unlinked);
   }
 
-  function applySampleTemplate(type: 'general' | 'math' | 'physics' | 'html') {
+  function applySampleTemplate(
+    type: 'general' | 'math' | 'physics' | 'physical' | 'html'
+  ) {
     setErrorMessage(null);
     setPreviewMode(false);
     if (type === 'general') {
@@ -209,6 +212,21 @@ export default function NotionLessonStudio({
       setBlocks(markdownToBlocks(SAMPLE_PHYSICS_MARKDOWN));
       setMaterialFileName('4차시_물리_포물선운동_노션실험교안.md');
       setUploadSuccessBadge('물리 노션 교안(인라인 JS 운동 시뮬레이션 포함) 로드됨');
+    } else if (type === 'physical') {
+      setPageIcon('💻');
+      setSubjectCategory('정보');
+      setUnitCategory('4단원. 컴퓨팅 시스템과 피지컬 컴퓨팅');
+      setSessionNumber('5');
+      setTitle('5차시: 센서와 액추에이터를 활용한 피지컬 컴퓨팅 제어 실습 (micro:bit · Arduino · Pico)');
+      setLearningObjective(
+        '센서(입력)와 액추에이터(출력)의 역할을 이해하고, 마이크로비트·아두이노 Uno·라즈베리파이 피코 보드의 가상 회로 시뮬레이터에서 조건 제어 프로그램을 작성·실행할 수 있다.'
+      );
+      setMaterialType('markdown');
+      setBlocks(markdownToBlocks(SAMPLE_PHYSICAL_COMPUTING_MARKDOWN));
+      setMaterialFileName('5차시_정보_피지컬컴퓨팅_3종보드_실습교안.md');
+      setUploadSuccessBadge(
+        '정보 교과 피지컬 컴퓨팅(마이크로비트·아두이노 Uno·라즈베리파이 피코) 실습 교안 로드됨'
+      );
     } else {
       setPageIcon('⚡');
       setSubjectCategory('수학');
@@ -544,6 +562,13 @@ export default function NotionLessonStudio({
                 className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-100 transition"
               >
                 <span>📐 수학 개념 노션 교안 예시</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applySampleTemplate('physical')}
+                className="inline-flex items-center gap-1 rounded-xl border border-emerald-300 bg-emerald-50/90 px-3 py-1.5 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100 transition cursor-pointer shadow-2xs"
+              >
+                <span>🤖 정보: 피지컬 컴퓨팅 실습 (마이크로비트·아두이노·피코)</span>
               </button>
               <button
                 type="button"
