@@ -67,12 +67,21 @@ export interface NotionBlock {
   tableRowHeights?: number[]; // 표 각 행(row)의 사용자 지정 세로 높이(px, 0이면 자동)
   quizData?: InlineQuizBlockData; // 인라인 체크포인트 퀴즈 블록 데이터
   rowId?: string; // 같은 rowId를 공유하는 인접 블록들은 가로 다단(Side-by-Side Row)으로 나란히 조립됨
-  widthPercent?: number; // 블록의 가로 너비 비율 (18~100%, 다단 행 내에서는 열 너비 비중, 단독 블록에서는 가로 폭 %)
+  colId?: string; // 같은 rowId 안에서 같은 colId를 공유하는 블록들은 하나의 세로 열(Column Stack) 안에 상하로 쌓임
+  widthPercent?: number; // 블록(또는 해당 열)의 가로 너비 비율 (15~100%, 다단 행 내에서는 열 너비 비중, 단독 블록에서는 가로 폭 %)
+  stackHeightPercent?: number; // 같은 열(colId) 안에 2개 이상의 블록이 상하로 쌓여 있을 때 각 블록의 세로 높이 비중 (15~85%)
+}
+
+export interface NotionBlockColumnGroup {
+  colId: string;
+  items: { block: NotionBlock; index: number }[];
+  widthPercent?: number;
 }
 
 export interface NotionBlockRowGroup {
   rowId: string | null;
   items: { block: NotionBlock; index: number }[];
+  columns: NotionBlockColumnGroup[];
 }
 
 export function createBlockId(): string {
@@ -83,27 +92,60 @@ export function createRowId(): string {
   return `row-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+export function createColId(): string {
+  return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 /**
- * 연속된 블록 중 같은 rowId를 가진 블록들을 하나의 가로 다단 행(Row Group, 최대 4열)으로 묶어 반환합니다.
+ * 연속된 블록 중 같은 rowId를 가진 블록들을 하나의 가로 다단 행(Row Group, 최대 4열)으로 묶고,
+ * 행 내부에서 같은 colId를 공유하는 블록들은 하나의 세로 열(Column Stack)로 묶어 반환합니다.
  */
 export function groupBlocksIntoRows(blocks: NotionBlock[]): NotionBlockRowGroup[] {
   const groups: NotionBlockRowGroup[] = [];
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     const rId = b.rowId?.trim() || null;
+    const cId = b.colId?.trim() || b.id;
+
     if (
       rId &&
       groups.length > 0 &&
-      groups[groups.length - 1].rowId === rId &&
-      groups[groups.length - 1].items.length < 4
+      groups[groups.length - 1].rowId === rId
     ) {
-      groups[groups.length - 1].items.push({ block: b, index: i });
-    } else {
-      groups.push({
-        rowId: rId,
-        items: [{ block: b, index: i }],
-      });
+      const lastGroup = groups[groups.length - 1];
+      const existingCol = lastGroup.columns.find((c) => c.colId === cId);
+      if (existingCol) {
+        lastGroup.items.push({ block: b, index: i });
+        existingCol.items.push({ block: b, index: i });
+        if (
+          typeof existingCol.widthPercent !== 'number' &&
+          typeof b.widthPercent === 'number'
+        ) {
+          existingCol.widthPercent = b.widthPercent;
+        }
+        continue;
+      } else if (lastGroup.columns.length < 4) {
+        lastGroup.items.push({ block: b, index: i });
+        lastGroup.columns.push({
+          colId: cId,
+          items: [{ block: b, index: i }],
+          widthPercent: b.widthPercent,
+        });
+        continue;
+      }
     }
+
+    groups.push({
+      rowId: rId,
+      items: [{ block: b, index: i }],
+      columns: [
+        {
+          colId: cId,
+          items: [{ block: b, index: i }],
+          widthPercent: b.widthPercent,
+        },
+      ],
+    });
   }
   return groups;
 }
@@ -143,25 +185,144 @@ export function getNormalizedRowWidths(
 }
 
 /**
- * 블록 삭제·이동·분리 후 혼자 남은(인접 블록과 rowId를 공유하지 않는) 고아 rowId를 정리합니다.
+ * 한 행(Row Group) 내부 열(Column Group)들의 가로 너비 비율(%)을 합계 100%가 되도록 정규화하여 반환합니다.
+ */
+export function getNormalizedColumnWidths(
+  columns: NotionBlockColumnGroup[]
+): number[] {
+  const n = columns.length;
+  if (n === 0) return [];
+  if (n === 1) {
+    const w = columns[0].widthPercent ?? columns[0].items[0]?.block.widthPercent;
+    return [
+      typeof w === 'number' && Number.isFinite(w)
+        ? Math.min(100, Math.max(25, Math.round(w)))
+        : 100,
+    ];
+  }
+
+  const rawWeights = columns.map((col) => {
+    const w = col.widthPercent ?? col.items[0]?.block.widthPercent;
+    return typeof w === 'number' && Number.isFinite(w) && w >= 15
+      ? w
+      : 100 / n;
+  });
+  const total = rawWeights.reduce((acc, v) => acc + v, 0) || 100;
+  const normalized = rawWeights.map((w) =>
+    Math.max(15, Math.round((w / total) * 100))
+  );
+  const sumExceptLast = normalized
+    .slice(0, n - 1)
+    .reduce((acc, v) => acc + v, 0);
+  normalized[n - 1] = Math.max(15, 100 - sumExceptLast);
+  return normalized;
+}
+
+/**
+ * 한 열(Column Stack) 내부에 상하로 쌓인 블록들의 세로 높이 비율(%)을 합계 100%가 되도록 정규화하여 반환합니다.
+ */
+export function getNormalizedStackHeights(
+  items: { block: NotionBlock }[]
+): number[] {
+  const n = items.length;
+  if (n === 0) return [];
+  if (n === 1) return [100];
+
+  const rawWeights = items.map((it) => {
+    const h = it.block.stackHeightPercent;
+    return typeof h === 'number' && Number.isFinite(h) && h >= 15
+      ? h
+      : 100 / n;
+  });
+  const total = rawWeights.reduce((acc, v) => acc + v, 0) || 100;
+  const normalized = rawWeights.map((h) =>
+    Math.max(15, Math.round((h / total) * 100))
+  );
+  const sumExceptLast = normalized
+    .slice(0, n - 1)
+    .reduce((acc, v) => acc + v, 0);
+  normalized[n - 1] = Math.max(15, 100 - sumExceptLast);
+  return normalized;
+}
+
+/**
+ * 블록 삭제·이동·분리 후 혼자 남은(인접한 다른 열과 rowId를 공유하지 않는) 고아 rowId/colId를 정리합니다.
+ * 또한 같은 rowId 내에서 같은 colId를 가진 블록들이 연속으로 모여 있도록 정렬을 보정합니다.
  */
 export function cleanupOrphanRowIds(blocks: NotionBlock[]): NotionBlock[] {
-  return blocks.map((b, idx) => {
-    const rId = b.rowId?.trim();
-    if (!rId) return b;
-    const prevSame = idx > 0 && blocks[idx - 1].rowId?.trim() === rId;
-    const nextSame =
-      idx < blocks.length - 1 && blocks[idx + 1].rowId?.trim() === rId;
-    if (!prevSame && !nextSame) {
-      const nextBlock: NotionBlock = { ...b, rowId: undefined };
-      // 다단 행에서 50% 등으로 분할되어 있던 폭은 단독 블록으로 돌아올 때 100%로 복원
-      if (typeof nextBlock.widthPercent === 'number' && nextBlock.widthPercent <= 85) {
-        delete nextBlock.widthPercent;
-      }
-      return nextBlock;
+  // 1) 연속된 동일 rowId 구간 내에서 같은 colId 블록들이 흩어지지 않도록 순서 보정
+  const clustered: NotionBlock[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const rId = blocks[i].rowId?.trim();
+    if (!rId) {
+      clustered.push(blocks[i]);
+      i++;
+      continue;
     }
-    return b;
-  });
+    let j = i;
+    while (j < blocks.length && blocks[j].rowId?.trim() === rId) {
+      j++;
+    }
+    const rowSlice = blocks.slice(i, j);
+    const colOrder: string[] = [];
+    const colBuckets = new Map<string, NotionBlock[]>();
+    for (const b of rowSlice) {
+      const cId = b.colId?.trim() || b.id;
+      if (!colBuckets.has(cId)) {
+        colOrder.push(cId);
+        colBuckets.set(cId, []);
+      }
+      colBuckets.get(cId)!.push(b);
+    }
+    for (const cId of colOrder) {
+      const colItems = colBuckets.get(cId)!;
+      for (const b of colItems) {
+        clustered.push(b);
+      }
+    }
+    i = j;
+  }
+
+  // 2) 행별로 열(Column) 개수를 확인하여 열이 1개뿐인 행은 일반 세로 블록으로 복원
+  const rowGroups = groupBlocksIntoRows(clustered);
+  const result: NotionBlock[] = [];
+
+  for (const group of rowGroups) {
+    if (!group.rowId || group.columns.length <= 1) {
+      for (const { block } of group.items) {
+        const nextBlock: NotionBlock = {
+          ...block,
+          rowId: undefined,
+          colId: undefined,
+          stackHeightPercent: undefined,
+        };
+        if (
+          typeof nextBlock.widthPercent === 'number' &&
+          nextBlock.widthPercent <= 85 &&
+          Boolean(block.rowId)
+        ) {
+          delete nextBlock.widthPercent;
+        }
+        result.push(nextBlock);
+      }
+    } else {
+      for (const col of group.columns) {
+        const isSingleInCol = col.items.length <= 1;
+        for (const { block } of col.items) {
+          result.push({
+            ...block,
+            colId: col.colId,
+            stackHeightPercent: isSingleInCol
+              ? undefined
+              : block.stackHeightPercent,
+          });
+        }
+      }
+    }
+  }
+
+  return result;
 }
 
 export function createInlineQuizId(): string {
@@ -382,7 +543,9 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
   const blocks: NotionBlock[] = [];
   let pendingLayout: {
     rowId?: string;
+    colId?: string;
     widthPercent?: number;
+    stackHeightPercent?: number;
     tableColWidths?: number[];
     tableRowHeights?: number[];
   } | null = null;
@@ -395,8 +558,14 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           if (pendingLayout.rowId) {
             blocks[bIdx].rowId = pendingLayout.rowId;
           }
+          if (pendingLayout.colId) {
+            blocks[bIdx].colId = pendingLayout.colId;
+          }
           if (typeof pendingLayout.widthPercent === 'number') {
             blocks[bIdx].widthPercent = pendingLayout.widthPercent;
+          }
+          if (typeof pendingLayout.stackHeightPercent === 'number') {
+            blocks[bIdx].stackHeightPercent = pendingLayout.stackHeightPercent;
           }
           if (
             Array.isArray(pendingLayout.tableColWidths) &&
@@ -429,13 +598,15 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       continue;
     }
 
-    // 0-0. 블록 가로 다단 조립 및 가로 폭/표 크기 레이아웃 메타데이터 주석 (<!--block-layout:{"rowId":"...","widthPercent":50}-->)
+    // 0-0. 블록 가로 다단 조립 및 가로 폭/표 크기 레이아웃 메타데이터 주석 (<!--block-layout:{"rowId":"...","colId":"...","widthPercent":50,"stackHeightPercent":50}-->)
     if (line.startsWith('<!--block-layout:') && line.endsWith('-->')) {
       const jsonStr = line.slice('<!--block-layout:'.length, -3).trim();
       try {
         const parsedLayout = JSON.parse(jsonStr) as {
           rowId?: unknown;
+          colId?: unknown;
           widthPercent?: unknown;
+          stackHeightPercent?: unknown;
           tableColWidths?: unknown;
           tableRowHeights?: unknown;
         };
@@ -446,12 +617,25 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
               parsedLayout.rowId.trim()
                 ? parsedLayout.rowId.trim()
                 : undefined,
+            colId:
+              typeof parsedLayout.colId === 'string' &&
+              parsedLayout.colId.trim()
+                ? parsedLayout.colId.trim()
+                : undefined,
             widthPercent:
               typeof parsedLayout.widthPercent === 'number' &&
               Number.isFinite(parsedLayout.widthPercent)
                 ? Math.min(
                     100,
                     Math.max(15, Math.round(parsedLayout.widthPercent))
+                  )
+                : undefined,
+            stackHeightPercent:
+              typeof parsedLayout.stackHeightPercent === 'number' &&
+              Number.isFinite(parsedLayout.stackHeightPercent)
+                ? Math.min(
+                    85,
+                    Math.max(15, Math.round(parsedLayout.stackHeightPercent))
                   )
                 : undefined,
             tableColWidths: Array.isArray(parsedLayout.tableColWidths)
@@ -1145,10 +1329,16 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
     if (lines.length > lineCountBefore) {
       const lastIdx = lines.length - 1;
       const hasRowId = typeof b.rowId === 'string' && b.rowId.trim().length > 0;
+      const hasColId = typeof b.colId === 'string' && b.colId.trim().length > 0;
       const hasCustomWidth =
         typeof b.widthPercent === 'number' &&
         Number.isFinite(b.widthPercent) &&
         (hasRowId || (b.widthPercent >= 15 && b.widthPercent < 100));
+      const hasStackHeight =
+        typeof b.stackHeightPercent === 'number' &&
+        Number.isFinite(b.stackHeightPercent) &&
+        b.stackHeightPercent >= 15 &&
+        b.stackHeightPercent <= 85;
       const hasTableColWidths =
         b.type === 'table' &&
         Array.isArray(b.tableColWidths) &&
@@ -1158,14 +1348,24 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         Array.isArray(b.tableRowHeights) &&
         b.tableRowHeights.some((h) => typeof h === 'number' && h > 0);
 
-      if (hasRowId || hasCustomWidth || hasTableColWidths || hasTableRowHeights) {
+      if (
+        hasRowId ||
+        hasColId ||
+        hasCustomWidth ||
+        hasStackHeight ||
+        hasTableColWidths ||
+        hasTableRowHeights
+      ) {
         const layoutMeta: {
           rowId?: string;
+          colId?: string;
           widthPercent?: number;
+          stackHeightPercent?: number;
           tableColWidths?: number[];
           tableRowHeights?: number[];
         } = {};
         if (hasRowId) layoutMeta.rowId = b.rowId!.trim();
+        if (hasColId) layoutMeta.colId = b.colId!.trim();
         if (
           typeof b.widthPercent === 'number' &&
           Number.isFinite(b.widthPercent)
@@ -1173,6 +1373,12 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           layoutMeta.widthPercent = Math.min(
             100,
             Math.max(15, Math.round(b.widthPercent))
+          );
+        }
+        if (hasStackHeight && typeof b.stackHeightPercent === 'number') {
+          layoutMeta.stackHeightPercent = Math.min(
+            85,
+            Math.max(15, Math.round(b.stackHeightPercent))
           );
         }
         if (hasTableColWidths && b.tableColWidths) {

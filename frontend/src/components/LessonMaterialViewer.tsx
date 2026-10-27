@@ -8,7 +8,8 @@ import {
   blocksToMarkdown,
   getBlockImages,
   groupBlocksIntoRows,
-  getNormalizedRowWidths,
+  getNormalizedColumnWidths,
+  getNormalizedStackHeights,
   extractYouTubeVideoId,
   normalizeExternalUrl,
   NotionBlock,
@@ -626,24 +627,56 @@ export function SimpleMarkdownRenderer({
   return (
     <div className="space-y-3.5 text-sm text-gray-800">
       {rowGroups.map((rowGroup, gIdx) => {
-        if (rowGroup.items.length > 1) {
-          const normalizedWidths = getNormalizedRowWidths(rowGroup.items);
+        if (rowGroup.columns.length > 1) {
+          const normalizedWidths = getNormalizedColumnWidths(rowGroup.columns);
+          const hasStackedColumn = rowGroup.columns.some(
+            (c) => c.items.length > 1
+          );
           return (
             <div
               key={`${rowGroup.rowId || 'row'}_${gIdx}`}
-              className="my-3 flex flex-col md:flex-row md:items-start gap-4 w-full"
+              className={`my-3 flex flex-col md:flex-row ${
+                hasStackedColumn ? 'md:items-stretch' : 'md:items-start'
+              } gap-4 w-full`}
             >
-              {rowGroup.items.map((item, colIdx) => {
+              {rowGroup.columns.map((colGroup, colIdx) => {
                 const wPct =
                   normalizedWidths[colIdx] ??
-                  Math.round(100 / rowGroup.items.length);
+                  Math.round(100 / rowGroup.columns.length);
+                const stackHeights = getNormalizedStackHeights(colGroup.items);
                 return (
                   <div
-                    key={item.block.id}
-                    style={{ flexGrow: wPct }}
-                    className="w-full min-w-0 md:basis-0"
+                    key={`${colGroup.colId}_${colIdx}`}
+                    style={{ flexGrow: wPct, flexShrink: 1 }}
+                    className="w-full min-w-0 md:basis-0 flex flex-col gap-3"
                   >
-                    {renderSingleBlock(item.block, true)}
+                    {colGroup.items.map((item, stackIdx) => {
+                      const stackPct =
+                        stackHeights[stackIdx] ??
+                        Math.round(100 / colGroup.items.length);
+                      const isMultiStack = colGroup.items.length > 1;
+                      return (
+                        <div
+                          key={item.block.id}
+                          style={
+                            isMultiStack
+                              ? {
+                                  flexGrow: stackPct,
+                                  flexShrink: 1,
+                                  flexBasis: 0,
+                                }
+                              : undefined
+                          }
+                          className={`w-full min-w-0 flex flex-col ${
+                            isMultiStack
+                              ? 'rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-xs'
+                              : ''
+                          }`}
+                        >
+                          {renderSingleBlock(item.block, true)}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
