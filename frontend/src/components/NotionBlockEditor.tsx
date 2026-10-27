@@ -4285,6 +4285,7 @@ export default function NotionBlockEditor({
                                       ...parsedPhysical.config.components,
                                       newComp,
                                     ],
+                                    wires: undefined,
                                   };
                                   updateBlock(block.id, {
                                     content: serializePhysicalBlockContent(
@@ -4357,6 +4358,7 @@ export default function NotionBlockEditor({
                                           {
                                             ...parsedPhysical.config,
                                             components: nextComps,
+                                            wires: undefined,
                                           },
                                           parsedPhysical.code
                                         ),
@@ -4411,6 +4413,7 @@ export default function NotionBlockEditor({
                                           {
                                             ...parsedPhysical.config,
                                             components: nextComps,
+                                            wires: undefined,
                                           },
                                           parsedPhysical.code
                                         ),
@@ -4547,7 +4550,7 @@ export default function NotionBlockEditor({
 
                         <div>
                           <div className="text-[11px] font-bold text-teal-900 px-1 mb-1">
-                            👁️ 실시간 가상 보드 & 브레드보드 회로 시뮬레이터 미리보기
+                            👁️ 실시간 가상 보드 & 브레드보드 점퍼선 회로 시뮬레이터 미리보기
                           </div>
                           <PhysicalComputingBlock
                             key={block.id}
@@ -4555,6 +4558,9 @@ export default function NotionBlockEditor({
                             caption={block.caption}
                             externalUrl={block.externalUrl}
                             compact
+                            onChangeContent={(nextRaw) =>
+                              updateBlock(block.id, { content: nextRaw })
+                            }
                           />
                         </div>
                       </div>
