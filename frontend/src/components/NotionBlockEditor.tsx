@@ -1732,6 +1732,12 @@ export default function NotionBlockEditor({
           : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
+      imageSize:
+        targetType === 'image'
+          ? block.rowId
+            ? block.imageSize || 'full'
+            : block.imageSize || 'md'
+          : block.imageSize,
       tableRows:
         targetType === 'table'
           ? block.tableRows && block.tableRows.length > 0
@@ -2039,7 +2045,7 @@ export default function NotionBlockEditor({
           imageUrl: first.url,
           caption: first.caption || b.caption || '',
           images: nextImages,
-          imageSize: b.imageSize || 'md',
+          imageSize: b.rowId ? b.imageSize || 'full' : b.imageSize || 'md',
         };
       });
       onChange(updated);
@@ -2915,7 +2921,7 @@ export default function NotionBlockEditor({
                 }}
                 className={
                   isMultiColumnRow
-                    ? 'flex flex-col lg:flex-row items-stretch'
+                    ? 'flex flex-col md:flex-row items-stretch'
                     : ''
                 }
               >
@@ -2990,7 +2996,7 @@ export default function NotionBlockEditor({
                                   ? {
                                       flexGrow: stackHeightPct,
                                       flexShrink: 1,
-                                      flexBasis: 0,
+                                      flexBasis: `${stackHeightPct}%`,
                                     }
                                   : isMultiColumnRow
                                   ? {
@@ -3112,10 +3118,10 @@ export default function NotionBlockEditor({
                                   setDragOverBlockIdx(null);
                                   setDragOverSide(null);
                                 }}
-                                className={`group relative flex flex-1 min-w-0 items-start gap-2 rounded-xl px-2 py-1.5 transition-all ${
+                                className={`group relative flex flex-1 min-w-0 items-start rounded-xl transition-all ${
                                   isMultiColumnRow
-                                    ? 'bg-white/90 border border-indigo-100/90 shadow-2xs'
-                                    : ''
+                                    ? 'gap-1 px-1.5 py-1 bg-white/90 border border-indigo-100/90 shadow-2xs'
+                                    : 'gap-2 px-2 py-1.5'
                                 } ${
                                   isBeingDragged
                                     ? 'opacity-40 scale-[0.99] bg-blue-50/40 ring-1 ring-blue-300'
@@ -3168,7 +3174,7 @@ export default function NotionBlockEditor({
                                   )}
 
                         {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 아래에 빈 블록 추가 / ⋮⋮ 드래그 순서 이동) */}
-                        <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-55 group-hover:opacity-100 transition select-none">
+                        <div className="relative z-30 flex shrink-0 items-center gap-0.5 pt-1 opacity-55 group-hover:opacity-100 transition select-none">
                           <button
                             type="button"
                             title="이 블록 아래에 빈 블록 추가"
@@ -3181,7 +3187,9 @@ export default function NotionBlockEditor({
                                 content: '',
                               });
                             }}
-                            className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200 hover:text-gray-900 text-sm font-bold cursor-pointer"
+                            className={`flex items-center justify-center rounded-md text-gray-500 hover:bg-gray-200 hover:text-gray-900 text-sm font-bold cursor-pointer ${
+                              isMultiColumnRow ? 'h-5 w-5' : 'h-6 w-6'
+                            }`}
                           >
                             +
                           </button>
@@ -3198,7 +3206,9 @@ export default function NotionBlockEditor({
                             onMouseDown={() =>
                               setDragHandleHoveredBlockId(block.id)
                             }
-                            className="flex h-6 w-6 cursor-grab active:cursor-grabbing items-center justify-center rounded-md text-gray-400 hover:bg-blue-100 hover:text-blue-700 text-xs font-bold transition"
+                            className={`flex cursor-grab active:cursor-grabbing items-center justify-center rounded-md text-gray-400 hover:bg-blue-100 hover:text-blue-700 text-xs font-bold transition ${
+                              isMultiColumnRow ? 'h-5 w-5' : 'h-6 w-6'
+                            }`}
                           >
                             ⋮⋮
                           </div>
@@ -3553,7 +3563,7 @@ export default function NotionBlockEditor({
                 {block.type === 'code' && (
                   <div className="my-2 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 text-slate-100 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/80 px-4 py-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center gap-1 text-xs font-extrabold text-emerald-400">
                           <span>&lt;/&gt;</span>
                           <span>코드 블록</span>
@@ -3589,9 +3599,11 @@ export default function NotionBlockEditor({
                                     COLAB_TEMPLATES[0].code,
                                 })
                               }
-                              className="rounded-lg bg-amber-500 px-2.5 py-1 text-[11px] font-bold text-slate-950 hover:bg-amber-400 transition cursor-pointer"
+                              className="rounded-lg bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400 transition cursor-pointer"
                             >
-                              🐍 코랩(Colab) 실행 셀로 전환
+                              {isMultiColumnRow
+                                ? '🐍 Colab 전환'
+                                : '🐍 코랩(Colab) 실행 셀로 전환'}
                             </button>
                             <button
                               type="button"
@@ -3602,9 +3614,11 @@ export default function NotionBlockEditor({
                                   content: block.content.trim(),
                                 })
                               }
-                              className="rounded-lg bg-cyan-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-cyan-500 transition cursor-pointer"
+                              className="rounded-lg bg-cyan-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-cyan-500 transition cursor-pointer"
                             >
-                              🧊 Web VPython 3D로 전환
+                              {isMultiColumnRow
+                                ? '🧊 VPython 전환'
+                                : '🧊 Web VPython 3D로 전환'}
                             </button>
                           </>
                         )}
@@ -3624,29 +3638,33 @@ export default function NotionBlockEditor({
                                   SIMULATION_TEMPLATES[0].code,
                               })
                             }
-                            className="rounded-lg bg-teal-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-teal-500 transition cursor-pointer"
+                            className="rounded-lg bg-teal-600 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-teal-500 transition cursor-pointer"
                           >
-                            🧪 이 코드를 교안 내 시뮬레이션으로 실행하기
+                            {isMultiColumnRow
+                              ? '🧪 시뮬레이션 전환'
+                              : '🧪 이 코드를 교안 내 시뮬레이션으로 실행하기'}
                           </button>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-3 text-[11px] text-slate-400">
-                        <span>
-                          <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
-                            Enter
-                          </kbd>{' '}
-                          자동 들여쓰기 ·{' '}
-                          <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
-                            Tab
-                          </kbd>{' '}
-                          4칸 공백 ·{' '}
-                          <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
-                            Shift+Enter
-                          </kbd>{' '}
-                          다음 블록
-                        </span>
-                      </div>
+                      {!isMultiColumnRow && (
+                        <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                          <span>
+                            <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
+                              Enter
+                            </kbd>{' '}
+                            자동 들여쓰기 ·{' '}
+                            <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
+                              Tab
+                            </kbd>{' '}
+                            4칸 공백 ·{' '}
+                            <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300">
+                              Shift+Enter
+                            </kbd>{' '}
+                            다음 블록
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="p-4">
@@ -5136,9 +5154,13 @@ export default function NotionBlockEditor({
                       }}
                     >
                       {imgs.length > 0 ? (
-                        <div className="space-y-3 rounded-2xl border border-gray-200 bg-slate-50/50 p-3.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-gray-200/70">
-                            <div className="flex flex-wrap items-center gap-1.5">
+                        <div
+                          className={`rounded-2xl border border-gray-200 bg-slate-50/50 ${
+                            isMultiColumnRow ? 'space-y-1.5 p-2' : 'space-y-3 p-3.5'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-1.5 pb-1 border-b border-gray-200/70">
+                            <div className="flex flex-wrap items-center gap-1">
                               <span className="text-[11px] font-bold text-gray-700">
                                 🖼️ 교안 이미지{' '}
                                 {imgs.length > 1
@@ -5154,30 +5176,37 @@ export default function NotionBlockEditor({
                                 }}
                                 className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2 py-0.5 text-[11px] font-extrabold text-white hover:bg-blue-700 transition cursor-pointer shadow-2xs"
                               >
-                                <span>➕ 옆에 사진 추가</span>
+                                <span>
+                                  {isMultiColumnRow ? '➕ 사진추가' : '➕ 옆에 사진 추가'}
+                                </span>
                               </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  addSideBySideBlock(idx, 'p', 'right')
-                                }
-                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
-                                title="이 사진 바로 오른쪽 열에 설명글 블록을 나란히 배치합니다"
-                              >
-                                📝 옆에 설명글 배치
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  addSideBySideBlock(idx, 'code', 'right')
-                                }
-                                className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
-                                title="이 사진 바로 오른쪽 열에 코드블록을 나란히 배치합니다"
-                              >
-                                💻 옆에 코드 배치
-                              </button>
+                              {!isMultiColumnRow && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      addSideBySideBlock(idx, 'p', 'right')
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                                    title="이 사진 바로 오른쪽 열에 설명글 블록을 나란히 배치합니다"
+                                  >
+                                    📝 옆에 설명글 배치
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      addSideBySideBlock(idx, 'code', 'right')
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 transition cursor-pointer"
+                                    title="이 사진 바로 오른쪽 열에 코드블록을 나란히 배치합니다"
+                                  >
+                                    💻 옆에 코드 배치
+                                  </button>
+                                </>
+                              )}
 
-                              {idx > 0 &&
+                              {!isMultiColumnRow &&
+                                idx > 0 &&
                                 (!block.rowId ||
                                   blocks[idx - 1]?.rowId !== block.rowId) && (
                                   <button
@@ -5230,6 +5259,8 @@ export default function NotionBlockEditor({
                                     label:
                                       imgs.length > 1
                                         ? '작게 (모아보기)'
+                                        : isMultiColumnRow
+                                        ? '50%'
                                         : '작게 (50%)',
                                   },
                                   {
@@ -5237,29 +5268,39 @@ export default function NotionBlockEditor({
                                     label:
                                       imgs.length > 1
                                         ? '기본 크기'
+                                        : isMultiColumnRow
+                                        ? '75%'
                                         : '기본 (75%)',
                                   },
                                   {
                                     key: 'full',
-                                    label: '가득 (100%)',
+                                    label: isMultiColumnRow ? '100%' : '가득 (100%)',
                                   },
                                 ] as { key: ImageSizeOption; label: string }[]
-                              ).map((sz) => (
-                                <button
-                                  key={sz.key}
-                                  type="button"
-                                  onClick={() =>
-                                    updateBlock(block.id, { imageSize: sz.key })
-                                  }
-                                  className={`rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
-                                    (block.imageSize || 'md') === sz.key
-                                      ? 'bg-blue-600 text-white'
-                                      : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
-                                  }`}
-                                >
-                                  {sz.label}
-                                </button>
-                              ))}
+                              ).map((sz) => {
+                                const effectiveImageSize: ImageSizeOption =
+                                  block.rowId || block.widthPercent
+                                    ? block.imageSize === 'sm'
+                                      ? 'sm'
+                                      : 'full'
+                                    : block.imageSize || 'md';
+                                return (
+                                  <button
+                                    key={sz.key}
+                                    type="button"
+                                    onClick={() =>
+                                      updateBlock(block.id, { imageSize: sz.key })
+                                    }
+                                    className={`rounded-md px-2 py-0.5 text-[11px] font-bold transition cursor-pointer ${
+                                      effectiveImageSize === sz.key
+                                        ? 'bg-blue-600 text-white'
+                                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {sz.label}
+                                  </button>
+                                );
+                              })}
                               <button
                                 type="button"
                                 onClick={() => {
@@ -5269,29 +5310,33 @@ export default function NotionBlockEditor({
                                 }}
                                 className="ml-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 cursor-pointer"
                               >
-                                전체 교체
+                                {isMultiColumnRow ? '교체' : '전체 교체'}
                               </button>
                             </div>
                           </div>
 
-                          {/* 단일 이미지 vs 다중 이미지 가로 그리드 */}
+                          {/* 단일 이미지 vs 다중 이미지 가로 그리드 (학생 화면 뷰어와 동일한 폭/높이 비율 보장) */}
                           {imgs.length === 1 ? (
-                            <div className="space-y-2">
-                              <div className="flex justify-center">
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={imgs[0].url}
-                                  alt={imgs[0].caption || '교안 이미지'}
-                                  className={`rounded-xl border border-gray-200 object-contain shadow-xs ${
-                                    block.rowId || block.widthPercent
+                            <div className="space-y-1.5">
+                              <div className="flex flex-col items-center">
+                                <div
+                                  className={`overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-xs ${
+                                    block.imageSize === 'sm'
+                                      ? 'w-full max-w-[50%]'
+                                      : block.rowId || block.widthPercent
                                       ? 'w-full'
-                                      : block.imageSize === 'sm'
-                                      ? 'max-w-xs'
                                       : block.imageSize === 'full'
                                       ? 'w-full'
-                                      : 'max-w-xl w-full'
+                                      : 'w-full max-w-[75%]'
                                   }`}
-                                />
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={imgs[0].url}
+                                    alt={imgs[0].caption || '교안 이미지'}
+                                    className="w-full h-auto object-contain max-h-[520px]"
+                                  />
+                                </div>
                               </div>
                               <input
                                 type="text"
@@ -5315,10 +5360,12 @@ export default function NotionBlockEditor({
                                   : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
                               } ${
                                 block.imageSize === 'sm'
-                                  ? 'max-w-2xl'
-                                  : block.imageSize === 'full'
+                                  ? 'w-full max-w-2xl'
+                                  : block.imageSize === 'full' ||
+                                    block.rowId ||
+                                    block.widthPercent
                                   ? 'w-full'
-                                  : 'max-w-5xl'
+                                  : 'w-full max-w-5xl'
                               }`}
                             >
                               {imgs.map((imgItem, imgIdx) => (
@@ -5389,7 +5436,7 @@ export default function NotionBlockEditor({
                                         imgItem.caption ||
                                         `교안 이미지 ${imgIdx + 1}`
                                       }
-                                      className="max-h-72 w-full object-contain"
+                                      className="max-h-96 w-full h-auto object-contain"
                                     />
                                   </div>
 
@@ -5412,13 +5459,15 @@ export default function NotionBlockEditor({
                             </div>
                           )}
 
-                          <div className="text-center text-[11px] text-gray-400">
-                            💡 이 박스 위로 다른 사진 파일을 드래그해서 놓거나{' '}
-                            <strong className="text-blue-600">
-                              [+ 옆에 사진 가로로 추가]
-                            </strong>
-                            를 누르면 가로로 나란히 배치됩니다
-                          </div>
+                          {!isMultiColumnRow && (
+                            <div className="text-center text-[11px] text-gray-400">
+                              💡 이 박스 위로 다른 사진 파일을 드래그해서 놓거나{' '}
+                              <strong className="text-blue-600">
+                                [+ 옆에 사진 추가]
+                              </strong>
+                              를 누르면 가로로 나란히 배치됩니다
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div
@@ -5527,197 +5576,199 @@ export default function NotionBlockEditor({
                 )}
               </div>
 
-              {/* 우측 상단 플로팅 블록 빠른 액션 (본문 가로 폭을 차지하지 않고 마우스 호버 시 우측 상단에 떠서 표시됨) */}
-              <div className="absolute -top-3 right-3 z-20 flex flex-wrap items-center justify-end gap-1 rounded-xl border border-gray-200/90 bg-white/95 px-2 py-1 shadow-md backdrop-blur-xs opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition">
-                <button
-                  type="button"
-                  onClick={() => triggerSideBySideImageUpload(idx, 'right')}
-                  title="이 블록 바로 오른쪽 옆에 사진을 나란히 넣습니다 (글·코드·수식 등 모든 블록 옆 가능)"
-                  className="rounded-lg border border-indigo-200 bg-indigo-50/90 px-1.5 py-0.5 text-[10px] font-extrabold text-indigo-700 hover:bg-indigo-100 cursor-pointer"
-                >
-                  🖼️ 옆에 사진
-                </button>
-                <button
-                  type="button"
-                  onClick={() => addSideBySideBlock(idx, 'p', 'right')}
-                  title="이 블록 바로 오른쪽 옆에 새 블록(글·코드 등)을 나란히 추가합니다"
-                  className="rounded-lg border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
-                >
-                  ➕ 옆에 블록
-                </button>
-                {!isMultiColumnRow && (
+              {/* 우측 상단 플로팅 블록 빠른 액션 (좌측 + 및 ⋮⋮ 핸들 영역을 절대 침범하지 않도록 우측 영역에만 배치) */}
+              <div className="absolute -top-3.5 right-2 left-14 z-20 flex pointer-events-none justify-end">
+                <div className="flex flex-wrap items-center justify-end gap-1 rounded-xl border border-gray-200/90 bg-white/95 px-1.5 py-0.5 shadow-md backdrop-blur-xs opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto transition">
                   <button
                     type="button"
-                    onClick={() => addSideBySideStackedBlocks(idx, 'right')}
-                    title="이 블록 바로 오른쪽 옆에 위·아래 2칸으로 나뉜 블록을 만들어 전체 직사각형을 3분할 구조로 조립합니다"
-                    className="rounded-lg border border-violet-200 bg-violet-50/90 px-1.5 py-0.5 text-[10px] font-extrabold text-violet-700 hover:bg-violet-100 cursor-pointer"
+                    onClick={() => triggerSideBySideImageUpload(idx, 'right')}
+                    title="이 블록 바로 오른쪽 옆에 사진을 나란히 넣습니다 (글·코드·수식 등 모든 블록 옆 가능)"
+                    className="rounded-lg border border-indigo-200 bg-indigo-50/90 px-1.5 py-0.5 text-[10px] font-extrabold text-indigo-700 hover:bg-indigo-100 cursor-pointer"
                   >
-                    🍱 옆에 상하2칸
+                    {isMultiColumnRow ? '🖼️옆사진' : '🖼️ 옆에 사진'}
                   </button>
-                )}
-
-                {idx > 0 &&
-                  (!block.rowId ||
-                    blocks[idx - 1]?.rowId !== block.rowId) && (
+                  <button
+                    type="button"
+                    onClick={() => addSideBySideBlock(idx, 'p', 'right')}
+                    title="이 블록 바로 오른쪽 옆에 새 블록(글·코드 등)을 나란히 추가합니다"
+                    className="rounded-lg border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                  >
+                    {isMultiColumnRow ? '➕옆블록' : '➕ 옆에 블록'}
+                  </button>
+                  {!isMultiColumnRow && (
                     <button
                       type="button"
-                      onClick={() => joinBlockWithPrevRow(idx)}
-                      title="이 블록을 바로 위 블록의 오른쪽 옆 열로 합쳐서 나란히 배치합니다"
-                      className="rounded-lg border border-violet-200 bg-violet-50/80 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 cursor-pointer"
+                      onClick={() => addSideBySideStackedBlocks(idx, 'right')}
+                      title="이 블록 바로 오른쪽 옆에 위·아래 2칸으로 나뉜 블록을 만들어 전체 직사각형을 3분할 구조로 조립합니다"
+                      className="rounded-lg border border-violet-200 bg-violet-50/90 px-1.5 py-0.5 text-[10px] font-extrabold text-violet-700 hover:bg-violet-100 cursor-pointer"
                     >
-                      ⬆️ 위 옆으로
+                      🍱 옆에 상하2칸
                     </button>
                   )}
 
-                {isMultiColumnRow ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        addStackedBlockInColumn(idx, 'p', 'bottom')
-                      }
-                      title="이 열의 바로 아래쪽에 상하 분할 블록을 추가합니다 (옆의 긴 블록 안에서 위·아래로 나뉨)"
-                      className="rounded-lg border border-violet-200 bg-violet-50/90 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 cursor-pointer"
-                    >
-                      ⬇️ 아래에 분할블록
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        triggerStackedImageUpload(idx, 'bottom')
-                      }
-                      title="이 열의 바로 아래쪽에 사진을 상하 분할로 추가합니다"
-                      className="rounded-lg border border-violet-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-50 cursor-pointer"
-                    >
-                      🖼️ 아래에 사진
-                    </button>
-                    {isMultiStackCol && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={stackIdx === 0}
-                          onClick={() => moveBlockWithinColumnStack(idx, -1)}
-                          title="현재 열 안에서 위쪽 분할 블록과 순서 바꾸기"
-                          className="rounded border border-violet-200 bg-white px-1 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-25 cursor-pointer"
-                        >
-                          ▲
-                        </button>
-                        <button
-                          type="button"
-                          disabled={stackIdx === colGroup.items.length - 1}
-                          onClick={() => moveBlockWithinColumnStack(idx, 1)}
-                          title="현재 열 안에서 아래쪽 분할 블록과 순서 바꾸기"
-                          className="rounded border border-violet-200 bg-white px-1 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-25 cursor-pointer"
-                        >
-                          ▼
-                        </button>
-                      </>
+                  {idx > 0 &&
+                    (!block.rowId ||
+                      blocks[idx - 1]?.rowId !== block.rowId) && (
+                      <button
+                        type="button"
+                        onClick={() => joinBlockWithPrevRow(idx)}
+                        title="이 블록을 바로 위 블록의 오른쪽 옆 열로 합쳐서 나란히 배치합니다"
+                        className="rounded-lg border border-violet-200 bg-violet-50/80 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 cursor-pointer"
+                      >
+                        ⬆️ 위 옆으로
+                      </button>
                     )}
+
+                  {isMultiColumnRow ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          addStackedBlockInColumn(idx, 'p', 'bottom')
+                        }
+                        title="이 열의 바로 아래쪽에 상하 분할 블록을 추가합니다 (옆의 긴 블록 안에서 위·아래로 나뉨)"
+                        className="rounded-lg border border-violet-200 bg-violet-50/90 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-100 cursor-pointer"
+                      >
+                        ⬇️아래분할
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          triggerStackedImageUpload(idx, 'bottom')
+                        }
+                        title="이 열의 바로 아래쪽에 사진을 상하 분할로 추가합니다"
+                        className="rounded-lg border border-violet-200 bg-white px-1.5 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-50 cursor-pointer"
+                      >
+                        🖼️아래사진
+                      </button>
+                      {isMultiStackCol && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={stackIdx === 0}
+                            onClick={() => moveBlockWithinColumnStack(idx, -1)}
+                            title="현재 열 안에서 위쪽 분할 블록과 순서 바꾸기"
+                            className="rounded border border-violet-200 bg-white px-1 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-25 cursor-pointer"
+                          >
+                            ▲
+                          </button>
+                          <button
+                            type="button"
+                            disabled={stackIdx === colGroup.items.length - 1}
+                            onClick={() => moveBlockWithinColumnStack(idx, 1)}
+                            title="현재 열 안에서 아래쪽 분할 블록과 순서 바꾸기"
+                            className="rounded border border-violet-200 bg-white px-1 py-0.5 text-[10px] font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-25 cursor-pointer"
+                          >
+                            ▼
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        disabled={colIdx === 0}
+                        onClick={() => moveColumnWithinRow(idx, -1)}
+                        title="현재 행 안에서 왼쪽 열과 순서 바꾸기"
+                        className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-25 cursor-pointer"
+                      >
+                        ◀
+                      </button>
+                      <button
+                        type="button"
+                        disabled={colIdx === rowGroup.columns.length - 1}
+                        onClick={() => moveColumnWithinRow(idx, 1)}
+                        title="현재 행 안에서 오른쪽 열과 순서 바꾸기"
+                        className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-25 cursor-pointer"
+                      >
+                        ▶
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => detachBlockFromRow(idx)}
+                        title="가로 다단 행에서 이 블록을 분리해 아래쪽 독립 줄로 내립니다"
+                        className="rounded-lg border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer"
+                      >
+                        ⤵️분리
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
-                      disabled={colIdx === 0}
-                      onClick={() => moveColumnWithinRow(idx, -1)}
-                      title="현재 행 안에서 왼쪽 열과 순서 바꾸기"
-                      className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-25 cursor-pointer"
+                      onClick={() => {
+                        const cur = customStandaloneWidth ?? 100;
+                        const nextW =
+                          cur === 100 ? 50 : cur <= 55 ? 75 : undefined;
+                        updateBlock(block.id, {
+                          widthPercent: nextW,
+                          imageSize:
+                            block.type === 'image' ? 'full' : block.imageSize,
+                        });
+                      }}
+                      title="블록 가로 폭 빠르게 전환 (50% → 75% → 100%) 또는 우측 끝 핸들(↔)을 드래그해 자유 조절"
+                      className={`rounded-lg border px-1.5 py-0.5 text-[10px] font-bold cursor-pointer ${
+                        customStandaloneWidth
+                          ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                          : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-100'
+                      }`}
                     >
-                      ◀
+                      ↔ {customStandaloneWidth ?? 100}%
                     </button>
-                    <button
-                      type="button"
-                      disabled={colIdx === rowGroup.columns.length - 1}
-                      onClick={() => moveColumnWithinRow(idx, 1)}
-                      title="현재 행 안에서 오른쪽 열과 순서 바꾸기"
-                      className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[10px] font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-25 cursor-pointer"
-                    >
-                      ▶
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => detachBlockFromRow(idx)}
-                      title="가로 다단 행에서 이 블록을 분리해 아래쪽 독립 줄로 내립니다"
-                      className="rounded-lg border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer"
-                    >
-                      ⤵️ 행 분리
-                    </button>
-                  </>
-                ) : (
+                  )}
+
+                  <select
+                    value={block.type}
+                    onChange={(e) => {
+                      const nextType = e.target.value as NotionBlockType;
+                      applyBlockTypeSelection(block, nextType);
+                    }}
+                    className="rounded-lg border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-600 focus:outline-none cursor-pointer"
+                  >
+                    <option value="p">본문</option>
+                    <option value="h1">제목 1</option>
+                    <option value="h2">제목 2</option>
+                    <option value="h3">제목 3</option>
+                    <option value="bullet">목록</option>
+                    <option value="callout">콜아웃</option>
+                    <option value="quote">인용/지문</option>
+                    <option value="table">표 (Table)</option>
+                    <option value="code">코드블록</option>
+                    <option value="colab">파이썬 실행 셀(Colab)</option>
+                    <option value="vpython">Web VPython 3D</option>
+                    <option value="mermaid">순서도(Mermaid)</option>
+                    <option value="simulation">시뮬레이션(HTML/JS)</option>
+                    <option value="quiz">체크포인트 퀴즈(/퀴즈)</option>
+                    <option value="image">사진</option>
+                    <option value="youtube">유튜브 영상</option>
+                    <option value="link">링크 카드</option>
+                    <option value="divider">구분선</option>
+                  </select>
+
                   <button
                     type="button"
-                    onClick={() => {
-                      const cur = customStandaloneWidth ?? 100;
-                      const nextW =
-                        cur === 100 ? 50 : cur <= 55 ? 75 : undefined;
-                      updateBlock(block.id, {
-                        widthPercent: nextW,
-                        imageSize:
-                          block.type === 'image' ? 'full' : block.imageSize,
-                      });
-                    }}
-                    title="블록 가로 폭 빠르게 전환 (50% → 75% → 100%) 또는 우측 끝 핸들(↔)을 드래그해 자유 조절"
-                    className={`rounded-lg border px-1.5 py-0.5 text-[10px] font-bold cursor-pointer ${
-                      customStandaloneWidth
-                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                        : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-100'
-                    }`}
+                    onClick={() => moveBlock(idx, -1)}
+                    disabled={idx === 0}
+                    title="위로 이동"
+                    className="rounded p-1 text-xs text-gray-400 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-20"
                   >
-                    ↔ {customStandaloneWidth ?? 100}%
+                    ↑
                   </button>
-                )}
-
-                <select
-                  value={block.type}
-                  onChange={(e) => {
-                    const nextType = e.target.value as NotionBlockType;
-                    applyBlockTypeSelection(block, nextType);
-                  }}
-                  className="rounded-lg border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-semibold text-gray-600 focus:outline-none cursor-pointer"
-                >
-                  <option value="p">본문</option>
-                  <option value="h1">제목 1</option>
-                  <option value="h2">제목 2</option>
-                  <option value="h3">제목 3</option>
-                  <option value="bullet">목록</option>
-                  <option value="callout">콜아웃</option>
-                  <option value="quote">인용/지문</option>
-                  <option value="table">표 (Table)</option>
-                  <option value="code">코드블록</option>
-                  <option value="colab">파이썬 실행 셀(Colab)</option>
-                  <option value="vpython">Web VPython 3D</option>
-                  <option value="mermaid">순서도(Mermaid)</option>
-                  <option value="simulation">시뮬레이션(HTML/JS)</option>
-                  <option value="quiz">체크포인트 퀴즈(/퀴즈)</option>
-                  <option value="image">사진</option>
-                  <option value="youtube">유튜브 영상</option>
-                  <option value="link">링크 카드</option>
-                  <option value="divider">구분선</option>
-                </select>
-
-                <button
-                  type="button"
-                  onClick={() => moveBlock(idx, -1)}
-                  disabled={idx === 0}
-                  title="위로 이동"
-                  className="rounded p-1 text-xs text-gray-400 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-20"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveBlock(idx, 1)}
-                  disabled={idx === blocks.length - 1}
-                  title="아래로 이동"
-                  className="rounded p-1 text-xs text-gray-400 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-20"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeBlock(idx)}
-                  title="블록 삭제"
-                  className="rounded p-1 text-xs text-gray-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  ✕
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => moveBlock(idx, 1)}
+                    disabled={idx === blocks.length - 1}
+                    title="아래로 이동"
+                    className="rounded p-1 text-xs text-gray-400 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-20"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeBlock(idx)}
+                    title="블록 삭제"
+                    className="rounded p-1 text-xs text-gray-400 hover:bg-red-50 hover:text-red-600"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
               {/* 단독 블록 우측 가장자리 가로 폭 드래그 리사이즈 핸들 (25%~100% 자유 조절) */}
@@ -5820,7 +5871,7 @@ export default function NotionBlockEditor({
                               )
                             }
                             title="마우스로 잡고 좌우로 드래그하여 좌우 열의 가로 폭 비율을 조절하세요"
-                            className="group/splitter relative hidden lg:flex w-4 shrink-0 cursor-col-resize items-center justify-center select-none z-20"
+                            className="group/splitter relative hidden md:flex w-4 shrink-0 cursor-col-resize items-center justify-center select-none z-20"
                           >
                             <div className="h-full w-[3px] rounded-full bg-indigo-200/80 group-hover/splitter:bg-indigo-600 group-active/splitter:bg-indigo-700 transition-colors" />
                             <div className="absolute top-1/2 -translate-y-1/2 flex h-7 w-4 items-center justify-center rounded-md border border-indigo-200 bg-white text-[10px] font-bold text-indigo-600 shadow-xs group-hover/splitter:border-indigo-500 group-hover/splitter:bg-indigo-600 group-hover/splitter:text-white transition">

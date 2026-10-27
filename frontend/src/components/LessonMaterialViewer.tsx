@@ -576,13 +576,12 @@ export function SimpleMarkdownRenderer({
       const singleImg = imgs[0];
       const hasCustomWidth =
         isInMultiColumnRow || typeof block.widthPercent === 'number';
-      const widthClass = hasCustomWidth
-        ? 'w-full'
-        : block.imageSize === 'sm'
-        ? 'max-w-xs'
-        : block.imageSize === 'md'
-        ? 'max-w-lg'
-        : 'max-w-full';
+      const widthClass =
+        block.imageSize === 'sm'
+          ? 'w-full max-w-[50%]'
+          : hasCustomWidth || block.imageSize === 'full'
+          ? 'w-full'
+          : 'w-full max-w-[75%]';
 
       return (
         <figure key={block.id} className="my-2 flex flex-col items-center">
@@ -663,7 +662,7 @@ export function SimpleMarkdownRenderer({
                               ? {
                                   flexGrow: stackPct,
                                   flexShrink: 1,
-                                  flexBasis: 0,
+                                  flexBasis: `${stackPct}%`,
                                 }
                               : undefined
                           }
