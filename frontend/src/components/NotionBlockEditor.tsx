@@ -3167,20 +3167,19 @@ export default function NotionBlockEditor({
                                     </div>
                                   )}
 
-                        {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 추가 / ⋮⋮ 드래그 순서 이동) */}
+                        {/* 좌측 노션 스타일 블록 컨트롤 핸들 (+ 아래에 빈 블록 추가 / ⋮⋮ 드래그 순서 이동) */}
                         <div className="flex shrink-0 items-center gap-0.5 pt-1 opacity-55 group-hover:opacity-100 transition select-none">
                           <button
                             type="button"
-                            title="블록 타입 변경 또는 코드·순서도·시뮬레이션 선택"
+                            title="이 블록 아래에 빈 블록 추가"
                             onClick={() => {
-                              if (isSlashOpen) {
-                                setSlashMenuBlockId(null);
-                                setSlashFilterQuery('');
-                              } else {
-                                setSlashMenuBlockId(block.id);
-                                setSlashFilterQuery('');
-                                setSlashSelectedIdx(0);
-                              }
+                              setSlashMenuBlockId(null);
+                              setSlashFilterQuery('');
+                              insertBlockAfter(idx, {
+                                id: createBlockId(),
+                                type: 'p',
+                                content: '',
+                              });
                             }}
                             className="flex h-6 w-6 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200 hover:text-gray-900 text-sm font-bold cursor-pointer"
                           >
