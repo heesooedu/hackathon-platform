@@ -49,6 +49,20 @@ import PhysicalComputingBlock, {
   VirtualComponent,
   LedColorOption,
 } from '@/components/PhysicalComputingBlock';
+import DataAnalysisBlock, {
+  DATA_ANALYSIS_TEMPLATES,
+  DATASET_PRESETS,
+  parseDataAnalysisBlockContent,
+  serializeDataAnalysisBlockContent,
+  DataAnalysisDatasetId,
+} from '@/components/DataAnalysisBlock';
+import AiLabBlock, {
+  AI_LAB_TEMPLATES,
+  ML_ALGORITHM_META,
+  parseAiLabBlockContent,
+  serializeAiLabBlockContent,
+  MlAlgorithmType,
+} from '@/components/AiLabBlock';
 import { renderInlineMarkdown } from '@/components/LessonMaterialViewer';
 
 interface NotionBlockEditorProps {
@@ -228,6 +242,51 @@ const BLOCK_TYPE_META: {
       '피코',
       '센서',
       '회로',
+      '정보',
+    ],
+  },
+  {
+    type: 'data_analysis',
+    label: '데이터 분석 스튜디오 (전처리·시각화·상관관계)',
+    desc: '결측치(NaN)·이상치(IQR) 전처리 전후 비교와 산점도·막대·히스토그램·상관행렬 및 pandas 코드를 연동합니다',
+    badge: '📊',
+    keywords: [
+      'data',
+      'data_analysis',
+      'pandas',
+      'csv',
+      'chart',
+      '데이터',
+      '데이터분석',
+      '전처리',
+      '결측치',
+      '이상치',
+      '시각화',
+      '상관관계',
+      '정보',
+    ],
+  },
+  {
+    type: 'ai_lab',
+    label: 'AI·머신러닝 실험실 (선형회귀·KNN·결정트리·K-평균)',
+    desc: '경사하강법 회귀, K-최근접 이웃, 의사결정나무, K-평균 군집화를 클릭·슬라이더 및 Python 코드로 실험합니다',
+    badge: '🤖',
+    keywords: [
+      'ai',
+      'ai_lab',
+      'ml',
+      'knn',
+      'regression',
+      'kmeans',
+      'tree',
+      '인공지능',
+      '머신러닝',
+      '기계학습',
+      '선형회귀',
+      '의사결정나무',
+      '결정트리',
+      '군집화',
+      '분류',
       '정보',
     ],
   },
@@ -792,6 +851,14 @@ export default function NotionBlockEditor({
               PHYSICAL_COMPUTING_TEMPLATES[0].config,
               PHYSICAL_COMPUTING_TEMPLATES[0].code
             )
+          : targetType === 'data_analysis'
+          ? serializeDataAnalysisBlockContent(
+              DATA_ANALYSIS_TEMPLATES[0].config
+            )
+          : targetType === 'ai_lab'
+          ? serializeAiLabBlockContent(
+              AI_LAB_TEMPLATES[0].config
+            )
           : '',
       caption:
         targetType === 'simulation'
@@ -800,6 +867,10 @@ export default function NotionBlockEditor({
           ? COLAB_TEMPLATES[0].caption
           : targetType === 'physical'
           ? PHYSICAL_COMPUTING_TEMPLATES[0].caption
+          : targetType === 'data_analysis'
+          ? DATA_ANALYSIS_TEMPLATES[0].caption
+          : targetType === 'ai_lab'
+          ? AI_LAB_TEMPLATES[0].caption
           : undefined,
       icon: targetType === 'callout' ? '💡' : undefined,
       language: targetType === 'code' ? 'python' : undefined,
@@ -1580,6 +1651,8 @@ export default function NotionBlockEditor({
       block.type === 'colab' ||
       block.type === 'vpython' ||
       block.type === 'physical' ||
+      block.type === 'data_analysis' ||
+      block.type === 'ai_lab' ||
       block.type === 'mermaid' ||
       block.type === 'simulation' ||
       block.type === 'quiz' ||
@@ -1629,6 +1702,8 @@ export default function NotionBlockEditor({
       block.type === 'colab' ||
       block.type === 'vpython' ||
       block.type === 'physical' ||
+      block.type === 'data_analysis' ||
+      block.type === 'ai_lab' ||
       block.type === 'mermaid' ||
       block.type === 'simulation' ||
       block.type === 'quiz' ||
@@ -1749,6 +1824,12 @@ export default function NotionBlockEditor({
       PHYSICAL_COMPUTING_TEMPLATES[0].config,
       PHYSICAL_COMPUTING_TEMPLATES[0].code
     );
+    const defaultDataAnalysis = serializeDataAnalysisBlockContent(
+      DATA_ANALYSIS_TEMPLATES[0].config
+    );
+    const defaultAiLab = serializeAiLabBlockContent(
+      AI_LAB_TEMPLATES[0].config
+    );
 
     const isUrlContent = /^https?:\/\//i.test(cleanedContent.trim());
 
@@ -1763,6 +1844,10 @@ export default function NotionBlockEditor({
           ? defaultColab
           : targetType === 'physical' && !cleanedContent.trim()
           ? defaultPhysical
+          : targetType === 'data_analysis' && !cleanedContent.trim()
+          ? defaultDataAnalysis
+          : targetType === 'ai_lab' && !cleanedContent.trim()
+          ? defaultAiLab
           : targetType === 'youtube' || targetType === 'link'
           ? isUrlContent
             ? ''
@@ -1779,6 +1864,10 @@ export default function NotionBlockEditor({
           ? block.caption || COLAB_TEMPLATES[0].caption
           : targetType === 'physical'
           ? block.caption || PHYSICAL_COMPUTING_TEMPLATES[0].caption
+          : targetType === 'data_analysis'
+          ? block.caption || DATA_ANALYSIS_TEMPLATES[0].caption
+          : targetType === 'ai_lab'
+          ? block.caption || AI_LAB_TEMPLATES[0].caption
           : block.caption,
       icon: targetType === 'callout' ? block.icon || '💡' : undefined,
       language: targetType === 'code' ? block.language || 'python' : undefined,
@@ -2200,6 +2289,14 @@ export default function NotionBlockEditor({
                 PHYSICAL_COMPUTING_TEMPLATES[0].config,
                 PHYSICAL_COMPUTING_TEMPLATES[0].code
               )
+            : targetType === 'data_analysis'
+            ? serializeDataAnalysisBlockContent(
+                DATA_ANALYSIS_TEMPLATES[0].config
+              )
+            : targetType === 'ai_lab'
+            ? serializeAiLabBlockContent(
+                AI_LAB_TEMPLATES[0].config
+              )
             : '',
         caption:
           targetType === 'simulation'
@@ -2208,6 +2305,10 @@ export default function NotionBlockEditor({
             ? COLAB_TEMPLATES[0].caption
             : targetType === 'physical'
             ? PHYSICAL_COMPUTING_TEMPLATES[0].caption
+            : targetType === 'data_analysis'
+            ? DATA_ANALYSIS_TEMPLATES[0].caption
+            : targetType === 'ai_lab'
+            ? AI_LAB_TEMPLATES[0].caption
             : undefined,
         icon: targetType === 'callout' ? '💡' : undefined,
         language: targetType === 'code' ? 'python' : undefined,
@@ -2359,6 +2460,10 @@ export default function NotionBlockEditor({
                     ? '3D'
                     : item.type === 'physical'
                     ? '피지컬'
+                    : item.type === 'data_analysis'
+                    ? '데이터분석'
+                    : item.type === 'ai_lab'
+                    ? 'AI실험'
                     : item.type === 'simulation'
                     ? '실험'
                     : item.type === 'quiz'
@@ -3080,6 +3185,8 @@ export default function NotionBlockEditor({
                                     block.type !== 'colab' &&
                                     block.type !== 'vpython' &&
                                     block.type !== 'physical' &&
+                                    block.type !== 'data_analysis' &&
+                                    block.type !== 'ai_lab' &&
                                     block.type !== 'mermaid' &&
                                     block.type !== 'simulation' &&
                                     block.type !== 'table' &&
@@ -4563,6 +4670,376 @@ export default function NotionBlockEditor({
                             }
                           />
                         </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 9-2E. 📊 정보 교과 특화: 데이터 분석 스튜디오 (결측치·이상치 전처리 전후 비교 & 시각화 & pandas 코드 연동) */}
+                {block.type === 'data_analysis' && (() => {
+                  const parsedDa = parseDataAnalysisBlockContent(block.content);
+                  const activeDatasetId = parsedDa.datasetId;
+                  const activePreset = DATASET_PRESETS[activeDatasetId];
+
+                  return (
+                    <div className="my-2 overflow-hidden rounded-2xl border-2 border-indigo-300 bg-indigo-50/20 shadow-sm">
+                      {/* 상단 헤더: 제목 / 외부 링크 / 데이터셋 변수 요약표 원클릭 생성 */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-200/80 bg-indigo-50/90 px-4 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                          <span className="rounded-md bg-indigo-600 px-2.5 py-0.5 text-[11px] font-extrabold text-white shrink-0">
+                            📊 데이터 분석 스튜디오 (전처리·시각화·상관관계)
+                          </span>
+                          <input
+                            type="text"
+                            value={block.caption || ''}
+                            onChange={(e) =>
+                              updateBlock(block.id, { caption: e.target.value })
+                            }
+                            placeholder="(선택) 데이터 분석 실습 제목 입력..."
+                            className="flex-1 min-w-[180px] rounded-lg border border-indigo-300 bg-white px-2.5 py-1 text-xs font-bold text-indigo-950 placeholder:text-gray-400 focus:border-indigo-500 focus:outline-none"
+                          />
+                          <input
+                            type="url"
+                            value={block.externalUrl || ''}
+                            onChange={(e) =>
+                              updateBlock(block.id, {
+                                externalUrl: e.target.value,
+                              })
+                            }
+                            placeholder="(선택) 공공데이터포털 / Kaggle / Google Colab 공유 링크..."
+                            className="w-64 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 text-xs text-gray-700 placeholder:text-gray-400 focus:border-indigo-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              insertBlockAfter(idx, {
+                                id: createBlockId(),
+                                type: 'table',
+                                content: '',
+                                tableRows: [
+                                  ['분석 항목', '선택한 설정', '관찰 결과 및 해석 (학생 작성)'],
+                                  ['데이터셋', activePreset.label, activePreset.description],
+                                  [
+                                    '독립변수(X) vs 종속변수(Y)',
+                                    `${parsedDa.xColumn} vs ${parsedDa.yColumn}`,
+                                    '산점도 추세선 방향과 상관계수(r)를 기록하세요',
+                                  ],
+                                  [
+                                    '결측치(NaN) & 이상치(IQR) 전처리',
+                                    `결측치: ${parsedDa.missingStrategy} / 이상치: ${parsedDa.outlierStrategy}`,
+                                    '전처리 전후 평균·표준편차·상관계수 변화를 비교하세요',
+                                  ],
+                                ],
+                                hasTableHeader: true,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-300 bg-indigo-600 px-3 py-1 text-xs font-extrabold text-white shadow-xs hover:bg-indigo-700 transition cursor-pointer"
+                            title="이 데이터 분석 블록 바로 아래에 학생 탐구 보고서용 요약 표(Table) 블록을 자동 생성합니다"
+                          >
+                            <span>📋 아래에 데이터 탐구 기록표 자동 삽입</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 2단: 교과서 데이터셋 선택 & 원클릭 실습 템플릿 & 미션 안내문 */}
+                      <div className="border-b border-indigo-200/60 bg-white/90 px-4 py-2.5 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-extrabold text-indigo-900 mr-1">
+                              🗂️ 기본 데이터셋:
+                            </span>
+                            {(Object.keys(DATASET_PRESETS) as DataAnalysisDatasetId[]).map(
+                              (dsKey) => {
+                                const ds = DATASET_PRESETS[dsKey];
+                                const isSelected = activeDatasetId === dsKey;
+                                return (
+                                  <button
+                                    key={dsKey}
+                                    type="button"
+                                    onClick={() => {
+                                      const nextCfg = {
+                                        ...parsedDa,
+                                        datasetId: dsKey,
+                                        xColumn: ds.defaultX,
+                                        yColumn: ds.defaultY,
+                                        groupColumn: ds.defaultGroup,
+                                      };
+                                      updateBlock(block.id, {
+                                        content: serializeDataAnalysisBlockContent(
+                                          nextCfg
+                                        ),
+                                      });
+                                    }}
+                                    className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-extrabold transition cursor-pointer ${
+                                      isSelected
+                                        ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs'
+                                        : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-indigo-300 hover:bg-indigo-50'
+                                    }`}
+                                  >
+                                    <span>{ds.badge}</span>
+                                    <span>{ds.shortLabel}</span>
+                                  </button>
+                                );
+                              }
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-bold text-indigo-900">
+                              📚 추천 실습 예제:
+                            </span>
+                            {DATA_ANALYSIS_TEMPLATES.map((tpl) => (
+                              <button
+                                key={tpl.id}
+                                type="button"
+                                onClick={() =>
+                                  updateBlock(block.id, {
+                                    content: serializeDataAnalysisBlockContent(
+                                      tpl.config
+                                    ),
+                                    caption: tpl.caption,
+                                  })
+                                }
+                                className="rounded-lg border border-indigo-300 bg-indigo-50/70 px-2.5 py-1 text-[11px] font-bold text-indigo-900 hover:bg-indigo-100 transition cursor-pointer"
+                              >
+                                {tpl.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 학생 실습 미션 안내문 입력 */}
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <span className="text-[11px] font-extrabold text-amber-800 shrink-0">
+                            🎯 데이터 탐구 미션 안내:
+                          </span>
+                          <input
+                            type="text"
+                            value={parsedDa.missionPrompt || ''}
+                            onChange={(e) => {
+                              updateBlock(block.id, {
+                                content: serializeDataAnalysisBlockContent({
+                                  ...parsedDa,
+                                  missionPrompt: e.target.value,
+                                }),
+                              });
+                            }}
+                            placeholder="예: 결측치(NaN)를 평균값으로 대체하고 이상치(IQR)를 제거했을 때 피어슨 상관계수(r)가 어떻게 달라지는지 비교해 보세요!"
+                            className="flex-1 rounded-lg border border-amber-300 bg-amber-50/60 px-2.5 py-1 text-xs font-semibold text-amber-950 placeholder:text-amber-700/50 focus:border-amber-500 focus:bg-white focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3단: 실시간 인터랙티브 데이터 분석 스튜디오 미리보기 및 조작 (교사가 조작한 전처리·차트 설정이 그대로 블록에 저장됨) */}
+                      <div className="p-4">
+                        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-indigo-900 px-1">
+                          <span>
+                            👁️ 실시간 데이터 분석 스튜디오 (여기서 데이터셋·전처리·시각화 탭을 조작하면 학생 초기 화면으로 저장됩니다)
+                          </span>
+                          <span className="text-indigo-600">
+                            🐍 우측 상단 [Python 코드 실습] 탭에서 pandas 코드도 함께 실행 가능
+                          </span>
+                        </div>
+                        <DataAnalysisBlock
+                          key={block.id}
+                          rawContent={block.content}
+                          caption={block.caption}
+                          externalUrl={block.externalUrl}
+                          compact
+                          onChangeContent={(nextRaw) =>
+                            updateBlock(block.id, { content: nextRaw })
+                          }
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 9-2F. 🤖 정보 교과 특화: AI·머신러닝 실험실 (선형회귀·KNN·의사결정나무·K-평균 군집화) */}
+                {block.type === 'ai_lab' && (() => {
+                  const parsedAi = parseAiLabBlockContent(block.content);
+                  const activeAlgo = parsedAi.algorithm;
+                  const activeAlgoMeta = ML_ALGORITHM_META[activeAlgo];
+
+                  return (
+                    <div className="my-2 overflow-hidden rounded-2xl border-2 border-violet-300 bg-violet-50/20 shadow-sm">
+                      {/* 상단 헤더: 제목 / 외부 링크 / 알고리즘 비교표 원클릭 생성 */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-200/80 bg-violet-50/90 px-4 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                          <span className="rounded-md bg-violet-700 px-2.5 py-0.5 text-[11px] font-extrabold text-white shrink-0">
+                            🤖 AI·머신러닝 실험실 ({activeAlgoMeta.category})
+                          </span>
+                          <input
+                            type="text"
+                            value={block.caption || ''}
+                            onChange={(e) =>
+                              updateBlock(block.id, { caption: e.target.value })
+                            }
+                            placeholder="(선택) AI·머신러닝 실습 제목 입력..."
+                            className="flex-1 min-w-[180px] rounded-lg border border-violet-300 bg-white px-2.5 py-1 text-xs font-bold text-violet-950 placeholder:text-gray-400 focus:border-violet-500 focus:outline-none"
+                          />
+                          <input
+                            type="url"
+                            value={block.externalUrl || ''}
+                            onChange={(e) =>
+                              updateBlock(block.id, {
+                                externalUrl: e.target.value,
+                              })
+                            }
+                            placeholder="(선택) Teachable Machine / Colab 노트북 링크..."
+                            className="w-64 rounded-lg border border-violet-200 bg-white px-2.5 py-1 text-xs text-gray-700 placeholder:text-gray-400 focus:border-violet-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              insertBlockAfter(idx, {
+                                id: createBlockId(),
+                                type: 'table',
+                                content: '',
+                                tableRows: [
+                                  ['머신러닝 알고리즘', '학습 유형', '핵심 하이퍼파라미터', '특징 및 주의할 점(과적합 등)'],
+                                  ['📈 선형 회귀 (Linear Regression)', '지도학습 (회귀)', '가중치(W), 편향(b), 학습률(lr)', '평균제곱오차(MSE)를 최소화하는 직선 탐색'],
+                                  ['🎯 K-최근접 이웃 (KNN)', '지도학습 (분류)', '이웃의 수 K (홀수 권장)', 'K가 너무 작으면 이상치에 민감(과적합), 너무 크면 과소적합'],
+                                  ['🌳 의사결정나무 (Decision Tree)', '지도학습 (분류)', '최대 깊이 (max_depth)', '불순도(Gini)가 낮아지는 질문 노드로 분할 설명력 우수'],
+                                  ['🫧 K-평균 군집화 (K-Means)', '비지도학습 (군집화)', '군집 수 K, 초기 중심점', '정답 라벨 없이 거리 기반으로 중심점(Centroid) 반복 이동'],
+                                ],
+                                hasTableHeader: true,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-700 px-3 py-1 text-xs font-extrabold text-white shadow-xs hover:bg-violet-800 transition cursor-pointer"
+                            title="이 블록 바로 아래에 지도학습·비지도학습 핵심 알고리즘 비교표(Table) 블록을 자동 생성합니다"
+                          >
+                            <span>📋 아래에 AI 알고리즘 비교표 자동 삽입</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 2단: 알고리즘 선택 & 추천 템플릿 & 미션 안내문 */}
+                      <div className="border-b border-violet-200/60 bg-white/90 px-4 py-2.5 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-extrabold text-violet-900 mr-1">
+                              🧠 실습 알고리즘:
+                            </span>
+                            {(
+                              [
+                                'linear_regression',
+                                'knn',
+                                'decision_tree',
+                                'kmeans',
+                              ] as MlAlgorithmType[]
+                            ).map((algoKey) => {
+                              const meta = ML_ALGORITHM_META[algoKey];
+                              const isSelected = activeAlgo === algoKey;
+                              return (
+                                <button
+                                  key={algoKey}
+                                  type="button"
+                                  onClick={() => {
+                                    const tpl = AI_LAB_TEMPLATES.find(
+                                      (t) => t.config.algorithm === algoKey
+                                    );
+                                    if (tpl) {
+                                      updateBlock(block.id, {
+                                        content: serializeAiLabBlockContent(
+                                          tpl.config
+                                        ),
+                                        caption: tpl.caption,
+                                      });
+                                    }
+                                  }}
+                                  className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-extrabold transition cursor-pointer ${
+                                    isSelected
+                                      ? 'border-violet-700 bg-violet-700 text-white shadow-xs'
+                                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-violet-300 hover:bg-violet-50'
+                                  }`}
+                                >
+                                  <span>{meta.badge}</span>
+                                  <span>{meta.shortLabel}</span>
+                                  <span
+                                    className={`text-[10px] font-medium ${
+                                      isSelected ? 'text-violet-200' : 'text-gray-400'
+                                    }`}
+                                  >
+                                    ({meta.category})
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-bold text-violet-900">
+                              📚 교과 실습 템플릿:
+                            </span>
+                            {AI_LAB_TEMPLATES.map((tpl) => (
+                              <button
+                                key={tpl.id}
+                                type="button"
+                                onClick={() =>
+                                  updateBlock(block.id, {
+                                    content: serializeAiLabBlockContent(
+                                      tpl.config
+                                    ),
+                                    caption: tpl.caption,
+                                  })
+                                }
+                                className="rounded-lg border border-violet-300 bg-violet-50/70 px-2.5 py-1 text-[11px] font-bold text-violet-900 hover:bg-violet-100 transition cursor-pointer"
+                              >
+                                {tpl.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 학생 실습 미션 안내문 입력 */}
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <span className="text-[11px] font-extrabold text-amber-800 shrink-0">
+                            🎯 AI 실험 미션 안내:
+                          </span>
+                          <input
+                            type="text"
+                            value={parsedAi.missionPrompt || ''}
+                            onChange={(e) => {
+                              updateBlock(block.id, {
+                                content: serializeAiLabBlockContent({
+                                  ...parsedAi,
+                                  missionPrompt: e.target.value,
+                                }),
+                              });
+                            }}
+                            placeholder="예: K-최근접 이웃에서 K=1일 때와 K=5일 때 경계선 근처의 새로운 점(★) 분류 결과가 어떻게 달라지는지 실험해 보세요!"
+                            className="flex-1 rounded-lg border border-amber-300 bg-amber-50/60 px-2.5 py-1 text-xs font-semibold text-amber-950 placeholder:text-amber-700/50 focus:border-amber-500 focus:bg-white focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3단: 실시간 AI·머신러닝 실험실 시뮬레이터 미리보기 및 조작 */}
+                      <div className="p-4">
+                        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-violet-900 px-1">
+                          <span>
+                            👁️ 실시간 AI·머신러닝 시뮬레이터 미리보기 (하이퍼파라미터·좌표 설정이 학생 초기 화면에 반영됩니다)
+                          </span>
+                          <span className="text-violet-600">
+                            🐍 우측 상단 [Python 머신러닝 코드] 탭에서 알고리즘 코드 실행 가능
+                          </span>
+                        </div>
+                        <AiLabBlock
+                          key={block.id}
+                          rawContent={block.content}
+                          caption={block.caption}
+                          externalUrl={block.externalUrl}
+                          compact
+                          onChangeContent={(nextRaw) =>
+                            updateBlock(block.id, { content: nextRaw })
+                          }
+                        />
                       </div>
                     </div>
                   );
@@ -6248,6 +6725,9 @@ export default function NotionBlockEditor({
                     <option value="code">코드블록</option>
                     <option value="colab">파이썬 실행 셀(Colab)</option>
                     <option value="vpython">Web VPython 3D</option>
+                    <option value="physical">피지컬 컴퓨팅(회로·코드)</option>
+                    <option value="data_analysis">데이터 분석 스튜디오</option>
+                    <option value="ai_lab">AI·머신러닝 실험실</option>
                     <option value="mermaid">순서도(Mermaid)</option>
                     <option value="simulation">시뮬레이션(HTML/JS)</option>
                     <option value="quiz">체크포인트 퀴즈(/퀴즈)</option>

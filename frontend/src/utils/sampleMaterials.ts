@@ -719,5 +719,87 @@ while True:
 {"quizId":"quiz_physical_1","questionType":"multiple_choice","questionText":"피지컬 컴퓨팅 시스템에서 조도 센서나 초음파 센서처럼 외부 물리적 환경의 변화를 전기 신호로 측정하여 마이크로컨트롤러에 전달하는 장치를 무엇이라고 하는가?","options":["센서 (Sensor — 입력 장치)","액추에이터 (Actuator — 출력 장치)","컴파일러 (Compiler)","라우터 (Router)"],"correctOptionIndex":0,"answerText":"","explanation":"외부 환경의 빛·소리·온도·거리 등을 감지하여 입력 신호로 바꾸는 장치는 센서(Sensor)이며, LED·서보모터·부저처럼 물리적 동작을 출력하는 장치는 액추에이터(Actuator)입니다.","targetConcept":"센서와 액추에이터의 구분"}
 \`\`\``;
 
+/**
+ * 5. 정보 교과 — 데이터 수집·전처리(결측치/이상치)와 탐색적 데이터 분석(EDA) 실습 교안
+ */
+export const SAMPLE_DATA_ANALYSIS_MARKDOWN = `# 1. 왜 데이터를 분석하기 전에 '전처리(Preprocessing)'가 필요할까?
+> [!CALLOUT:📊] **학습 목표:** 실생활 공공·학교 데이터에 포함된 결측치(\`NaN\`)와 이상치(Outlier)가 평균·상관계수 등 통계량과 시각화에 미치는 영향을 탐색하고, 올바른 데이터 정제 및 시각화 방법을 선택하여 결론을 도출할 수 있다.
+
+우리가 기상청, 학교 급식실, 설문조사에서 수집한 **원시 데이터(Raw Data)** 에는 센서 오류나 응답 누락으로 인한 **결측치(Missing Value)** 와 비정상적으로 크거나 작은 **이상치(Outlier)** 가 자주 포함됩니다. 정제하지 않은 데이터를 그대로 분석하면 평균이나 회귀직선이 크게 왜곡될 수 있습니다.
+
+| 전처리 단계 | 주요 문제 상황 | 대표적인 처리 기법 | 주의할 점 |
+| :--- | :--- | :--- | :--- |
+| **결측치 처리 (Missing Value)** | 센서 통신 누락, 설문 무응답 (\`NaN\`, 빈칸) | 행 삭제(\`dropna\`), 평균 대체(\`mean\`), 중앙값 대체(\`median\`) | 무작정 행을 삭제하면 표본 수가 줄어들어 데이터 편향이 발생할 수 있음 |
+| **이상치 처리 (Outlier)** | 입력 오타(예: 기온 \`99.9°C\`), 일시적 튀는 값 | IQR($1.5 \\times \\text{IQR}$) 기준 제거 또는 경계값 클리핑(Clipping) | 평균은 이상치에 민감하지만 **중앙값(Median)** 은 이상치에 강건(Robust)함 |
+| **탐색적 데이터 분석 (EDA)** | 변수 간 관계 및 분포 파악 어려움 | 산점도(추세선), 히스토그램, 막대그래프, 상관관계 히트맵 | 상관계수($r$)가 높다고 해서 반드시 인과관계를 의미하지는 않음 |
+
+---
+
+# 2. 실습 ① 기상·미세먼지 데이터의 결측치·이상치 정제와 상관분석
+> [!CALLOUT:🌡️] **실습 미션:** 아래 데이터 분석 스튜디오에서 기온 데이터에 숨어 있는 이상치(\`99.9°C\`)와 결측치를 확인하고, **결측치 처리**와 **이상치(IQR) 처리** 옵션을 바꿨을 때 상관계수 $r$과 추세선이 어떻게 달라지는지 비교해 보세요!
+
+\`\`\`data-analysis:실습 1. 기상·환경 데이터 전처리 및 상관관계 분석
+{"datasetId":"weather_climate","missingStrategy":"keep","outlierStrategy":"keep","chartType":"scatter","xColumn":"여름평균기온","yColumn":"폭염일수","groupColumn":"권역","showTrendline":true,"missionPrompt":"1단계: 그대로 둔 상태에서 여름평균기온(°C)과 폭염일수의 상관계수 r을 확인하세요. 2단계: 결측치를 '중앙값 대체'로, 이상치를 'IQR 이상치 제거'로 변경했을 때 상관계수 r이 얼마나 높아지는지 관찰하고 [이 데이터·전처리 상태로 질문하기]로 기록해 보세요!"}
+\`\`\`
+
+---
+
+# 3. 실습 ② 학교 급식 선호도·잔반량 데이터 시각화와 인사이트 도출
+> [!CALLOUT:🍱] **실습 미션:** 급식 선호도 점수와 1인당 평균잔반량(g) 사이의 음(-)의 상관관계를 확인하고, 차트 유형을 **상관관계 히트맵(Heatmap)** 과 **막대그래프(Bar)** 로 전환하며 잔반량을 줄이기 위한 데이터 기반 제안을 작성해 보세요.
+
+\`\`\`data-analysis:실습 2. 학교 급식 선호도와 잔반량 상관관계 탐색
+{"datasetId":"school_lunch","missingStrategy":"fill_median","outlierStrategy":"remove_iqr","chartType":"scatter","xColumn":"선호도점수","yColumn":"평균잔반량_g","groupColumn":"메뉴분류","showTrendline":true,"missionPrompt":"선호도점수와 평균잔반량_g의 산점도 추세선 기울기를 확인한 뒤, 차트 유형을 '상관관계 히트맵(Heatmap)'으로 바꾸어 어떤 변수들이 서로 가장 강한 상관관계를 가지는지 찾아보세요!"}
+\`\`\`
+
+\`\`\`quiz
+{"quizId":"quiz_data_1","questionType":"multiple_choice","questionText":"데이터셋에 센서 오작동으로 인해 극단적인 이상치(예: 기온 99.9°C)가 포함되어 있을 때, 중심경향치 중 이상치의 영향을 가장 적게 받는(강건한, Robust) 통계량은 무엇인가?","options":["평균 (Mean)","중앙값 (Median)","최댓값 (Maximum)","범위 (Range)"],"correctOptionIndex":1,"answerText":"","explanation":"평균(Mean)은 모든 값을 더해 나누므로 극단적인 이상치 하나만 있어도 크게 왜곡되지만, 데이터를 크기순으로 나열했을 때 한가운데 위치하는 중앙값(Median)은 이상치의 영향을 거의 받지 않습니다.","targetConcept":"결측치와 이상치에 강건한 대푯값"}
+\`\`\``;
+
+/**
+ * 6. 정보 / 인공지능 기초 — 머신러닝 핵심 알고리즘(회귀·분류·군집) 인터랙티브 실험 교안
+ */
+export const SAMPLE_AI_LAB_MARKDOWN = `# 1. 인공지능·머신러닝의 3대 학습 방법과 핵심 알고리즘
+> [!CALLOUT:🧠] **학습 목표:** 지도학습(회귀·분류)과 비지도학습(군집화)의 차이를 이해하고, 하이퍼파라미터(기울기·절편, $K$, 트리 깊이, 군집 수) 변화에 따른 모델의 결정 경계(Decision Boundary)와 오차(Loss) 변화를 실험으로 설명할 수 있다.
+
+머신러닝(Machine Learning)은 사람이 일일이 규칙(Rule)을 조건문으로 코딩하는 대신, **데이터로부터 패턴이나 결정 경계(Decision Boundary)를 스스로 학습**하는 알고리즘입니다.
+
+| 구분 | 문제 유형 | 대표 알고리즘 | 핵심 원리 및 하이퍼파라미터 |
+| :--- | :--- | :--- | :--- |
+| **지도학습 (정답 있음)** | **회귀 (Regression)** — 연속된 숫자 예측 | **선형 회귀 (Linear Regression)** | 오차 제곱합 평균($\\text{MSE}$)이 최소가 되도록 직선 $\\hat{y}=wx+b$의 가중치($w$)와 편향($b$)을 경사하강법으로 학습 |
+| **지도학습 (정답 있음)** | **분류 (Classification)** — 범주(클래스) 예측 | **K-최근접 이웃 (K-NN)** / **의사결정나무 (Decision Tree)** | 주변 $K$개 이웃의 다수결 투표($K$), 또는 불순도(Gini)를 낮추는 스무고개 분할 조건(\`max_depth\`) 학습 |
+| **비지도학습 (정답 없음)** | **군집화 (Clustering)** — 유사한 그룹 발견 | **K-평균 군집화 (K-Means)** | 레이블 없는 데이터에서 $K$개의 중심점(Centroid)을 할당·이동하며 유사한 데이터끼리 그룹화 |
+
+---
+
+# 2. 실습 ① [지도학습: 회귀] 선형 회귀와 경사하강법(Gradient Descent) 실험
+> [!CALLOUT:📈] **실습 미션:** 슬라이더로 기울기 $w$와 절편 $b$를 직접 움직여 빨간색 **잔차(오차) 점선**의 길이를 줄여 보고, **[⚡ 경사하강법 1스텝 학습]** 과 **[🎯 최소제곱 최적해 맞춤]** 버튼을 눌러 손실 함수($\\text{MSE}$)가 최소가 되는 과정을 확인하세요!
+
+\`\`\`ai-lab:실습 1. 선형 회귀(Linear Regression)와 최소제곱 오차(MSE) 실험실
+{"algorithm":"linear_regression","slopeW":3.5,"interceptB":45,"learningRate":0.02,"kNeighbors":3,"distanceMetric":"euclidean","testPoint":{"x":5.2,"y":5.0},"maxDepth":2,"splitCriterion":"gini","kClusters":3,"missionPrompt":"1단계: 기울기 w와 절편 b 슬라이더를 직접 움직여 MSE(평균제곱오차)를 20 이하로 낮춰 보세요. 2단계: [⚡ 경사하강법 1스텝 학습] 버튼을 여러 번 클릭하여 컴퓨터가 스스로 최적의 직선을 찾아가는 원리를 관찰하세요!"}
+\`\`\`
+
+---
+
+# 3. 실습 ② [지도학습: 분류] K-최근접 이웃(K-NN)과 하이퍼파라미터 $K$의 역할
+> [!CALLOUT:🎯] **실습 미션:** 2차원 좌표 평면의 원하는 위치를 **마우스로 직접 클릭**하여 새로운 테스트 데이터(★)를 배치하고, 이웃 수 $K$를 \`K=1\`에서 \`K=7\`까지 바꿨을 때 다수결 투표 결과가 어떻게 달라지는지 실험해 보세요!
+
+\`\`\`ai-lab:실습 2. K-최근접 이웃(K-NN) 다수결 분류 실험실
+{"algorithm":"knn","slopeW":6.2,"interceptB":48,"learningRate":0.02,"kNeighbors":3,"distanceMetric":"euclidean","testPoint":{"x":5.2,"y":5.0},"maxDepth":2,"splitCriterion":"gini","kClusters":3,"missionPrompt":"두 클래스의 경계선 부근인 (X=5.2, Y=5.0) 주변을 클릭해 테스트 점(★)을 놓아 보세요. K=1일 때와 K=5일 때 예측 클래스가 왜 바뀌는지 확인하고, K가 너무 작을 때(과적합 위험)의 문제점을 질문 카드로 남겨 보세요!"}
+\`\`\`
+
+---
+
+# 4. 실습 ③ [비지도학습: 군집화] K-평균(K-Means) 중심점 이동 시뮬레이션
+> [!CALLOUT:🔮] **실습 미션:** 정답 레이블이 없는 데이터에서 **[👣 다음 단계 실행 (할당 ↔ 중심 이동)]** 버튼을 눌러 중심점(★)이 각 군집의 무게중심으로 수렴하는 과정을 단계별로 확인하세요!
+
+\`\`\`ai-lab:실습 3. K-평균(K-Means) 비지도 군집화 단계별 실험실
+{"algorithm":"kmeans","slopeW":6.2,"interceptB":48,"learningRate":0.02,"kNeighbors":3,"distanceMetric":"euclidean","testPoint":{"x":5.2,"y":5.0},"maxDepth":2,"splitCriterion":"gini","kClusters":3,"missionPrompt":"[👣 다음 단계 실행] 버튼을 클릭하며 1단계(가장 가까운 중심점에 배정) → 2단계(평균 위치로 중심점 이동) 과정을 반복해 보세요. 군집 수 K를 K=2, K=3, K=4로 바꾸면 군집 내 거리 합(Inertia)이 어떻게 변하나요?"}
+\`\`\`
+
+\`\`\`quiz
+{"quizId":"quiz_ai_1","questionType":"multiple_choice","questionText":"K-최근접 이웃(K-NN) 분류 알고리즘에서 하이퍼파라미터 K를 지나치게 작은 값(예: K=1)으로 설정했을 때 발생할 수 있는 가장 대표적인 문제점은 무엇인가?","options":["주변의 이상치(노이즈) 데이터 1개에 민감하게 반응하여 결정 경계가 복잡해지는 과적합(Overfitting)이 발생하기 쉽다.","모든 데이터를 항상 동일한 하나의 클래스로만 예측하는 과소적합(Underfitting)이 발생한다.","정답 레이블이 없어도 학습할 수 있는 비지도학습 알고리즘으로 바뀐다.","유클리드 거리를 계산할 수 없게 된다."],"correctOptionIndex":0,"answerText":"","explanation":"K=1이면 가장 가까운 단 1개의 데이터만 보고 클래스를 결정하므로, 우연히 섞여 들어간 노이즈(이상치) 데이터 주변에서도 결정 경계가 휘어지는 과적합(Overfitting) 위험이 커집니다.","targetConcept":"K-NN 하이퍼파라미터 K와 과적합(Overfitting)"}
+\`\`\``;
+
+
 
 

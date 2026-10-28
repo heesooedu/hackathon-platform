@@ -20,6 +20,8 @@ import SimulationBlockPreview from '@/components/SimulationBlockPreview';
 import ColabRunnerBlock from '@/components/ColabRunnerBlock';
 import VPythonRunnerBlock from '@/components/VPythonRunnerBlock';
 import PhysicalComputingBlock from '@/components/PhysicalComputingBlock';
+import DataAnalysisBlock from '@/components/DataAnalysisBlock';
+import AiLabBlock from '@/components/AiLabBlock';
 import InlineQuizBlockView from '@/components/InlineQuizBlockView';
 import {
   updateLessonMaterialAction,
@@ -333,6 +335,26 @@ export function SimpleMarkdownRenderer({
           rawContent={block.content}
           caption={block.caption}
           externalUrl={block.externalUrl}
+        />
+      );
+    }
+
+    if (block.type === 'data_analysis') {
+      return (
+        <DataAnalysisBlock
+          key={block.id}
+          rawContent={block.content}
+          caption={block.caption}
+        />
+      );
+    }
+
+    if (block.type === 'ai_lab') {
+      return (
+        <AiLabBlock
+          key={block.id}
+          rawContent={block.content}
+          caption={block.caption}
         />
       );
     }

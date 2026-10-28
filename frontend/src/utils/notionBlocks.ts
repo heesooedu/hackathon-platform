@@ -13,6 +13,8 @@ export type NotionBlockType =
   | 'colab'
   | 'vpython'
   | 'physical'
+  | 'data_analysis'
+  | 'ai_lab'
   | 'mermaid'
   | 'simulation'
   | 'quiz'
@@ -846,6 +848,40 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           content: codeLines.join('\n'),
         });
       } else if (
+        langRaw === 'data-analysis' ||
+        langRaw.startsWith('data-analysis:') ||
+        langRaw === 'data_analysis' ||
+        langRaw.startsWith('data_analysis:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        blocks.push({
+          id: createBlockId(),
+          type: 'data_analysis',
+          caption: (rawCaption || '').trim(),
+          externalUrl: rawUrl ? rawUrl.trim() : undefined,
+          content: codeLines.join('\n'),
+        });
+      } else if (
+        langRaw === 'ai-lab' ||
+        langRaw.startsWith('ai-lab:') ||
+        langRaw === 'ai_lab' ||
+        langRaw.startsWith('ai_lab:')
+      ) {
+        const colonIdx = fenceHeader.indexOf(':');
+        const metaPart =
+          colonIdx !== -1 ? fenceHeader.slice(colonIdx + 1).trim() : '';
+        const [rawCaption, rawUrl] = metaPart.split('|');
+        blocks.push({
+          id: createBlockId(),
+          type: 'ai_lab',
+          caption: (rawCaption || '').trim(),
+          externalUrl: rawUrl ? rawUrl.trim() : undefined,
+          content: codeLines.join('\n'),
+        });
+      } else if (
         langRaw === 'youtube' ||
         langRaw.startsWith('youtube:') ||
         langRaw === 'yt' ||
@@ -1251,6 +1287,34 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
             : '';
         lines.push(
           `\`\`\`physical${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+        );
+        break;
+      }
+      case 'data_analysis': {
+        const safeTitle = (b.caption || '')
+          .replace(/[\n|]/g, ' ')
+          .trim();
+        const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+        const meta =
+          safeTitle || safeUrl
+            ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+            : '';
+        lines.push(
+          `\`\`\`data-analysis${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
+        );
+        break;
+      }
+      case 'ai_lab': {
+        const safeTitle = (b.caption || '')
+          .replace(/[\n|]/g, ' ')
+          .trim();
+        const safeUrl = (b.externalUrl || '').replace(/\s+/g, '').trim();
+        const meta =
+          safeTitle || safeUrl
+            ? `:${safeTitle}${safeUrl ? `|${safeUrl}` : ''}`
+            : '';
+        lines.push(
+          `\`\`\`ai-lab${meta}\n${b.content.replace(/\r\n/g, '\n')}\n\`\`\``
         );
         break;
       }

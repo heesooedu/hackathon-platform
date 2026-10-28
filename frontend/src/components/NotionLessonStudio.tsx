@@ -24,6 +24,8 @@ import {
   SAMPLE_MATH_MARKDOWN,
   SAMPLE_PHYSICS_MARKDOWN,
   SAMPLE_PHYSICAL_COMPUTING_MARKDOWN,
+  SAMPLE_DATA_ANALYSIS_MARKDOWN,
+  SAMPLE_AI_LAB_MARKDOWN,
 } from '@/utils/sampleMaterials';
 import { parseLessonMaterial } from '@/utils/materialPayload';
 import { Lesson, MaterialType, ClassItem } from '@/types/database.types';
@@ -169,7 +171,14 @@ export default function NotionLessonStudio({
   }
 
   function applySampleTemplate(
-    type: 'general' | 'math' | 'physics' | 'physical' | 'html'
+    type:
+      | 'general'
+      | 'math'
+      | 'physics'
+      | 'physical'
+      | 'data_analysis'
+      | 'ai_lab'
+      | 'html'
   ) {
     setErrorMessage(null);
     setPreviewMode(false);
@@ -226,6 +235,36 @@ export default function NotionLessonStudio({
       setMaterialFileName('5차시_정보_피지컬컴퓨팅_3종보드_실습교안.md');
       setUploadSuccessBadge(
         '정보 교과 피지컬 컴퓨팅(마이크로비트·아두이노 Uno·라즈베리파이 피코) 실습 교안 로드됨'
+      );
+    } else if (type === 'data_analysis') {
+      setPageIcon('📊');
+      setSubjectCategory('정보');
+      setUnitCategory('2단원. 데이터와 정보 (데이터 수집·전처리·분석)');
+      setSessionNumber('6');
+      setTitle('6차시: 실생활 데이터의 결측치·이상치 정제와 탐색적 데이터 분석(EDA) 실습');
+      setLearningObjective(
+        '데이터에 포함된 결측치(NaN)와 이상치(IQR)가 통계량 및 상관관계에 미치는 영향을 비교하고, 산점도·히트맵 시각화를 통해 데이터 기반의 결론을 도출할 수 있다.'
+      );
+      setMaterialType('markdown');
+      setBlocks(markdownToBlocks(SAMPLE_DATA_ANALYSIS_MARKDOWN));
+      setMaterialFileName('6차시_정보_데이터분석_전처리_EDA_실습교안.md');
+      setUploadSuccessBadge(
+        '정보 교과 데이터 분석 스튜디오(결측치·이상치 전처리 & 상관계수 시각화) 실습 교안 로드됨'
+      );
+    } else if (type === 'ai_lab') {
+      setPageIcon('🧠');
+      setSubjectCategory('정보');
+      setUnitCategory('5단원. 인공지능과 머신러닝');
+      setSessionNumber('7');
+      setTitle('7차시: 지도학습(선형 회귀·K-NN·결정트리)과 비지도학습(K-Means) 알고리즘 실험');
+      setLearningObjective(
+        '지도학습과 비지도학습의 차이를 이해하고, 선형 회귀(경사하강법), K-최근접 이웃(K-NN), K-평균 군집화 시뮬레이터에서 하이퍼파라미터 변화에 따른 결정 경계와 오차 변화를 설명할 수 있다.'
+      );
+      setMaterialType('markdown');
+      setBlocks(markdownToBlocks(SAMPLE_AI_LAB_MARKDOWN));
+      setMaterialFileName('7차시_정보_인공지능_머신러닝_실험실_교안.md');
+      setUploadSuccessBadge(
+        '정보 교과 AI·머신러닝 실험실(선형 회귀·K-NN·결정트리·K-Means) 실습 교안 로드됨'
       );
     } else {
       setPageIcon('⚡');
@@ -568,7 +607,21 @@ export default function NotionLessonStudio({
                 onClick={() => applySampleTemplate('physical')}
                 className="inline-flex items-center gap-1 rounded-xl border border-emerald-300 bg-emerald-50/90 px-3 py-1.5 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100 transition cursor-pointer shadow-2xs"
               >
-                <span>🤖 정보: 피지컬 컴퓨팅 실습 (마이크로비트·아두이노·피코)</span>
+                <span>🤖 정보: 피지컬 컴퓨팅 실습</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applySampleTemplate('data_analysis')}
+                className="inline-flex items-center gap-1 rounded-xl border border-cyan-300 bg-cyan-50/90 px-3 py-1.5 text-xs font-extrabold text-cyan-900 hover:bg-cyan-100 transition cursor-pointer shadow-2xs"
+              >
+                <span>📊 정보: 데이터 분석 실습</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applySampleTemplate('ai_lab')}
+                className="inline-flex items-center gap-1 rounded-xl border border-violet-300 bg-violet-50/90 px-3 py-1.5 text-xs font-extrabold text-violet-900 hover:bg-violet-100 transition cursor-pointer shadow-2xs"
+              >
+                <span>🧠 정보: 인공지능·머신러닝 실습</span>
               </button>
               <button
                 type="button"
