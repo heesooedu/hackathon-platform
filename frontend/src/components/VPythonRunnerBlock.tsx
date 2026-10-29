@@ -111,8 +111,21 @@ export function stripLegacyEarthMoonDefaultTitle(raw?: string): string {
   return trimmed
 }
 
+export function ensureWebVPythonHeader(rawCode: string): string {
+  const lines = rawCode.replace(/\r\n/g, '\n').split('\n')
+  const headerRegex =
+    /^\s*(?:GlowScript(?:\s+\d+(?:\.\d+)?)?(?:\s+VPython)?|Web\s*VPython(?:\s+\d+(?:\.\d+)?)?|VPython\s+\d+(?:\.\d+)?)\s*$/i
+  const bodyLines = lines.filter((line) => !headerRegex.test(line))
+  while (bodyLines.length > 0 && bodyLines[0].trim() === '') {
+    bodyLines.shift()
+  }
+  const body = bodyLines.join('\n')
+  return body ? `Web VPython 3.2\n${body}` : 'Web VPython 3.2'
+}
+
 function buildGlowScriptSrcDoc(vpythonCode: string): string {
-  const safeJsonCode = JSON.stringify(vpythonCode).replace(/<\/script/gi, '<\\/script')
+  const normalizedCode = ensureWebVPythonHeader(vpythonCode)
+  const safeJsonCode = JSON.stringify(normalizedCode).replace(/<\/script/gi, '<\\/script')
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -438,19 +451,26 @@ function buildGlowScriptSrcDoc(vpythonCode: string): string {
             return;
           }
           var lines = rawCode.replace(/\\r\\n/g, '\\n').split('\\n');
-          while (lines.length > 0 && lines[0].trim() === '') {
-            lines.shift();
+          var headerRegex = /^\\s*(?:GlowScript(?:\\s+\\d+(?:\\.\\d+)?)?(?:\\s+VPython)?|Web\\s*VPython(?:\\s+\\d+(?:\\.\\d+)?)?|VPython\\s+\\d+(?:\\.\\d+)?)\\s*$/i;
+          var bodyLines = [];
+          for (var i = 0; i < lines.length; i++) {
+            if (!headerRegex.test(lines[i])) {
+              bodyLines.push(lines[i]);
+            }
+          }
+          while (bodyLines.length > 0 && bodyLines[0].trim() === '') {
+            bodyLines.shift();
           }
           var lang = 'vpython';
           var version = '3.2';
-          if (lines.length > 0 && /^(GlowScript|Web\\s+VPython)/i.test(lines[0].trim())) {
-            lines.shift();
+          var cleanedBody = bodyLines.join('\\n');
+          if (!/scene\\.height\\s*=/.test(cleanedBody)) {
+            cleanedBody = 'scene.height = 280\\n' + cleanedBody;
           }
-          var cleanedCode = lines.join('\\n');
-          if (!/scene\\.height\\s*=/.test(cleanedCode)) {
-            cleanedCode = 'scene.height = 280\\n' + cleanedCode;
-          }
-          var compiledJs = window.glowscript_compile(cleanedCode, { lang: lang, version: version, run: false });
+          // GlowScript 3.2 컴파일러(preprocess)는 무조건 첫 번째 줄(lines[0])을 헤더 선언문으로 간주하고 건너뛰므로
+          // 학생이 'Web VPython 3.2'를 지웠더라도 컴파일 직전에 항상 맨 윗줄 헤더를 자동 보정합니다.
+          var codeForCompiler = 'Web VPython 3.2\\n' + cleanedBody;
+          var compiledJs = window.glowscript_compile(codeForCompiler, { lang: lang, version: version, run: false });
           var container = $("#glowscript").removeAttr("id");
           window.__context = { glowscript_container: container };
           var runner = eval("(function() { " + compiledJs + "; return __main__; })()");
@@ -535,7 +555,7 @@ export default function VPythonRunnerBlock({
 
   const handleCopyAndOpenGlowScript = async () => {
     try {
-      await navigator.clipboard.writeText(code)
+      await navigator.clipboard.writeText(ensureWebVPythonHeader(code))
       setCopied(true)
       setTimeout(() => setCopied(false), 2500)
     } catch {
