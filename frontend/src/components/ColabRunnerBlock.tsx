@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { applyCodeTabIndentation } from '@/utils/notionBlocks';
 
 export interface ColabTemplate {
   id: string;
@@ -381,38 +382,21 @@ export default function ColabRunnerBlock({
       return;
     }
 
-    // Tab -> 4칸 공백, Shift + Tab -> 4칸 내어쓰기
+    // Tab -> 4칸 공백, Shift + Tab -> 4칸 내어쓰기 (다중 줄 드래그 선택 시에도 코드 삭제 없이 들여쓰기/내어쓰기)
     if (e.key === 'Tab') {
       e.preventDefault();
-      const before = val.slice(0, start);
-      const after = val.slice(end);
-      if (e.shiftKey) {
-        const lastNewline = before.lastIndexOf('\n');
-        const lineStart = lastNewline + 1;
-        const linePrefix = val.slice(lineStart, start);
-        const leadingMatch = linePrefix.match(/^( {1,4}|\t)/);
-        if (leadingMatch) {
-          const removeLen = leadingMatch[1].length;
-          const nextVal = val.slice(0, lineStart) + val.slice(lineStart + removeLen);
-          const nextPos = Math.max(lineStart, start - removeLen);
-          el.value = nextVal;
-          el.setSelectionRange(nextPos, nextPos);
-          setStudentCode(nextVal);
-          requestAnimationFrame(() => {
-            el.focus();
-            el.setSelectionRange(nextPos, nextPos);
-          });
-        }
-        return;
-      }
-      const nextVal = `${before}    ${after}`;
-      const nextPos = start + 4;
-      el.value = nextVal;
-      el.setSelectionRange(nextPos, nextPos);
-      setStudentCode(nextVal);
+      const { newValue, newStart, newEnd } = applyCodeTabIndentation(
+        val,
+        start,
+        end,
+        e.shiftKey
+      );
+      el.value = newValue;
+      el.setSelectionRange(newStart, newEnd);
+      setStudentCode(newValue);
       requestAnimationFrame(() => {
         el.focus();
-        el.setSelectionRange(nextPos, nextPos);
+        el.setSelectionRange(newStart, newEnd);
       });
       return;
     }

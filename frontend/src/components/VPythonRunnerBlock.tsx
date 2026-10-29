@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { applyCodeTabIndentation } from '@/utils/notionBlocks'
 
 export const VPYTHON_TEMPLATES: { label: string; title: string; code: string }[] = [
   {
@@ -622,38 +623,21 @@ export default function VPythonRunnerBlock({
       return
     }
 
-    // Tab / Shift+Tab -> 4칸 들여쓰기 및 내어쓰기
+    // Tab / Shift+Tab -> 다중 줄 드래그 선택 시에도 코드가 지워지지 않고 4칸 들여쓰기 및 내어쓰기
     if (e.key === 'Tab') {
       e.preventDefault()
-      if (e.shiftKey) {
-        const beforeCursor = val.slice(0, start)
-        const lineStartIdx = beforeCursor.lastIndexOf('\n') + 1
-        const currentLine = val.slice(lineStartIdx)
-        const removeMatch = currentLine.match(/^( {1,4})/)
-        if (removeMatch) {
-          const removeCount = removeMatch[1].length
-          const nextVal =
-            val.slice(0, lineStartIdx) + val.slice(lineStartIdx + removeCount)
-          const nextPos = Math.max(lineStartIdx, start - removeCount)
-          target.value = nextVal
-          target.setSelectionRange(nextPos, nextPos)
-          setCode(nextVal)
-          requestAnimationFrame(() => {
-            target.focus()
-            target.setSelectionRange(nextPos, nextPos)
-          })
-        }
-        return
-      }
-
-      const nextVal = val.slice(0, start) + '    ' + val.slice(end)
-      const nextPos = start + 4
-      target.value = nextVal
-      target.setSelectionRange(nextPos, nextPos)
-      setCode(nextVal)
+      const { newValue, newStart, newEnd } = applyCodeTabIndentation(
+        val,
+        start,
+        end,
+        e.shiftKey
+      )
+      target.value = newValue
+      target.setSelectionRange(newStart, newEnd)
+      setCode(newValue)
       requestAnimationFrame(() => {
         target.focus()
-        target.setSelectionRange(nextPos, nextPos)
+        target.setSelectionRange(newStart, newEnd)
       })
       return
     }

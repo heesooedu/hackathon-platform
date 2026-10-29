@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { applyCodeTabIndentation } from '@/utils/notionBlocks';
 
 export type PhysicalBoardType = 'microbit' | 'arduino_uno' | 'rpi_pico';
 
@@ -2222,11 +2223,18 @@ export default function PhysicalComputingBlock({
 
     if (e.key === 'Tab') {
       e.preventDefault();
-      const nextVal = val.slice(0, start) + '    ' + val.slice(end);
-      handleCodeEdit(nextVal);
+      const { newValue, newStart, newEnd } = applyCodeTabIndentation(
+        val,
+        start,
+        end,
+        e.shiftKey
+      );
+      el.value = newValue;
+      el.setSelectionRange(newStart, newEnd);
+      handleCodeEdit(newValue);
       requestAnimationFrame(() => {
         el.focus();
-        el.setSelectionRange(start + 4, start + 4);
+        el.setSelectionRange(newStart, newEnd);
       });
       return;
     }

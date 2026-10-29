@@ -73,6 +73,135 @@ export interface NotionBlock {
   colId?: string; // 같은 rowId 안에서 같은 colId를 공유하는 블록들은 하나의 세로 열(Column Stack) 안에 상하로 쌓임
   widthPercent?: number; // 블록(또는 해당 열)의 가로 너비 비율 (15~100%, 다단 행 내에서는 열 너비 비중, 단독 블록에서는 가로 폭 %)
   stackHeightPercent?: number; // 같은 열(colId) 안에 2개 이상의 블록이 상하로 쌓여 있을 때 각 블록의 세로 높이 비중 (15~85%)
+  indentLevel?: number; // 글머리 기호(bullet) 블록의 계층 들여쓰기 단계 (0 ~ 3)
+}
+
+export const MAX_BULLET_INDENT_LEVEL = 3;
+
+/**
+ * 글머리 기호(bullet) 블록의 들여쓰기 단계(indentLevel: 0~3)에 따른 기호 및 스타일 메타데이터를 반환합니다.
+ * - 0단계: • (채워진 원)
+ * - 1단계: ○ (빈 원 - 하위 포함 관계)
+ * - 2단계: ▪ (채워진 사각형 - 세부 항목)
+ * - 3단계: ▫ (빈 사각형 - 보조 항목)
+ */
+export function getBulletMarkerMeta(indentLevel = 0): {
+  level: number;
+  symbol: string;
+  label: string;
+  colorClass: string;
+  fontSizeClass: string;
+} {
+  const level = Math.max(
+    0,
+    Math.min(MAX_BULLET_INDENT_LEVEL, Math.round(indentLevel || 0))
+  );
+  switch (level) {
+    case 0:
+      return {
+        level,
+        symbol: '•',
+        label: '1단계 (상위 항목)',
+        colorClass: 'text-blue-600',
+        fontSizeClass: 'text-base leading-5',
+      };
+    case 1:
+      return {
+        level,
+        symbol: '○',
+        label: '2단계 (하위 포함 항목)',
+        colorClass: 'text-indigo-600',
+        fontSizeClass: 'text-[11px] leading-5',
+      };
+    case 2:
+      return {
+        level,
+        symbol: '▪',
+        label: '3단계 (세부 항목)',
+        colorClass: 'text-teal-600',
+        fontSizeClass: 'text-xs leading-5',
+      };
+    case 3:
+    default:
+      return {
+        level,
+        symbol: '▫',
+        label: '4단계 (보조 항목)',
+        colorClass: 'text-slate-500',
+        fontSizeClass: 'text-xs leading-5',
+      };
+  }
+}
+
+/**
+ * 코드 에디터(Code, VPython, Colab, Physical Computing, Mermaid 등)에서
+ * Tab / Shift+Tab 입력 시 선택 영역이 사라지지 않고 일반 IDE처럼 줄 단위 들여쓰기/내어쓰기가 동작하도록 처리합니다.
+ * - 텍스트가 드래그(선택)된 상태에서 Tab: 선택된 모든 줄 앞에 4칸 공백을 추가하고 선택 영역을 유지합니다.
+ * - Shift+Tab: 선택된 모든 줄(또는 커서가 위치한 현재 줄) 앞의 공백(최대 4칸 또는 탭 1개)을 제거합니다.
+ * - 선택 영역 없이 단일 커서 상태에서 Tab: 커서 위치에 4칸 공백을 삽입합니다.
+ */
+export function applyCodeTabIndentation(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  shiftKey: boolean,
+  indentUnit = '    '
+): { newValue: string; newStart: number; newEnd: number } {
+  const start = Math.max(0, Math.min(selectionStart, selectionEnd));
+  const end = Math.max(0, Math.max(selectionStart, selectionEnd));
+
+  // 선택 영역이 있거나 Shift+Tab(내어쓰기)인 경우 줄 단위로 처리
+  if (start !== end || shiftKey) {
+    const firstLineStart =
+      start === 0 ? 0 : value.lastIndexOf('\n', start - 1) + 1;
+    const effectiveEnd =
+      end > start && end > firstLineStart && value[end - 1] === '\n'
+        ? end - 1
+        : end;
+    const lastLineBreak = value.indexOf('\n', effectiveEnd);
+    const blockEnd = lastLineBreak === -1 ? value.length : lastLineBreak;
+
+    const targetSlice = value.slice(firstLineStart, blockEnd);
+    const lines = targetSlice.split('\n');
+
+    if (!shiftKey) {
+      const updatedLines = lines.map((line) => indentUnit + line);
+      const newValue =
+        value.slice(0, firstLineStart) +
+        updatedLines.join('\n') +
+        value.slice(blockEnd);
+      const newStart =
+        start === firstLineStart ? firstLineStart : start + indentUnit.length;
+      const newEnd = end + indentUnit.length * lines.length;
+      return { newValue, newStart, newEnd };
+    } else {
+      let firstLineRemoved = 0;
+      let totalRemoved = 0;
+      const updatedLines = lines.map((line, idx) => {
+        const match = line.match(/^( {1,4}|\t)/);
+        if (match) {
+          const removeLen = match[1].length;
+          if (idx === 0) firstLineRemoved = removeLen;
+          totalRemoved += removeLen;
+          return line.slice(removeLen);
+        }
+        return line;
+      });
+      const newValue =
+        value.slice(0, firstLineStart) +
+        updatedLines.join('\n') +
+        value.slice(blockEnd);
+      const newStart = Math.max(firstLineStart, start - firstLineRemoved);
+      const newEnd =
+        start === end ? newStart : Math.max(newStart, end - totalRemoved);
+      return { newValue, newStart, newEnd };
+    }
+  }
+
+  // 단일 커서 상태에서 일반 Tab 입력
+  const newValue = value.slice(0, start) + indentUnit + value.slice(end);
+  const newPos = start + indentUnit.length;
+  return { newValue, newStart: newPos, newEnd: newPos };
 }
 
 export interface NotionBlockColumnGroup {
@@ -549,6 +678,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
     colId?: string;
     widthPercent?: number;
     stackHeightPercent?: number;
+    indentLevel?: number;
     tableColWidths?: number[];
     tableRowHeights?: number[];
   } | null = null;
@@ -569,6 +699,9 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           }
           if (typeof pendingLayout.stackHeightPercent === 'number') {
             blocks[bIdx].stackHeightPercent = pendingLayout.stackHeightPercent;
+          }
+          if (typeof pendingLayout.indentLevel === 'number') {
+            blocks[bIdx].indentLevel = pendingLayout.indentLevel;
           }
           if (
             Array.isArray(pendingLayout.tableColWidths) &&
@@ -610,6 +743,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
           colId?: unknown;
           widthPercent?: unknown;
           stackHeightPercent?: unknown;
+          indentLevel?: unknown;
           tableColWidths?: unknown;
           tableRowHeights?: unknown;
         };
@@ -639,6 +773,14 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
                 ? Math.min(
                     85,
                     Math.max(15, Math.round(parsedLayout.stackHeightPercent))
+                  )
+                : undefined,
+            indentLevel:
+              typeof parsedLayout.indentLevel === 'number' &&
+              Number.isFinite(parsedLayout.indentLevel)
+                ? Math.min(
+                    MAX_BULLET_INDENT_LEVEL,
+                    Math.max(0, Math.round(parsedLayout.indentLevel))
                   )
                 : undefined,
             tableColWidths: Array.isArray(parsedLayout.tableColWidths)
@@ -1100,12 +1242,31 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       continue;
     }
 
-    // 6. 글머리 기호 목록 (- 내용, * 내용)
-    if (line.startsWith('- ') || line.startsWith('* ')) {
+    // 6. 글머리 기호 목록 (- 내용, * 내용, 또는 공백 들여쓰기된 하위 목록)
+    if (
+      line.startsWith('- ') ||
+      line.startsWith('* ') ||
+      line === '-' ||
+      line === '*'
+    ) {
+      const leadingMatch = rawLine.match(/^([ \t]*)[-*](?:\s+(.*))?$/);
+      const rawLeadingWs = leadingMatch ? leadingMatch[1] : '';
+      const expandedWs = rawLeadingWs.replace(/\t/g, '  ');
+      const indentFromSpaces = Math.min(
+        MAX_BULLET_INDENT_LEVEL,
+        Math.floor(expandedWs.length / 2)
+      );
+      const bodyRaw =
+        leadingMatch && typeof leadingMatch[2] === 'string'
+          ? leadingMatch[2]
+          : line.length > 2
+          ? line.slice(2)
+          : '';
       blocks.push({
         id: createBlockId(),
         type: 'bullet',
-        content: decodeInlineNewlines(line.slice(2).trim()),
+        content: decodeInlineNewlines(bodyRaw.trim()),
+        indentLevel: indentFromSpaces > 0 ? indentFromSpaces : undefined,
       });
       i++;
       continue;
@@ -1155,6 +1316,7 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
   const hasAnyContent = blocks.some(
     (b) =>
       b.type === 'divider' ||
+      b.type === 'bullet' ||
       b.type === 'table' ||
       b.type === 'quiz' ||
       b.type === 'vpython' ||
@@ -1197,13 +1359,19 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           lines.push('<br>');
         }
         break;
-      case 'bullet':
+      case 'bullet': {
+        const indentLevel = Math.max(
+          0,
+          Math.min(MAX_BULLET_INDENT_LEVEL, Math.round(b.indentLevel || 0))
+        );
+        const indentPrefix = '  '.repeat(indentLevel);
         if (b.content.length > 0) {
-          lines.push(`- ${encodeInlineNewlines(b.content)}`);
+          lines.push(`${indentPrefix}- ${encodeInlineNewlines(b.content)}`);
         } else {
-          lines.push('<br>');
+          lines.push(`${indentPrefix}- \u200B`);
         }
         break;
+      }
       case 'callout':
         if (b.content.length > 0) {
           const icon = b.icon || '💡';
@@ -1448,6 +1616,11 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         b.type === 'table' &&
         Array.isArray(b.tableRowHeights) &&
         b.tableRowHeights.some((h) => typeof h === 'number' && h > 0);
+      const hasIndentLevel =
+        b.type === 'bullet' &&
+        typeof b.indentLevel === 'number' &&
+        Number.isFinite(b.indentLevel) &&
+        b.indentLevel > 0;
 
       if (
         hasRowId ||
@@ -1455,13 +1628,15 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         hasCustomWidth ||
         hasStackHeight ||
         hasTableColWidths ||
-        hasTableRowHeights
+        hasTableRowHeights ||
+        hasIndentLevel
       ) {
         const layoutMeta: {
           rowId?: string;
           colId?: string;
           widthPercent?: number;
           stackHeightPercent?: number;
+          indentLevel?: number;
           tableColWidths?: number[];
           tableRowHeights?: number[];
         } = {};
@@ -1480,6 +1655,12 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
           layoutMeta.stackHeightPercent = Math.min(
             85,
             Math.max(15, Math.round(b.stackHeightPercent))
+          );
+        }
+        if (hasIndentLevel && typeof b.indentLevel === 'number') {
+          layoutMeta.indentLevel = Math.min(
+            MAX_BULLET_INDENT_LEVEL,
+            Math.max(0, Math.round(b.indentLevel))
           );
         }
         if (hasTableColWidths && b.tableColWidths) {

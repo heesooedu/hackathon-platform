@@ -12,6 +12,7 @@ import {
   getNormalizedStackHeights,
   extractYouTubeVideoId,
   normalizeExternalUrl,
+  getBulletMarkerMeta,
   NotionBlock,
 } from '@/utils/notionBlocks';
 import NotionBlockEditor from '@/components/NotionBlockEditor';
@@ -207,9 +208,18 @@ export function SimpleMarkdownRenderer({
     }
 
     if (block.type === 'bullet') {
+      const bulletMeta = getBulletMarkerMeta(block.indentLevel || 0);
       return (
-        <div key={block.id} className="flex items-start gap-2.5 pl-2">
-          <span className="text-blue-600 font-bold select-none mt-0.5">•</span>
+        <div
+          key={block.id}
+          className="flex items-start gap-2.5 transition-all"
+          style={{ paddingLeft: `${bulletMeta.level * 24 + 8}px` }}
+        >
+          <span
+            className={`${bulletMeta.colorClass} ${bulletMeta.fontSizeClass} font-bold select-none mt-0.5 w-4 text-center shrink-0`}
+          >
+            {bulletMeta.symbol}
+          </span>
           <div className="flex-1 leading-snug whitespace-pre-wrap">
             {renderInlineMarkdown(block.content)}
           </div>

@@ -23,6 +23,9 @@ import {
   cleanupOrphanRowIds,
   extractYouTubeVideoId,
   normalizeExternalUrl,
+  MAX_BULLET_INDENT_LEVEL,
+  getBulletMarkerMeta,
+  applyCodeTabIndentation,
 } from '@/utils/notionBlocks';
 import { QuizQuestionType } from '@/types/database.types';
 import { generateInlineQuizDraftAction } from '@/app/lessons/actions';
@@ -1967,9 +1970,146 @@ export default function NotionBlockEditor({
   }
 
   /**
-   * 텍스트 입력 시 `/` 로 시작하면 슬래시 메뉴를 열고 검색어를 업데이트합니다.
+   * 텍스트 입력 시:
+   * 1. 노션 스타일 마크다운 자동 변환:
+   *    - `- ` 또는 `* ` 입력 시 즉시 글머리 기호(bullet) 블록으로 전환
+   *    - `# `, `## `, `### `, `> ` 입력 시 제목/인용구 블록으로 전환
+   *    - 줄바꿈 후 새 줄에서 `- ` 입력 시 아래에 새 글머리 기호 블록 자동 분리 생성
+   * 2. `/` 로 시작하면 슬래시 메뉴를 열고 검색어를 업데이트합니다.
    */
-  function handleTextChangeWithSlash(block: NotionBlock, val: string) {
+  function handleTextChangeWithSlash(
+    block: NotionBlock,
+    val: string,
+    idx?: number
+  ) {
+    // 1-a. 이미 글머리 기호(bullet) 블록인데 습관적으로 맨 앞에 `- ` 또는 `* `를 입력한 경우 중복 기호 제거
+    if (
+      block.type === 'bullet' &&
+      (block.content === '' || block.content === '-' || block.content === '*') &&
+      /^[-*]\s/.test(val)
+    ) {
+      const cleaned = val.slice(2);
+      setSlashMenuBlockId(null);
+      setSlashFilterQuery('');
+      updateBlock(block.id, { content: cleaned });
+      requestAnimationFrame(() => {
+        const targetEl = blockRefs.current[block.id];
+        if (targetEl) {
+          targetEl.focus();
+          targetEl.setSelectionRange(0, 0);
+        }
+      });
+      return;
+    }
+
+    // 1-b. 일반 본문(p) 또는 제목 블록 맨 앞에서 `- ` 또는 `* ` 입력 시 글머리 기호(bullet) 블록으로 즉시 변환
+    if (block.type !== 'bullet') {
+      const bulletAutoMatch = val.match(/^([ \t]*)[-*]\s([\s\S]*)$/);
+      if (
+        bulletAutoMatch &&
+        (block.content === '' ||
+          block.content === '-' ||
+          block.content === '*' ||
+          /^[ \t]*[-*]?$/.test(block.content))
+      ) {
+        const rawWs = bulletAutoMatch[1] || '';
+        const expandedWs = rawWs.replace(/\t/g, '  ');
+        const autoIndent =
+          expandedWs.length > 0
+            ? Math.min(
+                MAX_BULLET_INDENT_LEVEL,
+                Math.max(1, Math.floor(expandedWs.length / 2))
+              )
+            : block.indentLevel || 0;
+        const nextContent = bulletAutoMatch[2] || '';
+        setSlashMenuBlockId(null);
+        setSlashFilterQuery('');
+        updateBlock(block.id, {
+          type: 'bullet',
+          indentLevel: autoIndent,
+          content: nextContent,
+        });
+        requestAnimationFrame(() => {
+          const targetEl = blockRefs.current[block.id];
+          if (targetEl) {
+            targetEl.focus();
+            targetEl.setSelectionRange(0, 0);
+          }
+        });
+        return;
+      }
+    }
+
+    // 1-c. 일반 본문(p) 맨 앞에서 `# `, `## `, `### `, `> ` 입력 시 노션 스타일 블록 자동 변환
+    if (block.type === 'p' && block.content.length <= 3) {
+      const headingOrQuoteMatch =
+        val.match(/^(#{1,3})\s([\s\S]*)$/) || val.match(/^(>)\s([\s\S]*)$/);
+      if (headingOrQuoteMatch) {
+        const token = headingOrQuoteMatch[1];
+        const nextContent = headingOrQuoteMatch[2] || '';
+        const targetType: NotionBlockType =
+          token === '#'
+            ? 'h1'
+            : token === '##'
+            ? 'h2'
+            : token === '###'
+            ? 'h3'
+            : 'quote';
+        setSlashMenuBlockId(null);
+        setSlashFilterQuery('');
+        updateBlock(block.id, {
+          type: targetType,
+          content: nextContent,
+        });
+        requestAnimationFrame(() => {
+          const targetEl = blockRefs.current[block.id];
+          if (targetEl) {
+            targetEl.focus();
+            targetEl.setSelectionRange(0, 0);
+          }
+        });
+        return;
+      }
+    }
+
+    // 1-d. 블록 내 줄바꿈(Shift+Enter 또는 다단 열 내 Enter) 이후 새 줄에서 `- ` 또는 `* ` 입력 시 아래에 새 bullet 블록으로 분리
+    if (
+      typeof idx === 'number' &&
+      (block.type === 'p' || block.type === 'bullet')
+    ) {
+      const trailingBulletMatch = val.match(/\n([ \t]*)[-*]\s$/);
+      if (trailingBulletMatch) {
+        const splitPos = val.length - trailingBulletMatch[0].length;
+        const beforeText = val.slice(0, splitPos);
+        const rawWs = trailingBulletMatch[1] || '';
+        const expandedWs = rawWs.replace(/\t/g, '  ');
+        const extraIndent =
+          expandedWs.length > 0 ? Math.max(1, Math.floor(expandedWs.length / 2)) : 0;
+        const baseIndent = block.type === 'bullet' ? block.indentLevel || 0 : 0;
+        const nextIndent = Math.min(
+          MAX_BULLET_INDENT_LEVEL,
+          baseIndent + extraIndent
+        );
+        const newBulletId = createBlockId();
+        const nextBlocks = [...blocks];
+        nextBlocks[idx] = { ...block, content: beforeText };
+        nextBlocks.splice(idx + 1, 0, {
+          id: newBulletId,
+          type: 'bullet',
+          content: '',
+          indentLevel: nextIndent,
+          rowId: block.rowId,
+          colId: block.colId,
+          widthPercent: block.rowId ? block.widthPercent : undefined,
+        });
+        setSlashMenuBlockId(null);
+        setSlashFilterQuery('');
+        onChange(cleanupOrphanRowIds(nextBlocks));
+        focusBlock(newBulletId);
+        return;
+      }
+    }
+
     if (val.startsWith('/') && !val.includes('\n') && val.length <= 18) {
       setSlashMenuBlockId(block.id);
       setSlashFilterQuery(val.slice(1));
@@ -1984,7 +2124,7 @@ export default function NotionBlockEditor({
   /**
    * 코드 블록 & Mermaid 블록 전용 키보드 핸들러:
    * - Enter 입력 시: 이전 줄의 들여쓰기(공백)를 자동 계산하고, Python의 `:` 또는 `{`, `(` 로 끝나면 4칸 추가 들여쓰기!
-   * - Tab 입력 시: 4칸 스페이스 삽입
+   * - Tab / Shift+Tab 입력 시: 선택 영역(드래그한 코드)이 사라지지 않고 줄 단위 4칸 들여쓰기 및 내어쓰기!
    * - Backspace 입력 시: 커서 앞이 4칸 공백이면 한 번에 4칸 내어쓰기
    * - Shift+Enter 입력 시: 코드 블록 아래에 새 일반 문단 블록 추가
    */
@@ -2067,46 +2207,25 @@ export default function NotionBlockEditor({
       return;
     }
 
-    // 3. Tab / Shift+Tab 키 -> 4칸 들여쓰기 및 내어쓰기
+    // 3. Tab / Shift+Tab 키 -> 선택 영역 보존 줄 단위 4칸 들여쓰기 및 내어쓰기
     if (e.key === 'Tab') {
       e.preventDefault();
-      if (e.shiftKey) {
-        const beforeCursor = val.slice(0, start);
-        const lineStartIdx = beforeCursor.lastIndexOf('\n') + 1;
-        const currentLine = val.slice(lineStartIdx);
-        const removeMatch = currentLine.match(/^( {1,4})/);
-        if (removeMatch) {
-          const removeCount = removeMatch[1].length;
-          const newVal =
-            val.slice(0, lineStartIdx) + val.slice(lineStartIdx + removeCount);
-          const newCursorPos = Math.max(lineStartIdx, start - removeCount);
-          el.value = newVal;
-          el.setSelectionRange(newCursorPos, newCursorPos);
-          updateBlock(block.id, { content: newVal });
-          requestAnimationFrame(() => {
-            const targetEl = blockRefs.current[block.id];
-            if (targetEl) {
-              targetEl.focus();
-              targetEl.setSelectionRange(newCursorPos, newCursorPos);
-            }
-          });
-        }
-        return;
-      }
+      const { newValue, newStart, newEnd } = applyCodeTabIndentation(
+        val,
+        start,
+        end,
+        e.shiftKey,
+        indentUnit
+      );
 
-      const beforeCursor = val.slice(0, start);
-      const afterCursor = val.slice(end);
-      const newVal = beforeCursor + indentUnit + afterCursor;
-      const newCursorPos = start + indentUnit.length;
-
-      el.value = newVal;
-      el.setSelectionRange(newCursorPos, newCursorPos);
-      updateBlock(block.id, { content: newVal });
+      el.value = newValue;
+      el.setSelectionRange(newStart, newEnd);
+      updateBlock(block.id, { content: newValue });
       requestAnimationFrame(() => {
         const targetEl = blockRefs.current[block.id];
         if (targetEl) {
           targetEl.focus();
-          targetEl.setSelectionRange(newCursorPos, newCursorPos);
+          targetEl.setSelectionRange(newStart, newEnd);
         }
       });
       return;
@@ -3420,7 +3539,9 @@ export default function NotionBlockEditor({
                             prev === block.id ? null : prev
                           )
                         }
-                        onChange={(val) => handleTextChangeWithSlash(block, val)}
+                        onChange={(val) =>
+                          handleTextChangeWithSlash(block, val, idx)
+                        }
                         onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                         onPaste={(e) => handleBlockPaste(e, idx)}
                         placeholder="단원 대제목 (제목 1)..."
@@ -3464,7 +3585,7 @@ export default function NotionBlockEditor({
                             )
                           }
                           onChange={(val) =>
-                            handleTextChangeWithSlash(block, val)
+                            handleTextChangeWithSlash(block, val, idx)
                           }
                           onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                           onPaste={(e) => handleBlockPaste(e, idx)}
@@ -3507,7 +3628,9 @@ export default function NotionBlockEditor({
                             prev === block.id ? null : prev
                           )
                         }
-                        onChange={(val) => handleTextChangeWithSlash(block, val)}
+                        onChange={(val) =>
+                          handleTextChangeWithSlash(block, val, idx)
+                        }
                         onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                         onPaste={(e) => handleBlockPaste(e, idx)}
                         placeholder="소제목 (제목 3)..."
@@ -3548,10 +3671,12 @@ export default function NotionBlockEditor({
                             prev === block.id ? null : prev
                           )
                         }
-                        onChange={(val) => handleTextChangeWithSlash(block, val)}
+                        onChange={(val) =>
+                          handleTextChangeWithSlash(block, val, idx)
+                        }
                         onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
                         onPaste={(e) => handleBlockPaste(e, idx)}
-                        placeholder="내용을 입력하거나 '/'를 눌러 블록(표, 코드블록, 순서도, 시뮬레이션, 사진 등)을 선택하세요... (Ctrl+B 진하게, Ctrl+E 형광펜)"
+                        placeholder="내용을 입력하거나 '- '로 글머리 기호, '/'로 블록(표, 코드블록, 순서도, 시뮬레이션 등)을 선택하세요..."
                         className="text-sm text-gray-800 leading-snug placeholder:text-gray-300 py-0.5"
                       />
                     </div>
@@ -3569,64 +3694,82 @@ export default function NotionBlockEditor({
                   </div>
                 )}
 
-                {/* 5. 글머리 기호 목록 (Bullet) */}
-                {block.type === 'bullet' && (
-                  <div className="flex items-start gap-2.5 pl-1">
-                    <span className="text-blue-600 font-extrabold select-none pt-0.5">
-                      •
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      {focusedBlockId !== block.id &&
-                      hasInlineFormatting(block.content) ? (
-                        <div
-                          onClick={() => focusBlock(block.id)}
-                          className="cursor-text text-sm text-gray-800 leading-snug whitespace-pre-wrap"
-                        >
-                          {renderInlineMarkdown(block.content)}
-                        </div>
-                      ) : null}
-                      <div
-                        className={
-                          focusedBlockId !== block.id &&
-                          hasInlineFormatting(block.content)
-                            ? 'hidden'
-                            : ''
-                        }
+                {/* 5. 글머리 기호 목록 (Bullet - 다단계 포함관계 들여쓰기 및 기호 변경 지원) */}
+                {block.type === 'bullet' && (() => {
+                  const bulletMeta = getBulletMarkerMeta(block.indentLevel);
+                  return (
+                    <div
+                      className="flex items-start gap-2 transition-all"
+                      style={{ paddingLeft: `${bulletMeta.level * 24 + 4}px` }}
+                    >
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        title={`${bulletMeta.label} — Tab: 하위 포함 단계로 들여쓰기 / Shift+Tab: 상위 단계로 내어쓰기 (클릭 시 단계 변경)`}
+                        onClick={() => {
+                          const nextLevel =
+                            (bulletMeta.level + 1) %
+                            (MAX_BULLET_INDENT_LEVEL + 1);
+                          updateBlock(block.id, { indentLevel: nextLevel });
+                          focusBlock(block.id);
+                        }}
+                        className={`${bulletMeta.colorClass} ${bulletMeta.fontSizeClass} font-extrabold select-none pt-0.5 w-4 text-center shrink-0 cursor-pointer hover:scale-125 transition-transform`}
                       >
-                        <AutoResizeTextarea
-                          value={block.content}
-                          inputRef={(el) => {
-                            blockRefs.current[block.id] = el;
-                          }}
-                          onFocus={() => setFocusedBlockId(block.id)}
-                          onBlur={() =>
-                            setFocusedBlockId((prev) =>
-                              prev === block.id ? null : prev
-                            )
-                          }
-                          onChange={(val) =>
-                            handleTextChangeWithSlash(block, val)
-                          }
-                          onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
-                          onPaste={(e) => handleBlockPaste(e, idx)}
-                          placeholder="목록 항목 입력... (Ctrl+B 진하게, Ctrl+E 형광펜)"
-                          className="text-sm text-gray-800 leading-snug placeholder:text-gray-300"
-                        />
-                      </div>
-                      {focusedBlockId === block.id &&
-                        hasInlineFormatting(block.content) && (
-                          <div className="mt-1 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/40 px-2.5 py-1 text-xs text-gray-800">
-                            <span className="shrink-0 text-[10px] font-bold text-blue-600">
-                              ✨ 서식 미리보기:
-                            </span>
-                            <div className="whitespace-pre-wrap leading-snug">
-                              {renderInlineMarkdown(block.content)}
-                            </div>
+                        {bulletMeta.symbol}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        {focusedBlockId !== block.id &&
+                        hasInlineFormatting(block.content) ? (
+                          <div
+                            onClick={() => focusBlock(block.id)}
+                            className="cursor-text text-sm text-gray-800 leading-snug whitespace-pre-wrap"
+                          >
+                            {renderInlineMarkdown(block.content)}
                           </div>
-                        )}
+                        ) : null}
+                        <div
+                          className={
+                            focusedBlockId !== block.id &&
+                            hasInlineFormatting(block.content)
+                              ? 'hidden'
+                              : ''
+                          }
+                        >
+                          <AutoResizeTextarea
+                            value={block.content}
+                            inputRef={(el) => {
+                              blockRefs.current[block.id] = el;
+                            }}
+                            onFocus={() => setFocusedBlockId(block.id)}
+                            onBlur={() =>
+                              setFocusedBlockId((prev) =>
+                                prev === block.id ? null : prev
+                              )
+                            }
+                            onChange={(val) =>
+                              handleTextChangeWithSlash(block, val, idx)
+                            }
+                            onKeyDown={(e) => handleBlockKeyDown(e, block, idx)}
+                            onPaste={(e) => handleBlockPaste(e, idx)}
+                            placeholder="목록 항목 입력... (Tab: 하위 목록 들여쓰기, Shift+Tab: 상위 내어쓰기)"
+                            className="text-sm text-gray-800 leading-snug placeholder:text-gray-300"
+                          />
+                        </div>
+                        {focusedBlockId === block.id &&
+                          hasInlineFormatting(block.content) && (
+                            <div className="mt-1 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/40 px-2.5 py-1 text-xs text-gray-800">
+                              <span className="shrink-0 text-[10px] font-bold text-blue-600">
+                                ✨ 서식 미리보기:
+                              </span>
+                              <div className="whitespace-pre-wrap leading-snug">
+                                {renderInlineMarkdown(block.content)}
+                              </div>
+                            </div>
+                          )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* 6. 노션 콜아웃 박스 (Callout) */}
                 {block.type === 'callout' && (
@@ -4633,20 +4776,24 @@ export default function NotionBlockEditor({
                                 const start = target.selectionStart;
                                 const end = target.selectionEnd;
                                 const codeVal = parsedPhysical.code;
-                                const nextCode =
-                                  codeVal.slice(0, start) +
-                                  '    ' +
-                                  codeVal.slice(end);
-                                const nextPos = start + 4;
+                                const { newValue, newStart, newEnd } =
+                                  applyCodeTabIndentation(
+                                    codeVal,
+                                    start,
+                                    end,
+                                    e.shiftKey
+                                  );
+                                target.value = newValue;
+                                target.setSelectionRange(newStart, newEnd);
                                 updateBlock(block.id, {
                                   content: serializePhysicalBlockContent(
                                     parsedPhysical.config,
-                                    nextCode
+                                    newValue
                                   ),
                                 });
                                 requestAnimationFrame(() => {
                                   target.focus();
-                                  target.setSelectionRange(nextPos, nextPos);
+                                  target.setSelectionRange(newStart, newEnd);
                                 });
                               }
                             }}
@@ -7017,6 +7164,36 @@ export default function NotionBlockEditor({
       }
     }
 
+    // 글머리 기호(bullet)에서 Tab / Shift+Tab 입력 시 노션처럼 계층 들여쓰기/내어쓰기 및 기호 변환 지원
+    if (
+      block.type === 'bullet' &&
+      e.key === 'Tab' &&
+      !e.nativeEvent.isComposing
+    ) {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const selStart = el.selectionStart;
+      const selEnd = el.selectionEnd;
+      const curLevel = Math.max(
+        0,
+        Math.min(MAX_BULLET_INDENT_LEVEL, block.indentLevel || 0)
+      );
+      const nextLevel = e.shiftKey
+        ? Math.max(0, curLevel - 1)
+        : Math.min(MAX_BULLET_INDENT_LEVEL, curLevel + 1);
+      if (nextLevel !== curLevel) {
+        updateBlock(block.id, { indentLevel: nextLevel });
+        requestAnimationFrame(() => {
+          const target = blockRefs.current[block.id];
+          if (target) {
+            target.focus();
+            target.setSelectionRange(selStart, selEnd);
+          }
+        });
+      }
+      return;
+    }
+
     // 다단(사진·코드 옆 가로 배치) 행 내부의 텍스트 블록(p, callout, quote)에서는
     // 일반 Enter 입력 시 열 내부 줄바꿈을 유지하여 사진 옆에 여러 줄 설명을 자연스럽게 이어 쓸 수 있도록 지원!
     // (Shift+Enter를 누르면 다단 행 아래에 새 독립 줄 생성)
@@ -7045,9 +7222,17 @@ export default function NotionBlockEditor({
       e.preventDefault();
       setSlashMenuBlockId(null);
 
-      // 빈 글머리 기호에서 Enter를 치면 일반 본문(p)으로 변환
+      // 빈 글머리 기호에서 Enter를 치면: 들여쓰기가 있으면 한 단계 내어쓰기, 최상위면 일반 본문(p)으로 변환
       if (block.type === 'bullet' && !block.content.trim()) {
-        updateBlock(block.id, { type: 'p' });
+        const curLevel = Math.max(
+          0,
+          Math.min(MAX_BULLET_INDENT_LEVEL, block.indentLevel || 0)
+        );
+        if (curLevel > 0) {
+          updateBlock(block.id, { indentLevel: curLevel - 1 });
+        } else {
+          updateBlock(block.id, { type: 'p', indentLevel: 0 });
+        }
         return;
       }
 
@@ -7057,6 +7242,42 @@ export default function NotionBlockEditor({
         id: createBlockId(),
         type: nextType,
         content: '',
+        indentLevel:
+          block.type === 'bullet' ? block.indentLevel || 0 : undefined,
+        rowId: block.type === 'bullet' ? block.rowId : undefined,
+        colId: block.type === 'bullet' ? block.colId : undefined,
+        widthPercent:
+          block.type === 'bullet' && block.rowId
+            ? block.widthPercent
+            : undefined,
+      });
+      return;
+    }
+
+    // 글머리 기호 맨 앞(커서 0)에서 Backspace를 치면 들여쓰기 해제 또는 일반 본문(p)으로 변환
+    if (
+      e.key === 'Backspace' &&
+      block.type === 'bullet' &&
+      e.currentTarget.selectionStart === 0 &&
+      e.currentTarget.selectionEnd === 0
+    ) {
+      e.preventDefault();
+      setSlashMenuBlockId(null);
+      const curLevel = Math.max(
+        0,
+        Math.min(MAX_BULLET_INDENT_LEVEL, block.indentLevel || 0)
+      );
+      if (curLevel > 0) {
+        updateBlock(block.id, { indentLevel: curLevel - 1 });
+      } else {
+        updateBlock(block.id, { type: 'p', indentLevel: 0 });
+      }
+      requestAnimationFrame(() => {
+        const target = blockRefs.current[block.id];
+        if (target) {
+          target.focus();
+          target.setSelectionRange(0, 0);
+        }
       });
       return;
     }
@@ -7066,7 +7287,7 @@ export default function NotionBlockEditor({
       e.preventDefault();
       setSlashMenuBlockId(null);
       if (block.type !== 'p') {
-        updateBlock(block.id, { type: 'p' });
+        updateBlock(block.id, { type: 'p', indentLevel: 0 });
       } else {
         removeBlock(idx);
       }
