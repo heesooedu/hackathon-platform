@@ -67,6 +67,14 @@ import AiLabBlock, {
   MlAlgorithmType,
 } from '@/components/AiLabBlock';
 import { renderInlineMarkdown } from '@/components/LessonMaterialViewer';
+import {
+  EmojiCategoryId,
+  LESSON_EMOJI_SYMBOL_CATEGORIES,
+  DEFAULT_RECENT_EMOJIS,
+  QUICK_SEQUENCE_PRESETS,
+  RECOMMENDED_CALLOUT_ICONS,
+  searchEmojiSymbols,
+} from '@/utils/lessonEmojiCatalog';
 
 interface NotionBlockEditorProps {
   blocks: NotionBlock[];
@@ -615,6 +623,39 @@ export default function NotionBlockEditor({
   const [quizAiNoticeByBlockId, setQuizAiNoticeByBlockId] = useState<
     Record<string, string>
   >({});
+
+  // 교안용 유니코드 이모지 · 숫자 · 기호 팔레트 상태 (저작권 걱정 없는 표준 유니코드 문자)
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [emojiPickerCategory, setEmojiPickerCategory] =
+    useState<EmojiCategoryId>('numbers');
+  const [emojiSearchQuery, setEmojiSearchQuery] = useState('');
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(() =>
+    DEFAULT_RECENT_EMOJIS.slice(0, 14)
+  );
+  const [calloutIconPickerBlockId, setCalloutIconPickerBlockId] = useState<
+    string | null
+  >(null);
+  const [calloutIconPopoverBlockId, setCalloutIconPopoverBlockId] = useState<
+    string | null
+  >(null);
+
+  const lastActiveTargetRef = useRef<
+    | {
+        kind: 'block';
+        blockId: string;
+        selectionStart: number;
+        selectionEnd: number;
+      }
+    | {
+        kind: 'table-cell';
+        blockId: string;
+        rIdx: number;
+        cIdx: number;
+        selectionStart: number;
+        selectionEnd: number;
+      }
+    | null
+  >(null);
 
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const rowContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -1741,6 +1782,233 @@ export default function NotionBlockEditor({
     });
   }
 
+  /**
+   * 블록 텍스트 영역이나 표(Table) 셀 입력창의 현재 커서 위치를 기록합니다.
+   * (이모지 검색창을 클릭하더라도 직전 블록/셀의 정확한 커서 위치에 이모지·기호가 삽입되도록 보장)
+   */
+  function captureActiveEditorCursor(target: EventTarget | null) {
+    if (!target) return;
+    for (const [blockId, el] of Object.entries(blockRefs.current)) {
+      if (el && el === target) {
+        lastActiveTargetRef.current = {
+          kind: 'block',
+          blockId,
+          selectionStart: el.selectionStart ?? el.value.length,
+          selectionEnd: el.selectionEnd ?? el.value.length,
+        };
+        return;
+      }
+    }
+    for (const [cellKey, el] of Object.entries(tableCellRefs.current)) {
+      if (el && el === target) {
+        const parts = cellKey.split('_');
+        const cIdx = Number(parts.pop());
+        const rIdx = Number(parts.pop());
+        const blockId = parts.join('_');
+        if (!Number.isNaN(rIdx) && !Number.isNaN(cIdx) && blockId) {
+          lastActiveTargetRef.current = {
+            kind: 'table-cell',
+            blockId,
+            rIdx,
+            cIdx,
+            selectionStart: el.selectionStart ?? el.value.length,
+            selectionEnd: el.selectionEnd ?? el.value.length,
+          };
+        }
+        return;
+      }
+    }
+  }
+
+  function recordRecentEmojiItem(char: string) {
+    if (!char || char.length > 6) return;
+    setRecentEmojis((prev) => {
+      const filtered = prev.filter((item) => item !== char);
+      return [char, ...filtered].slice(0, 16);
+    });
+  }
+
+  /**
+   * 현재 커서가 위치한 본문/제목/목록/콜아웃/인용구 블록 또는 표(Table) 셀에
+   * 표준 유니코드 이모지·숫자·기호를 즉시 삽입합니다.
+   */
+  function insertEmojiOrSymbolAtCursor(textToInsert: string) {
+    if (!textToInsert) return;
+    recordRecentEmojiItem(textToInsert.trim());
+
+    // 1) 콜아웃 대표 아이콘 변경 모드인 경우 해당 콜아웃 블록의 아이콘을 즉시 교체
+    if (calloutIconPickerBlockId) {
+      const targetCallout = blocksRef.current.find(
+        (b) => b.id === calloutIconPickerBlockId
+      );
+      if (targetCallout) {
+        const updated = blocksRef.current.map((b) =>
+          b.id === calloutIconPickerBlockId ? { ...b, icon: textToInsert.trim() } : b
+        );
+        onChange(updated);
+      }
+      setCalloutIconPickerBlockId(null);
+      setCalloutIconPopoverBlockId(null);
+      return;
+    }
+
+    if (typeof document !== 'undefined' && document.activeElement) {
+      captureActiveEditorCursor(document.activeElement);
+    }
+
+    const currentBlocks = blocksRef.current;
+    const lastTarget = lastActiveTargetRef.current;
+
+    // 2) 직전 포커스가 표(Table) 셀인 경우 해당 표 셀의 커서 위치에 삽입
+    if (lastTarget && lastTarget.kind === 'table-cell') {
+      const tableBlock = currentBlocks.find(
+        (b) => b.id === lastTarget.blockId && b.type === 'table'
+      );
+      if (tableBlock) {
+        const rows = tableBlock.tableRows || createDefaultTableRows(3, 3);
+        const rIdx = lastTarget.rIdx;
+        const cIdx = lastTarget.cIdx;
+        if (rows[rIdx] && rows[rIdx][cIdx] !== undefined) {
+          const cellVal = rows[rIdx][cIdx] || '';
+          const cellEl =
+            tableCellRefs.current[`${tableBlock.id}_${rIdx}_${cIdx}`];
+          const isCellFocused =
+            typeof document !== 'undefined' && document.activeElement === cellEl;
+          const rawStart = isCellFocused
+            ? cellEl?.selectionStart ?? cellVal.length
+            : lastTarget.selectionStart;
+          const rawEnd = isCellFocused
+            ? cellEl?.selectionEnd ?? cellVal.length
+            : lastTarget.selectionEnd;
+          const start = Math.max(0, Math.min(cellVal.length, rawStart));
+          const end = Math.max(start, Math.min(cellVal.length, rawEnd));
+          const nextCellVal =
+            cellVal.slice(0, start) + textToInsert + cellVal.slice(end);
+          const newCursorPos = start + textToInsert.length;
+
+          const nextRows = rows.map((r, ri) =>
+            ri === rIdx
+              ? r.map((c, ci) => (ci === cIdx ? nextCellVal : c))
+              : r
+          );
+          const updated = currentBlocks.map((b) =>
+            b.id === tableBlock.id ? { ...b, tableRows: nextRows } : b
+          );
+          onChange(updated);
+
+          lastActiveTargetRef.current = {
+            kind: 'table-cell',
+            blockId: tableBlock.id,
+            rIdx,
+            cIdx,
+            selectionStart: newCursorPos,
+            selectionEnd: newCursorPos,
+          };
+
+          requestAnimationFrame(() => {
+            const targetInput =
+              tableCellRefs.current[`${tableBlock.id}_${rIdx}_${cIdx}`];
+            if (targetInput) {
+              targetInput.focus();
+              targetInput.setSelectionRange(newCursorPos, newCursorPos);
+            }
+          });
+          return;
+        }
+      }
+    }
+
+    // 3) 일반 텍스트 블록(p, h1, h2, h3, bullet, callout, quote, code 등)의 커서 위치에 삽입
+    const targetBlockId =
+      (lastTarget && lastTarget.kind === 'block' ? lastTarget.blockId : null) ||
+      focusedBlockId ||
+      currentBlocks[0]?.id;
+    if (!targetBlockId) return;
+
+    const targetIdx = currentBlocks.findIndex((b) => b.id === targetBlockId);
+    const block = targetIdx >= 0 ? currentBlocks[targetIdx] : currentBlocks[0];
+    if (!block) return;
+
+    const nonTextBlockTypes: NotionBlockType[] = [
+      'image',
+      'divider',
+      'table',
+      'quiz',
+      'physical',
+      'data_analysis',
+      'ai_lab',
+      'simulation',
+      'youtube',
+      'link',
+    ];
+
+    if (nonTextBlockTypes.includes(block.type)) {
+      const newBlockId = createBlockId();
+      const newBlock: NotionBlock = {
+        id: newBlockId,
+        type: 'p',
+        content: textToInsert,
+      };
+      const insertIdx = targetIdx >= 0 ? targetIdx : currentBlocks.length - 1;
+      const next = [...currentBlocks];
+      next.splice(insertIdx + 1, 0, newBlock);
+      onChange(cleanupOrphanRowIds(next));
+      lastActiveTargetRef.current = {
+        kind: 'block',
+        blockId: newBlockId,
+        selectionStart: textToInsert.length,
+        selectionEnd: textToInsert.length,
+      };
+      focusBlock(newBlockId, textToInsert.length);
+      return;
+    }
+
+    const el = blockRefs.current[block.id];
+    const isElFocused =
+      typeof document !== 'undefined' && document.activeElement === el;
+    const rawStart = isElFocused
+      ? el?.selectionStart ?? block.content.length
+      : lastTarget &&
+        lastTarget.kind === 'block' &&
+        lastTarget.blockId === block.id
+      ? lastTarget.selectionStart
+      : block.content.length;
+    const rawEnd = isElFocused
+      ? el?.selectionEnd ?? block.content.length
+      : lastTarget &&
+        lastTarget.kind === 'block' &&
+        lastTarget.blockId === block.id
+      ? lastTarget.selectionEnd
+      : block.content.length;
+
+    const start = Math.max(0, Math.min(block.content.length, rawStart));
+    const end = Math.max(start, Math.min(block.content.length, rawEnd));
+
+    const nextContent =
+      block.content.slice(0, start) + textToInsert + block.content.slice(end);
+    const newCursorPos = start + textToInsert.length;
+
+    const updated = currentBlocks.map((b) =>
+      b.id === block.id ? { ...b, content: nextContent } : b
+    );
+    onChange(updated);
+    setFocusedBlockId(block.id);
+    lastActiveTargetRef.current = {
+      kind: 'block',
+      blockId: block.id,
+      selectionStart: newCursorPos,
+      selectionEnd: newCursorPos,
+    };
+
+    requestAnimationFrame(() => {
+      const targetEl = blockRefs.current[block.id];
+      if (targetEl) {
+        targetEl.focus();
+        targetEl.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    });
+  }
+
   function insertBlockAfter(index: number, newBlock: NotionBlock) {
     const next = [...blocks];
     let insertIdx = index;
@@ -2440,6 +2708,10 @@ export default function NotionBlockEditor({
   return (
     <div
       ref={editorContainerRef}
+      onFocusCapture={(e) => captureActiveEditorCursor(e.target)}
+      onSelectCapture={(e) => captureActiveEditorCursor(e.target)}
+      onKeyUpCapture={(e) => captureActiveEditorCursor(e.target)}
+      onMouseUpCapture={(e) => captureActiveEditorCursor(e.target)}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
@@ -2674,6 +2946,26 @@ export default function NotionBlockEditor({
                 title="선택한 텍스트에 하이퍼링크 삽입 (단축키: Ctrl+K)"
               >
                 🔗링크
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  if (typeof document !== 'undefined' && document.activeElement) {
+                    captureActiveEditorCursor(document.activeElement);
+                  }
+                  setCalloutIconPickerBlockId(null);
+                  setIsEmojiPickerOpen((prev) => !prev);
+                }}
+                className={`inline-flex h-6 items-center gap-0.5 justify-center rounded-md border px-1.5 text-[10px] font-extrabold transition cursor-pointer ${
+                  isEmojiPickerOpen
+                    ? 'border-emerald-500 bg-emerald-600 text-white shadow-2xs'
+                    : 'border-emerald-300 bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100'
+                }`}
+                title="교안용 이모지 · 원문자 숫자(①~⑳, ➊~⓯, 1️⃣~🔟) · 수학/단위/화살표 기호 삽입 (표준 유니코드 · 저작권 안심)"
+              >
+                <span>😀</span>
+                <span>이모지·기호</span>
               </button>
 
               <span className="mx-0.5 h-3.5 w-px bg-gray-200 select-none" />
@@ -2961,6 +3253,35 @@ export default function NotionBlockEditor({
                     Ctrl+K
                   </kbd>
                 </button>
+
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (typeof document !== 'undefined' && document.activeElement) {
+                      captureActiveEditorCursor(document.activeElement);
+                    }
+                    setCalloutIconPickerBlockId(null);
+                    setIsEmojiPickerOpen((prev) => !prev);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-0.5 text-xs font-extrabold transition cursor-pointer shadow-2xs ${
+                    isEmojiPickerOpen
+                      ? 'border-emerald-500 bg-emerald-600 text-white'
+                      : 'border-emerald-300 bg-emerald-50/90 text-emerald-800 hover:bg-emerald-100'
+                  }`}
+                  title="교안용 이모지, 숫자(원문자 ①~⑳, ➊~⓯, 키캡 1️⃣~🔟, 로마자, 한글 원문자), 수학·논리·단위·화살표 기호를 커서 위치에 삽입합니다"
+                >
+                  <span>😀 이모지·숫자·기호</span>
+                  <span
+                    className={`rounded px-1 py-0.2 text-[10px] font-bold ${
+                      isEmojiPickerOpen
+                        ? 'bg-emerald-700 text-emerald-100'
+                        : 'bg-white text-emerald-700'
+                    }`}
+                  >
+                    표준 유니코드
+                  </span>
+                </button>
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
@@ -3014,6 +3335,230 @@ export default function NotionBlockEditor({
             </div>
           </div>
         )}
+
+        {/* 교안용 유니코드 이모지 · 숫자 · 기호 팔레트 (저작권 걱정 없는 국제 표준 유니코드 문자) */}
+        {isEmojiPickerOpen && (() => {
+          const activeCategory =
+            LESSON_EMOJI_SYMBOL_CATEGORIES.find(
+              (c) => c.id === emojiPickerCategory
+            ) || LESSON_EMOJI_SYMBOL_CATEGORIES[0];
+          const trimmedQuery = emojiSearchQuery.trim();
+          const searchResults = trimmedQuery
+            ? searchEmojiSymbols(trimmedQuery)
+            : [];
+
+          return (
+            <div className="mt-1.5 rounded-2xl border border-emerald-200/90 bg-white/98 p-3 shadow-lg backdrop-blur-md">
+              {/* 상단 헤더: 제목 + 저작권 안심 안내 배지 + 검색창 + 닫기 */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 text-xs font-extrabold text-gray-900">
+                    <span>😀</span>
+                    <span>교안용 이모지 · 숫자 · 기호 팔레트</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
+                    <span>✓</span>
+                    <span>
+                      국제 표준 유니코드(Unicode) 문자 — 교육·배포·상업용 저작권 문제 없음
+                    </span>
+                  </span>
+                  {calloutIconPickerBlockId && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-900">
+                      <span>💡 콜아웃 대표 아이콘 선택 모드</span>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setCalloutIconPickerBlockId(null);
+                        }}
+                        className="ml-1 rounded bg-amber-200/70 px-1 text-[9px] font-bold text-amber-950 hover:bg-amber-300 cursor-pointer"
+                      >
+                        해제
+                      </button>
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={emojiSearchQuery}
+                      onChange={(e) => setEmojiSearchQuery(e.target.value)}
+                      placeholder="검색 (예: 원문자, 화살표, 저항, 집합, 파이썬...)"
+                      className="w-56 sm:w-64 rounded-lg border border-gray-200 bg-gray-50/90 px-2.5 py-1 text-xs text-gray-800 placeholder:text-gray-400 focus:border-emerald-400 focus:bg-white focus:outline-none"
+                    />
+                    {emojiSearchQuery && (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setEmojiSearchQuery('');
+                        }}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-1 text-[10px] font-bold text-gray-400 hover:text-gray-700 cursor-pointer"
+                        title="검색어 지우기"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setCalloutIconPickerBlockId(null);
+                      setIsEmojiPickerOpen(false);
+                    }}
+                    className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-bold text-gray-600 hover:bg-gray-200 transition cursor-pointer"
+                  >
+                    ✕ 닫기
+                  </button>
+                </div>
+              </div>
+
+              {/* 최근 사용 & 1클릭 연속 번호 세트 바 */}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2">
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="mr-1 text-[10px] font-extrabold text-gray-400">
+                    최근·자주 사용:
+                  </span>
+                  {recentEmojis.map((char, idx) => (
+                    <button
+                      key={`recent-${char}-${idx}`}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        insertEmojiOrSymbolAtCursor(char);
+                      }}
+                      className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-gray-200/80 bg-gray-50/70 px-1 text-sm font-semibold text-gray-900 hover:border-emerald-300 hover:bg-emerald-50 hover:scale-110 transition cursor-pointer"
+                      title={`클릭하여 '${char}' 삽입`}
+                    >
+                      {char}
+                    </button>
+                  ))}
+                </div>
+
+                {!calloutIconPickerBlockId && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="mr-0.5 text-[10px] font-extrabold text-indigo-600">
+                      ⚡ 연속 번호 1클릭:
+                    </span>
+                    {QUICK_SEQUENCE_PRESETS.map((preset) => {
+                      const insertText = preset.items.join(' ');
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            insertEmojiOrSymbolAtCursor(insertText);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/70 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 hover:bg-indigo-100 transition cursor-pointer"
+                          title={`${preset.label} ('${insertText}' 삽입)`}
+                        >
+                          <span>{preset.sample}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 검색 결과 또는 카테고리 탭 + 세부 그룹 그리드 */}
+              {trimmedQuery ? (
+                <div className="mt-2 max-h-56 overflow-y-auto pr-1">
+                  <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-gray-500">
+                    <span>
+                      🔍 &apos;{trimmedQuery}&apos; 검색 결과 ({searchResults.length}개)
+                    </span>
+                    {searchResults.length === 0 && (
+                      <span className="text-gray-400">
+                        일치하는 기호가 없습니다. 다른 키워드(예: 숫자, 화살표, 수학, 센서)로 검색해 보세요.
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {searchResults.map((item, idx) => (
+                      <button
+                        key={`search-${item.char}-${idx}`}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          insertEmojiOrSymbolAtCursor(item.char);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-900 hover:border-emerald-400 hover:bg-emerald-50 transition cursor-pointer shadow-2xs"
+                        title={`${item.label} — 클릭하여 '${item.char}' 삽입`}
+                      >
+                        <span className="text-sm">{item.char}</span>
+                        <span className="text-[10px] font-medium text-gray-500">
+                          {item.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 카테고리 선택 탭 */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1">
+                    {LESSON_EMOJI_SYMBOL_CATEGORIES.map((cat) => {
+                      const isActive = cat.id === activeCategory.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setEmojiPickerCategory(cat.id);
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-extrabold transition cursor-pointer ${
+                            isActive
+                              ? 'border-emerald-500 bg-emerald-600 text-white shadow-2xs'
+                              : 'border-gray-200 bg-gray-50/80 text-gray-700 hover:border-emerald-200 hover:bg-emerald-50/60 hover:text-emerald-800'
+                          }`}
+                          title={cat.description}
+                        >
+                          <span>{cat.badge}</span>
+                          <span>{cat.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 선택된 카테고리의 서브그룹 목록 */}
+                  <div className="mt-2 max-h-60 space-y-2.5 overflow-y-auto pr-1">
+                    {activeCategory.subgroups.map((subgroup) => (
+                      <div
+                        key={subgroup.title}
+                        className="rounded-xl border border-gray-100 bg-gray-50/50 p-2"
+                      >
+                        <div className="mb-1.5 text-[11px] font-extrabold text-gray-600">
+                          {subgroup.title}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {subgroup.items.map((item, idx) => (
+                            <button
+                              key={`${subgroup.title}-${item.char}-${idx}`}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                insertEmojiOrSymbolAtCursor(item.char);
+                              }}
+                              className="inline-flex h-8 min-w-8 items-center justify-center rounded-lg border border-gray-200/90 bg-white px-1.5 text-sm font-semibold text-gray-900 hover:border-emerald-400 hover:bg-emerald-50 hover:scale-110 transition cursor-pointer shadow-2xs"
+                              title={`${item.label} (${item.char}) — 클릭하여 커서 위치에 삽입`}
+                            >
+                              {item.char}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* 실시간 가로 폭 / 상하 분할 / 표 행·열 드래그 리사이즈 상태 배지 */}
@@ -3773,23 +4318,69 @@ export default function NotionBlockEditor({
 
                 {/* 6. 노션 콜아웃 박스 (Callout) */}
                 {block.type === 'callout' && (
-                  <div className="flex items-start gap-3 rounded-2xl border border-amber-200/90 bg-amber-50/60 p-4 shadow-2xs">
-                    <button
-                      type="button"
-                      title="클릭하여 아이콘 변경"
-                      onClick={() => {
-                        const currentIcon = block.icon || '💡';
-                        const nextIdx =
-                          (CALLOUT_ICONS.indexOf(currentIcon) + 1) %
-                          CALLOUT_ICONS.length;
-                        updateBlock(block.id, {
-                          icon: CALLOUT_ICONS[nextIdx],
-                        });
-                      }}
-                      className="text-xl hover:scale-110 transition cursor-pointer select-none"
-                    >
-                      {block.icon || '💡'}
-                    </button>
+                  <div className="relative flex items-start gap-3 rounded-2xl border border-amber-200/90 bg-amber-50/60 p-4 shadow-2xs">
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        title="클릭하여 콜아웃 대표 아이콘(이모지·숫자·기호) 선택"
+                        onClick={() =>
+                          setCalloutIconPopoverBlockId((prev) =>
+                            prev === block.id ? null : block.id
+                          )
+                        }
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-amber-200/80 bg-white/80 text-xl hover:scale-110 hover:border-amber-400 hover:bg-white transition cursor-pointer select-none shadow-2xs"
+                      >
+                        {block.icon || '💡'}
+                      </button>
+
+                      {calloutIconPopoverBlockId === block.id && (
+                        <div className="absolute left-0 top-full z-30 mt-1.5 w-72 rounded-xl border border-amber-200 bg-white p-2.5 shadow-xl">
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <span className="text-[11px] font-extrabold text-gray-800">
+                              💡 콜아웃 대표 아이콘 선택
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setCalloutIconPopoverBlockId(null)}
+                              className="rounded px-1 text-[10px] font-bold text-gray-400 hover:bg-gray-100 hover:text-gray-700 cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-7 gap-1">
+                            {RECOMMENDED_CALLOUT_ICONS.map((ic) => (
+                              <button
+                                key={ic}
+                                type="button"
+                                onClick={() => {
+                                  updateBlock(block.id, { icon: ic });
+                                  setCalloutIconPopoverBlockId(null);
+                                }}
+                                className={`flex h-8 w-8 items-center justify-center rounded-lg border text-base transition cursor-pointer ${
+                                  (block.icon || '💡') === ic
+                                    ? 'border-amber-500 bg-amber-100 font-bold'
+                                    : 'border-gray-100 bg-gray-50/70 hover:border-amber-300 hover:bg-amber-50'
+                                }`}
+                                title={`'${ic}' 아이콘으로 변경`}
+                              >
+                                {ic}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCalloutIconPopoverBlockId(null);
+                              setCalloutIconPickerBlockId(block.id);
+                              setIsEmojiPickerOpen(true);
+                            }}
+                            className="mt-2 w-full rounded-lg border border-emerald-200 bg-emerald-50/90 px-2 py-1 text-[11px] font-extrabold text-emerald-800 hover:bg-emerald-100 transition cursor-pointer"
+                          >
+                            😀 전체 숫자·기호·이모지 팔레트에서 고르기
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
                       {focusedBlockId !== block.id &&
                       hasInlineFormatting(block.content) ? (
