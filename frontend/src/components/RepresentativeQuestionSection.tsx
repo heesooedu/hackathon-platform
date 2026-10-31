@@ -217,8 +217,13 @@ export default function RepresentativeQuestionSection({
                 {answers.length > 0 ? (
                   <div className="space-y-2.5">
                     {answers.map((ans) => {
+                      const isTeacherAnswer = ans.author?.role === 'teacher';
                       const authorName = isTeacher
-                        ? ans.author?.name || '익명 학생'
+                        ? isTeacherAnswer
+                          ? `${ans.author?.name || '선생님'} 선생님`
+                          : ans.author?.name || '익명 학생'
+                        : isTeacherAnswer
+                        ? '담당 선생님'
                         : ans.author_id === currentUserId
                         ? '나의 답변'
                         : '동료 학생';
@@ -229,14 +234,22 @@ export default function RepresentativeQuestionSection({
                           className={`rounded-xl border p-4 transition ${
                             ans.is_teacher_checked
                               ? 'border-emerald-200 bg-emerald-50/40'
+                              : isTeacherAnswer
+                              ? 'border-indigo-200 bg-indigo-50/30'
                               : 'border-gray-100 bg-white'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-2 mb-2">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-bold text-xs text-gray-900">
                                 {authorName}
                               </span>
+                              {isTeacherAnswer && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 border border-indigo-200 px-2 py-0.5 text-[11px] font-extrabold text-indigo-800">
+                                  <span>👨‍🏫</span>
+                                  <span>선생님 답변</span>
+                                </span>
+                              )}
                               {ans.is_teacher_checked && (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-300 px-2 py-0.5 text-[11px] font-extrabold text-emerald-800">
                                   <span>✓</span>

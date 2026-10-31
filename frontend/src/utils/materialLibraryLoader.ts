@@ -8,6 +8,7 @@ import {
 } from '@/utils/materialPayload';
 import { ClassItem, Lesson } from '@/types/database.types';
 import { DeployedClassLink } from '@/components/MaterialLibraryDashboard';
+import { fetchTeacherAccessibleClasses } from '@/utils/classTeacherAuth';
 
 export interface TeacherMaterialLibraryContext {
   libraryClassId: string | null;
@@ -36,24 +37,15 @@ export async function loadTeacherMaterialLibraryContext(
 
   const supabase = await createClient();
 
-  // 1. 교사의 전체 클래스(보관함 컨테이너 포함)를 단 1회 쿼리로 조회
-  const { data: allClassesData } = await supabase
-    .from('classes')
-    .select('*, class_members(count)')
-    .eq('teacher_id', teacherId)
-    .order('created_at', { ascending: false });
-
-  const allRows = allClassesData || [];
-  const existingLibraryClass = allRows.find((c: any) =>
-    isMaterialLibraryClass(c)
+  // 1. 교사의 전체 접근 가능 클래스(본인 개설 + 팀티칭 참여 클래스 + 보관함 컨테이너) 조회
+  const allRows = await fetchTeacherAccessibleClasses(supabase, teacherId);
+  const existingLibraryClass = allRows.find(
+    (c) => c.teacher_id === teacherId && isMaterialLibraryClass(c)
   );
 
-  const teacherClasses: ClassItem[] = allRows
-    .filter((c: any) => !isMaterialLibraryClass(c))
-    .map((c: any) => ({
-      ...c,
-      member_count: c.class_members?.[0]?.count || 0,
-    }));
+  const teacherClasses: ClassItem[] = allRows.filter(
+    (c) => !isMaterialLibraryClass(c)
+  );
 
   // 보관함이 아직 없는 신규 교사 계정일 때만 최초 1회 생성 및 레거시 마이그레이션 실행
   let libraryClassId: string | null = existingLibraryClass?.id ?? null;

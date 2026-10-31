@@ -3,11 +3,17 @@
 import { useState } from 'react';
 import { joinClass } from '@/app/classes/actions';
 
-export default function JoinClassModal() {
+interface JoinClassModalProps {
+  variant?: 'student' | 'teacher';
+}
+
+export default function JoinClassModal({ variant = 'student' }: JoinClassModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [code, setCode] = useState('');
+
+  const isTeacherVariant = variant === 'teacher';
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -38,19 +44,31 @@ export default function JoinClassModal() {
 
   return (
     <>
-      <button
-        onClick={() => setIsOpen(true)}
-        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-      >
-        <span className="text-base font-bold">🔑</span>
-        <span>참여 코드로 수업 등록</span>
-      </button>
+      {isTeacherVariant ? (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/90 px-4 py-2.5 text-sm font-bold text-indigo-700 shadow-2xs transition hover:bg-indigo-100"
+        >
+          <span>🤝</span>
+          <span>참여 코드로 팀티칭 합류</span>
+        </button>
+      ) : (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+        >
+          <span className="text-base font-bold">🔑</span>
+          <span>참여 코드로 수업 등록</span>
+        </button>
+      )}
 
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-4 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-900">수업 참여 코드 입력</h2>
+              <h2 className="text-lg font-bold text-gray-900">
+                {isTeacherVariant ? '🤝 참여 코드로 팀티칭 합류' : '수업 참여 코드 입력'}
+              </h2>
               <button
                 onClick={() => {
                   setIsOpen(false);
@@ -72,7 +90,7 @@ export default function JoinClassModal() {
             <form onSubmit={handleSubmit} className="mt-4 space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1" htmlFor="join_code">
-                  6자리 참여 코드
+                  6자리 클래스 참여 코드
                 </label>
                 <input
                   id="join_code"
@@ -85,7 +103,9 @@ export default function JoinClassModal() {
                   className="w-full rounded-xl border border-gray-200 px-4 py-3.5 text-center text-2xl font-mono font-bold tracking-widest text-gray-900 uppercase transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 placeholder:text-gray-300 placeholder:tracking-normal placeholder:font-sans placeholder:text-base"
                 />
                 <p className="mt-1.5 text-xs text-gray-400 text-center">
-                  선생님께서 화면이나 칠판에 안내해 주신 6자리 코드를 입력하세요.
+                  {isTeacherVariant
+                    ? '동료 선생님께서 개설한 클래스의 6자리 참여 코드를 입력하면 공동 수업 교사(팀티칭)로 합류합니다.'
+                    : '선생님께서 화면이나 칠판에 안내해 주신 6자리 코드를 입력하세요.'}
                 </p>
               </div>
 
@@ -102,7 +122,11 @@ export default function JoinClassModal() {
                   disabled={loading || code.length !== 6}
                   className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {loading ? '등록 중...' : '수업 등록하기'}
+                  {loading
+                    ? '합류 중...'
+                    : isTeacherVariant
+                    ? '공동 교사로 합류하기'
+                    : '수업 등록하기'}
                 </button>
               </div>
             </form>
@@ -112,4 +136,3 @@ export default function JoinClassModal() {
     </>
   );
 }
-

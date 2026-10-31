@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import { clusterQuestionsWithGemini, AiSuggestedGroup } from '@/utils/gemini';
+import { verifyClassTeacherAccess } from '@/utils/classTeacherAuth';
 import { Submission } from '@/types/database.types';
 
 export async function createQuestionGroup(formData: FormData) {
@@ -23,14 +24,10 @@ export async function createQuestionGroup(formData: FormData) {
     redirect('/login');
   }
 
-  // 교사 권한 확인
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
-  if (!classData || classData.teacher_id !== user.id) {
-    return { error: '선생님만 대표 질문을 묶을 수 있습니다.' };
+  // 대표 교사 또는 공동 교사 권한 확인
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.classData || !access.isTeacher) {
+    return { error: '담당 선생님만 대표 질문을 묶을 수 있습니다.' };
   }
 
   // 1. 대표 질문 그룹 생성
@@ -81,13 +78,9 @@ export async function toggleGroupResolved(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
-  if (!classData || classData.teacher_id !== user.id) {
-    return { error: '선생님만 질문 해결 상태를 변경할 수 있습니다.' };
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.classData || !access.isTeacher) {
+    return { error: '담당 선생님만 질문 해결 상태를 변경할 수 있습니다.' };
   }
 
   const { error } = await supabase
@@ -118,14 +111,10 @@ export async function createAnswer(formData: FormData) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // 해당 학급의 담당 교사 또는 수강 학생인지 확인
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  // 해당 학급의 담당 교사(대표 교사/공동 교사) 또는 수강 학생인지 확인
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  const isTeacher = access.isTeacher;
 
-  const isTeacher = classData?.teacher_id === user.id;
   if (!isTeacher) {
     const { data: membership } = await supabase
       .from('class_members')
@@ -143,7 +132,7 @@ export async function createAnswer(formData: FormData) {
     group_id: groupId,
     author_id: user.id,
     content: content.trim(),
-    is_teacher_checked: false,
+    is_teacher_checked: isTeacher,
   });
 
   if (error) {
@@ -164,13 +153,9 @@ export async function toggleAnswerChecked(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
-  if (!classData || classData.teacher_id !== user.id) {
-    return { error: '선생님만 답변 검증 상태를 변경할 수 있습니다.' };
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.classData || !access.isTeacher) {
+    return { error: '담당 선생님만 답변 검증 상태를 변경할 수 있습니다.' };
   }
 
   const { error } = await supabase
@@ -194,7 +179,7 @@ export async function requestAiCluster(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  // 해당 레슨의 담당 교사인지 확인 (학생의 무단 AI 호출 차단)
+  // 해당 레슨의 담당 교사(대표 교사/공동 교사)인지 확인 (학생의 무단 AI 호출 차단)
   const { data: lessonData } = await supabase
     .from('lessons')
     .select('id, class_id')
@@ -205,13 +190,9 @@ export async function requestAiCluster(
     return { success: false, error: '레슨 정보를 찾을 수 없습니다.' };
   }
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', lessonData.class_id)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, lessonData.class_id, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 AI 질문 묶기 추천을 실행할 수 있습니다.' };
   }
 
@@ -238,4 +219,3 @@ export async function requestAiCluster(
 
   return { success: true, groups };
 }
-

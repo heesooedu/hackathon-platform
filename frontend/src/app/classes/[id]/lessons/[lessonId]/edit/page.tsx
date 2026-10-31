@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { createClient, getCurrentUser } from '@/utils/supabase/server';
 import NotionLessonStudio from '@/components/NotionLessonStudio';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
+import { verifyClassTeacherAccess } from '@/utils/classTeacherAuth';
 import { Lesson } from '@/types/database.types';
 
 interface EditLessonPageProps {
@@ -20,15 +21,11 @@ export default async function EditLessonPage({ params }: EditLessonPageProps) {
   }
 
   const [
-    { data: classData, error: classError },
+    access,
     { data: lessonData, error: lessonError },
     { existingSubjects, existingUnits },
   ] = await Promise.all([
-    supabase
-      .from('classes')
-      .select('id, name, teacher_id')
-      .eq('id', classId)
-      .single(),
+    verifyClassTeacherAccess(supabase, classId, user.id),
     supabase
       .from('lessons')
       .select('*')
@@ -41,12 +38,14 @@ export default async function EditLessonPage({ params }: EditLessonPageProps) {
     }),
   ]);
 
-  if (classError || !classData) {
+  const classData = access.classData;
+
+  if (!classData) {
     notFound();
   }
 
-  // 교사 본인만 레슨 및 교안 수정 가능
-  if (classData.teacher_id !== user.id) {
+  // 대표 교사 및 팀티칭 공동 교사 모두 레슨 및 교안 수정 가능
+  if (!access.isTeacher) {
     redirect(`/classes/${classId}/lessons/${lessonId}`);
   }
 

@@ -33,18 +33,44 @@ export default async function HomePage() {
       subjectCount = libCtx.existingSubjects.length;
     }
 
-    // 2. 학생일 경우: 자신이 참여한 클래스 목록 조회
+    // 2. 학생일 경우: 자신이 참여한 클래스 목록 조회 (공동 교사 정보 포함)
     if (profile.role === 'student') {
       const supabase = await createClient();
       const { data: mData } = await supabase
         .from('class_members')
-        .select('class:class_id(*, teacher:teacher_id(name))')
+        .select('class:class_id(*, teacher:teacher_id(id, name, role))')
         .eq('student_id', user.id)
         .order('joined_at', { ascending: false });
 
-      studentClasses = (mData || [])
+      const rawStudentClasses = (mData || [])
         .map((m: any) => m.class as ClassItem)
         .filter((c) => Boolean(c) && !isMaterialLibraryClass(c));
+
+      if (rawStudentClasses.length > 0) {
+        const sClassIds = rawStudentClasses.map((c) => c.id);
+        const { data: ctRows, error: ctErr } = await supabase
+          .from('class_teachers')
+          .select('class_id, teacher:profiles!class_teachers_teacher_id_fkey(id, name, role)')
+          .in('class_id', sClassIds);
+
+        const ctMap = new Map<string, any[]>();
+        if (!ctErr && ctRows) {
+          for (const r of ctRows as any[]) {
+            const cid = r.class_id;
+            const prof = Array.isArray(r.teacher) ? r.teacher[0] : r.teacher;
+            if (!cid || !prof) continue;
+            if (!ctMap.has(cid)) ctMap.set(cid, []);
+            ctMap.get(cid)!.push(prof);
+          }
+        }
+
+        studentClasses = rawStudentClasses.map((c) => ({
+          ...c,
+          co_teachers: (ctMap.get(c.id) || []).filter((t) => t.id !== c.teacher_id),
+        }));
+      } else {
+        studentClasses = [];
+      }
     }
   }
 
@@ -80,6 +106,7 @@ export default async function HomePage() {
                       <span>📚</span>
                       <span>교안 보관함 · 제작 스튜디오</span>
                     </Link>
+                    <JoinClassModal variant="teacher" />
                     <CreateClassModal />
                   </>
                 ) : (
@@ -133,7 +160,7 @@ export default async function HomePage() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900">
-                {profile?.role === 'teacher' ? '내가 개설한 학급 (분반 A·B·C·D)' : '내가 참여 중인 클래스'}
+                {profile?.role === 'teacher' ? '내가 담당하는 학급 (대표 개설 · 팀티칭)' : '내가 참여 중인 클래스'}
               </h2>
               <span className="text-sm text-gray-500">
                 총 {profile?.role === 'teacher' ? teacherClasses.length : studentClasses.length}개
@@ -144,37 +171,61 @@ export default async function HomePage() {
               /* 교사 클래스 그리드 */
               teacherClasses.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {teacherClasses.map((c) => (
-                    <Link
-                      key={c.id}
-                      href={`/classes/${c.id}`}
-                      className="group flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
-                          <span className="font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-bold">
-                            코드 {c.join_code}
-                          </span>
-                          <span>학생 {c.member_count || 0}명</span>
-                        </div>
-                        <h3 className="text-base font-bold text-gray-900 group-hover:text-blue-600 transition">
-                          {c.name}
-                        </h3>
-                      </div>
+                  {teacherClasses.map((c) => {
+                    const isCoTeacherRole = c.my_class_role === 'co_teacher';
+                    const coTeachers = c.co_teachers || [];
+                    const hasTeamTeaching = isCoTeacherRole || coTeachers.length > 0;
+                    const primaryName = c.teacher?.name || '선생님';
+                    const teamNames = [primaryName, ...coTeachers.map((t) => t.name)].filter(Boolean);
 
-                      <div className="mt-4 flex items-center justify-between text-xs font-semibold text-blue-600 pt-3 border-t border-gray-50">
-                        <span>클래스 바로가기</span>
-                        <span className="transition group-hover:translate-x-1">→</span>
-                      </div>
-                    </Link>
-                  ))}
+                    return (
+                      <Link
+                        key={c.id}
+                        href={`/classes/${c.id}`}
+                        className="group flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between text-xs text-gray-400 mb-2 gap-1.5 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-bold">
+                                코드 {c.join_code}
+                              </span>
+                              {isCoTeacherRole ? (
+                                <span className="rounded-lg bg-indigo-100 px-2 py-1 text-[11px] font-extrabold text-indigo-800">
+                                  🤝 팀티칭 참여
+                                </span>
+                              ) : hasTeamTeaching ? (
+                                <span className="rounded-lg bg-amber-100 px-2 py-1 text-[11px] font-extrabold text-amber-900">
+                                  👑 대표 · 팀티칭({teamNames.length}명)
+                                </span>
+                              ) : null}
+                            </div>
+                            <span>학생 {c.member_count || 0}명</span>
+                          </div>
+                          <h3 className="text-base font-bold text-gray-900 group-hover:text-blue-600 transition">
+                            {c.name}
+                          </h3>
+                          {hasTeamTeaching && (
+                            <p className="mt-1.5 text-xs font-medium text-indigo-700">
+                              🤝 지도 교사: {teamNames.join(' · ')} 선생님
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between text-xs font-semibold text-blue-600 pt-3 border-t border-gray-50">
+                          <span>클래스 바로가기</span>
+                          <span className="transition group-hover:translate-x-1">→</span>
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
                   <div className="text-4xl mb-3">🏫</div>
-                  <h3 className="text-base font-bold text-gray-700">개설된 클래스가 없습니다</h3>
+                  <h3 className="text-base font-bold text-gray-700">담당 중인 클래스가 없습니다</h3>
                   <p className="mt-1 text-sm text-gray-400">
-                    우측 상단의 [새 클래스 만들기] 버튼을 눌러 첫 학급을 열어보세요.
+                    우측 상단의 [새 클래스 만들기]로 학급을 열거나 [참여 코드로 팀티칭 합류]를 눌러 동료 선생님의 수업에 함께 참여해 보세요.
                   </p>
                 </div>
               )
@@ -182,27 +233,40 @@ export default async function HomePage() {
               /* 학생 클래스 그리드 */
               studentClasses.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {studentClasses.map((c) => (
-                    <Link
-                      key={c.id}
-                      href={`/classes/${c.id}`}
-                      className="group flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
-                    >
-                      <div>
-                        <div className="text-xs text-gray-400 mb-2">
-                          담당: {(c.teacher as any)?.name || '선생님'}
-                        </div>
-                        <h3 className="text-base font-bold text-gray-900 group-hover:text-blue-600 transition">
-                          {c.name}
-                        </h3>
-                      </div>
+                  {studentClasses.map((c) => {
+                    const primaryName = (c.teacher as any)?.name || '선생님';
+                    const coTeachers = c.co_teachers || [];
+                    const teamNames = [primaryName, ...coTeachers.map((t) => t.name)].filter(Boolean);
 
-                      <div className="mt-4 flex items-center justify-between text-xs font-semibold text-blue-600 pt-3 border-t border-gray-50">
-                        <span>수업 입장하기</span>
-                        <span className="transition group-hover:translate-x-1">→</span>
-                      </div>
-                    </Link>
-                  ))}
+                    return (
+                      <Link
+                        key={c.id}
+                        href={`/classes/${c.id}`}
+                        className="group flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 text-xs text-gray-500 mb-2">
+                            <span>
+                              담당: {teamNames.join(' · ')} 선생님
+                            </span>
+                            {coTeachers.length > 0 && (
+                              <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+                                🤝 팀티칭
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="text-base font-bold text-gray-900 group-hover:text-blue-600 transition">
+                            {c.name}
+                          </h3>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between text-xs font-semibold text-blue-600 pt-3 border-t border-gray-50">
+                          <span>수업 입장하기</span>
+                          <span className="transition group-hover:translate-x-1">→</span>
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">

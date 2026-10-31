@@ -8,6 +8,15 @@ export interface Profile {
   created_at: string;
 }
 
+export interface ClassTeacher {
+  id: string;
+  class_id: string;
+  teacher_id: string;
+  invited_by?: string | null;
+  created_at: string;
+  teacher?: Profile;
+}
+
 export interface ClassItem {
   id: string;
   teacher_id: string;
@@ -15,6 +24,9 @@ export interface ClassItem {
   join_code: string;
   created_at: string;
   teacher?: Profile;
+  co_teachers?: Profile[];
+  is_co_teaching?: boolean;
+  my_class_role?: 'owner' | 'co_teacher';
   member_count?: number;
 }
 

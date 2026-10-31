@@ -17,7 +17,8 @@ import LessonMaterialViewer from '@/components/LessonMaterialViewer';
 import StudentFormativeQuizSection from '@/components/StudentFormativeQuizSection';
 import { parseLessonMaterial } from '@/utils/materialPayload';
 import { separateGroupsAndQuizzes } from '@/utils/quizHelper';
-import { Lesson, Submission, QuestionGroup } from '@/types/database.types';
+import { verifyClassTeacherAccess } from '@/utils/classTeacherAuth';
+import { Lesson, Submission, QuestionGroup, Profile } from '@/types/database.types';
 
 interface LessonDetailPageProps {
   params: Promise<{ id: string; lessonId: string }>;
@@ -40,17 +41,13 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
 
   // 기존 5단계 직렬(Waterfall) 쿼리를 단일 Promise.all로 병렬 실행하여 응답 시간을 1/5로 단축
   const [
-    { data: classData, error: classError },
+    access,
     { data: lessonData, error: lessonError },
     { data: allSubmissionsData },
     { data: groupsData },
-    { count: memberCount },
+    { data: memberRows },
   ] = await Promise.all([
-    supabase
-      .from('classes')
-      .select('*, teacher:teacher_id(id, name, role)')
-      .eq('id', classId)
-      .single(),
+    verifyClassTeacherAccess(supabase, classId, user.id),
     supabase
       .from('lessons')
       .select('*')
@@ -101,18 +98,20 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     isTeacherRole
       ? supabase
           .from('class_members')
-          .select('*', { count: 'exact', head: true })
+          .select('student_id, student:student_id(role)')
           .eq('class_id', classId)
-      : Promise.resolve({ count: 0 }),
+      : Promise.resolve({ data: null }),
   ]);
 
-  if (classError || !classData || lessonError || !lessonData) {
+  const classData = access.classData;
+
+  if (!classData || lessonError || !lessonData) {
     notFound();
   }
 
   const lesson = lessonData as Lesson;
   const parsedMaterial = parseLessonMaterial(lesson);
-  const isTeacher = classData.teacher_id === user.id;
+  const { isTeacher, allTeacherIds } = access;
   // 학생 브라우저에는 교사용 AI 진단 리포트(aiAnalysis) 및 내부 원본 ID가 직렬화되지 않도록 제거
   const viewerMaterial = isTeacher
     ? parsedMaterial
@@ -139,7 +138,12 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   let inlineQuizzesMap = separated.inlineQuizzesMap;
 
   if (isTeacher) {
-    totalClassStudents = memberCount || 0;
+    totalClassStudents = (memberRows || []).filter((m: any) => {
+      const stu = Array.isArray(m.student) ? m.student[0] : m.student;
+      if (stu?.role === 'teacher') return false;
+      if (allTeacherIds.has(m.student_id)) return false;
+      return true;
+    }).length;
   } else {
     mySubmission = rawSubmissions.find((s) => s.student_id === user.id) || null;
 
@@ -150,7 +154,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
       student: undefined,
     }));
 
-    // 대표 질문 내 묶인 질문 및 동료 답변에서도 타 학생 고유번호/실명 제거
+    // 대표 질문 내 묶인 질문 및 동료 답변에서도 타 학생 고유번호/실명 제거 (교사 답변은 선생님 배지용으로 표시)
     normalGroups = separated.normalGroups.map((g) => ({
       ...g,
       members: (g.members || [])
@@ -163,11 +167,22 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
             student: undefined,
           },
         })),
-      answers: (g.answers || []).map((ans) => ({
-        ...ans,
-        author_id: ans.author_id === user.id ? user.id : 'anonymous',
-        author: undefined,
-      })),
+      answers: (g.answers || []).map((ans) => {
+        const isTeacherAuthor = allTeacherIds.has(ans.author_id);
+        return {
+          ...ans,
+          author_id: ans.author_id === user.id ? user.id : isTeacherAuthor ? 'teacher' : 'anonymous',
+          author: isTeacherAuthor
+            ? ({
+                id: 'teacher',
+                name: '담당 선생님',
+                role: 'teacher',
+                avatar_url: null,
+                created_at: ans.created_at,
+              } as Profile)
+            : undefined,
+        };
+      }),
     }));
 
     // 형성평가(퀴즈)에서는 본인 풀이 기록만 남기고 다른 학생의 점수·선택지·실명 기록 제거

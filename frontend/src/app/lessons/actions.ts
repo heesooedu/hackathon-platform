@@ -37,6 +37,10 @@ import {
   createInlineQuizId,
   createBlockId,
 } from '@/utils/notionBlocks';
+import {
+  verifyClassTeacherAccess,
+  fetchTeacherAccessibleClasses,
+} from '@/utils/classTeacherAuth';
 
 /**
  * 교안 마크다운 내 ```quiz 블록들을 해당 수업(lessonId)의 question_groups([__INLINE_QUIZ__]) 레코드와 동기화합니다.
@@ -259,10 +263,7 @@ async function syncMasterToAllClassLessons(
   const supabase = await createClient();
   const masterParsed = parseLessonMaterial(masterLesson);
 
-  const { data: teacherClasses } = await supabase
-    .from('classes')
-    .select('id, name, join_code')
-    .eq('teacher_id', teacherId);
+  const teacherClasses = await fetchTeacherAccessibleClasses(supabase, teacherId);
 
   const normalClassIds = (teacherClasses || [])
     .filter((c) => !isMaterialLibraryClass(c))
@@ -528,15 +529,11 @@ async function deployMaterialToClassesInternal(
   const masterParsed = parseLessonMaterial(masterLesson);
   const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
 
-  // 교사 소유 클래스인지 확인
-  const { data: validClasses } = await supabase
-    .from('classes')
-    .select('id, name, join_code')
-    .eq('teacher_id', teacherId)
-    .in('id', targetClassIds);
-
-  const validClassIds = (validClasses || [])
-    .filter((c) => !isMaterialLibraryClass(c))
+  // 교사 담당 클래스(대표 개설 또는 팀티칭)인지 확인
+  const accessibleClasses = await fetchTeacherAccessibleClasses(supabase, teacherId);
+  const targetSet = new Set(targetClassIds);
+  const validClassIds = accessibleClasses
+    .filter((c) => !isMaterialLibraryClass(c) && targetSet.has(c.id))
     .map((c) => c.id);
 
   if (validClassIds.length === 0) {
@@ -682,13 +679,9 @@ export async function importMaterialsToClassAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('id, teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '이 클래스에 교안을 불러올 권한이 없습니다.' };
   }
 
@@ -920,14 +913,11 @@ export async function createLesson(formData: FormData) {
     redirect('/login');
   }
 
-  // 교사 권한 확인
-  const { data: classData, error: classError } = await supabase
-    .from('classes')
-    .select('teacher_id, name')
-    .eq('id', classId)
-    .single();
+  // 대표 교사 또는 공동 교사 권한 확인
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  const classData = access.classData;
 
-  if (classError || !classData || classData.teacher_id !== user.id) {
+  if (!classData || !access.isTeacher) {
     return { error: '이 클래스에 레슨을 개설할 권한이 없습니다.' };
   }
 
@@ -1044,14 +1034,10 @@ export async function updateLessonAction(formData: FormData) {
     redirect('/login');
   }
 
-  // 교사 권한 확인
-  const { data: classData, error: classError } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  // 대표 교사 또는 공동 교사 권한 확인
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (classError || !classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { error: '이 레슨을 수정할 권한이 없습니다.' };
   }
 
@@ -1157,14 +1143,10 @@ export async function deleteLessonAction(
     return { success: false, error: '로그인이 필요합니다.' };
   }
 
-  // 교사 권한 확인
-  const { data: classData, error: classError } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  // 대표 교사 또는 공동 교사 권한 확인
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (classError || !classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '이 레슨을 삭제할 권한이 없습니다.' };
   }
 
@@ -1199,14 +1181,10 @@ export async function reorderLessonsAction(
     return { success: false, error: '로그인이 필요합니다.' };
   }
 
-  // 교사 권한 확인
-  const { data: classData, error: classError } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  // 대표 교사 또는 공동 교사 권한 확인
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (classError || !classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '교안 순서를 변경할 권한이 없습니다.' };
   }
 
@@ -1262,13 +1240,9 @@ export async function toggleLessonStatus(
     redirect('/login');
   }
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { error: '담당 선생님만 수업 상태를 변경할 수 있습니다.' };
   }
 
@@ -1307,14 +1281,10 @@ export async function requestAiLessonReview(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  // 교사 권한 확인 (학생 계정의 무단 AI 분석 호출 차단)
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  // 대표 교사 또는 공동 교사 권한 확인 (학생 계정의 무단 AI 분석 호출 차단)
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 AI 수업 진단 리포트를 실행할 수 있습니다.' };
   }
 
@@ -1399,13 +1369,9 @@ export async function applyMaterialPatchAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 교안 보충 패치를 적용할 수 있습니다.' };
   }
 
@@ -1493,13 +1459,9 @@ export async function removeMaterialPatchAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 교안 보충 패치를 삭제할 수 있습니다.' };
   }
 
@@ -1599,13 +1561,9 @@ export async function updateLessonMaterialAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 교안을 수정할 수 있습니다.' };
   }
 
@@ -1695,13 +1653,9 @@ export async function clearLessonMaterialAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 교안을 삭제할 수 있습니다.' };
   }
 
@@ -1756,13 +1710,9 @@ export async function publishFormativeQuizzesAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
 
-  if (!classData || classData.teacher_id !== user.id) {
+  if (!access.classData || !access.isTeacher) {
     return { success: false, error: '담당 선생님만 형성평가를 배포할 수 있습니다.' };
   }
 
@@ -1827,18 +1777,9 @@ export async function submitQuizAnswerAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  // 1. 해당 클래스 구성원인지 확인
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
-
-  if (!classData) {
-    return { success: false, error: '클래스 정보를 찾을 수 없습니다.' };
-  }
-
-  if (classData.teacher_id !== user.id) {
+  // 1. 해당 클래스 구성원인지 확인 (교사 또는 소속 학생)
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.isTeacher) {
     const { data: membership } = await supabase
       .from('class_members')
       .select('id')
@@ -1968,18 +1909,9 @@ export async function submitInlineQuizAttemptAction(
     return { success: false, error: '수업 정보가 올바르지 않습니다.' };
   }
 
-  // 1. 해당 클래스 구성원인지 확인
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
-
-  if (!classData) {
-    return { success: false, error: '클래스 정보를 찾을 수 없습니다.' };
-  }
-
-  if (classData.teacher_id !== user.id) {
+  // 1. 해당 클래스 구성원인지 확인 (교사 또는 소속 학생)
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.isTeacher) {
     const { data: membership } = await supabase
       .from('class_members')
       .select('id')
@@ -2139,13 +2071,8 @@ export async function appendQuizToMaterialBlockAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  const { data: classData } = await supabase
-    .from('classes')
-    .select('teacher_id')
-    .eq('id', classId)
-    .single();
-
-  if (!classData || classData.teacher_id !== user.id) {
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.isTeacher) {
     return {
       success: false,
       error: '담당 선생님만 교안에 인라인 퀴즈 블록을 추가할 수 있습니다.',

@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import { createClient, getCurrentUser } from '@/utils/supabase/server';
 import ImportMaterialModal from '@/components/ImportMaterialModal';
 import ClassDetailView from '@/components/ClassDetailView';
+import TeamTeachingModal from '@/components/TeamTeachingModal';
 import {
   EnrolledStudentRecord,
   StudentPeerAnswerItem,
@@ -14,6 +15,7 @@ import {
   toLightweightLessonForList,
 } from '@/utils/materialPayload';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
+import { verifyClassTeacherAccess } from '@/utils/classTeacherAuth';
 import { separateGroupsAndQuizzes } from '@/utils/quizHelper';
 import {
   Profile,
@@ -47,22 +49,19 @@ export default async function ClassDetailPage({
   const initialTab =
     resolvedSearchParams.tab === 'students' ? 'students' : 'lessons';
 
-  // 1단계 병렬 조회: 클래스 정보 + 해당 클래스의 레슨 목록을 동시에 조회
-  const [{ data: classData, error: classError }, { data: rawLessons }] =
-    await Promise.all([
-      supabase
-        .from('classes')
-        .select('*, teacher:teacher_id(id, name, role)')
-        .eq('id', classId)
-        .single(),
-      supabase
-        .from('lessons')
-        .select('*')
-        .eq('class_id', classId)
-        .order('created_at', { ascending: false }),
-    ]);
+  // 1단계 병렬 조회: 클래스 접근 권한(대표 교사 + 공동 교사) + 해당 클래스의 레슨 목록을 동시에 조회
+  const [access, { data: rawLessons }] = await Promise.all([
+    verifyClassTeacherAccess(supabase, classId, user.id),
+    supabase
+      .from('lessons')
+      .select('*')
+      .eq('class_id', classId)
+      .order('created_at', { ascending: false }),
+  ]);
 
-  if (classError || !classData) {
+  const classData = access.classData;
+
+  if (!classData) {
     notFound();
   }
 
@@ -70,7 +69,7 @@ export default async function ClassDetailPage({
     redirect('/materials');
   }
 
-  const isTeacher = classData.teacher_id === user.id;
+  const { isTeacher, isOwner, isCoTeacher, coTeachers, allTeacherIds } = access;
   const sortedLessons = sortLessonsByOrder((rawLessons || []) as Lesson[]);
   const alreadyImportedSourceIds = sortedLessons
     .map((l) => parseLessonMaterial(l).sourceMaterialId)
@@ -123,7 +122,11 @@ export default async function ClassDetailPage({
 
     if (memberRows) {
       for (const m of memberRows) {
-        const studentProfile = m.student as unknown as Profile | null;
+        const studentProfile = (Array.isArray(m.student) ? m.student[0] : m.student) as Profile | null;
+        // 공동 교사(role === 'teacher') 또는 담당 교사 ID는 학생 명단에서 제외
+        if (studentProfile?.role === 'teacher' || allTeacherIds.has(m.student_id)) {
+          continue;
+        }
         enrolledStudents.push({
           id: m.id,
           studentId: m.student_id,
@@ -148,7 +151,8 @@ export default async function ClassDetailPage({
       const lessonTitle =
         lessonTitleMap.get(group.lesson_id) || '수업 차시';
       for (const ans of group.answers || []) {
-        if (ans.author_id === user.id) continue; // 교사 본인 답변 제외
+        // 대표 교사 및 공동 교사 답변은 학생 동료 답변 통계에서 제외
+        if (allTeacherIds.has(ans.author_id)) continue;
         if (!peerAnswersByStudent[ans.author_id]) {
           peerAnswersByStudent[ans.author_id] = [];
         }
@@ -165,7 +169,14 @@ export default async function ClassDetailPage({
     }
   }
 
-  const teacherProfile = classData.teacher as unknown as Profile;
+  const primaryTeacher = {
+    id: classData.teacher_id,
+    name: classData.teacher?.name || '선생님',
+  };
+  const teachingTeamNames = [
+    primaryTeacher.name,
+    ...coTeachers.map((t) => t.name),
+  ].filter(Boolean);
 
   return (
     <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 lg:px-12 space-y-6">
@@ -180,14 +191,29 @@ export default async function ClassDetailPage({
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-blue-600">
-                {isTeacher ? '내 개설 클래스' : '참여 중인 클래스'}
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {isOwner ? (
+                <span className="rounded-lg bg-blue-50 px-2.5 py-0.5 text-xs font-extrabold text-blue-700">
+                  👑 대표 개설 클래스
+                </span>
+              ) : isCoTeacher ? (
+                <span className="rounded-lg bg-indigo-100 px-2.5 py-0.5 text-xs font-extrabold text-indigo-800">
+                  🤝 팀티칭 공동 수업 클래스
+                </span>
+              ) : (
+                <span className="text-sm font-semibold text-blue-600">
+                  참여 중인 클래스
+                </span>
+              )}
               <span className="text-gray-300">•</span>
-              <span className="text-sm text-gray-500">
-                담당: {teacherProfile?.name || '선생님'}
+              <span className="text-sm font-medium text-gray-600">
+                담당: {teachingTeamNames.join(' · ')} 선생님
               </span>
+              {coTeachers.length > 0 && (
+                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700">
+                  🤝 팀티칭 {teachingTeamNames.length}명
+                </span>
+              )}
             </div>
             <h1 className="mt-1 text-2xl font-extrabold text-gray-900 sm:text-3xl">
               {classData.name}
@@ -196,6 +222,15 @@ export default async function ClassDetailPage({
 
           {isTeacher && (
             <div className="flex flex-wrap items-center gap-2.5">
+              <TeamTeachingModal
+                classId={classId}
+                classNameTitle={classData.name}
+                joinCode={classData.join_code}
+                primaryTeacher={primaryTeacher}
+                coTeachers={coTeachers}
+                currentUserId={user.id}
+                isOwner={isOwner}
+              />
               <ImportMaterialModal
                 classId={classId}
                 className={classData.name}
@@ -227,6 +262,10 @@ export default async function ClassDetailPage({
         className={classData.name}
         joinCode={classData.join_code}
         isTeacher={isTeacher}
+        isOwner={isOwner}
+        currentUserId={user.id}
+        primaryTeacher={primaryTeacher}
+        coTeachers={coTeachers}
         lessons={lessons}
         enrolledStudents={enrolledStudents}
         submissions={classSubmissions}
