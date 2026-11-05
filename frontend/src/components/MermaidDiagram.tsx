@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 type MermaidApi = typeof import('mermaid').default;
 
@@ -31,17 +31,12 @@ function loadMermaid(): Promise<MermaidApi> {
 export default function MermaidDiagram({ chart }: { chart: string }) {
   const [svgHtml, setSvgHtml] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const renderIdRef = useRef(
-    `mermaid-svg-${Math.random().toString(36).slice(2, 9)}`
-  );
+  // Mermaid가 요소 id로 쓰므로 영문과 숫자만 남김
+  const renderId = useId().replace(/[^a-zA-Z0-9]/g, '');
 
   useEffect(() => {
     const cleanChart = chart.trim();
-    if (!cleanChart) {
-      setSvgHtml('');
-      setErrorMsg(null);
-      return;
-    }
+    if (!cleanChart) return;
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -49,7 +44,7 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
         const mermaid = await loadMermaid();
         if (cancelled) return;
 
-        const uniqueId = `${renderIdRef.current}-${Date.now()}`;
+        const uniqueId = `mermaid-svg-${renderId}-${Date.now()}`;
         const { svg } = await mermaid.render(uniqueId, cleanChart);
         if (!cancelled) {
           setSvgHtml(svg);
@@ -70,7 +65,12 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [chart]);
+  }, [chart, renderId]);
+
+  if (!chart.trim() && (svgHtml || errorMsg)) {
+    setSvgHtml('');
+    setErrorMsg(null);
+  }
 
   if (!chart.trim()) {
     return (

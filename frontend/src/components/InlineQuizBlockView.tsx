@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { FormativeQuiz, QuizQuestionType } from '@/types/database.types';
 import { InlineQuizBlockData } from '@/utils/notionBlocks';
 import { checkShortAnswerMatch } from '@/utils/quizHelper';
@@ -112,7 +112,17 @@ export default function InlineQuizBlockView({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [prefillSuccessToast, setPrefillSuccessToast] = useState(false);
 
-  useEffect(() => {
+  // 서버의 풀이 기록이 바뀌면 화면에 반영
+  const attemptKey = myExistingAttempt
+    ? JSON.stringify([
+        myExistingAttempt.selected_option_index,
+        myExistingAttempt.submitted_text,
+        myExistingAttempt.is_correct,
+      ])
+    : null;
+  const [syncedAttemptKey, setSyncedAttemptKey] = useState(attemptKey);
+  if (attemptKey !== syncedAttemptKey) {
+    setSyncedAttemptKey(attemptKey);
     if (myExistingAttempt) {
       setSelectedIdx(myExistingAttempt.selected_option_index);
       setShortAnswerInput(myExistingAttempt.submitted_text || '');
@@ -122,11 +132,7 @@ export default function InlineQuizBlockView({
         submittedText: myExistingAttempt.submitted_text,
       });
     }
-  }, [
-    myExistingAttempt?.selected_option_index,
-    myExistingAttempt?.submitted_text,
-    myExistingAttempt?.is_correct,
-  ]);
+  }
 
   if (!parsedQuiz) {
     return null;

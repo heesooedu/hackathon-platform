@@ -34,7 +34,9 @@ export default function TeamTeachingModal({
   const [identifier, setIdentifier] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
   const [availableTeachers, setAvailableTeachers] = useState<Profile[]>([]);
-  const [loadingDirectory, setLoadingDirectory] = useState(false);
+  const directoryKey = `${classId}:${coTeachers.length}`;
+  const [loadedDirectoryKey, setLoadedDirectoryKey] = useState<string | null>(null);
+  const loadingDirectory = isOwner && loadedDirectoryKey !== directoryKey;
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -46,21 +48,20 @@ export default function TeamTeachingModal({
   useEffect(() => {
     if (!isOpen || !isOwner) return;
     let cancelled = false;
-    setLoadingDirectory(true);
     getAvailableTeachersForInviteAction(classId)
       .then((res) => {
         if (!cancelled) {
           setAvailableTeachers(res.teachers || []);
-          setLoadingDirectory(false);
+          setLoadedDirectoryKey(directoryKey);
         }
       })
       .catch(() => {
-        if (!cancelled) setLoadingDirectory(false);
+        if (!cancelled) setLoadedDirectoryKey(directoryKey);
       });
     return () => {
       cancelled = true;
     };
-  }, [isOpen, isOwner, classId, coTeachers.length]);
+  }, [isOpen, isOwner, classId, directoryKey]);
 
   const handleInviteByInput = (e: React.FormEvent) => {
     e.preventDefault();

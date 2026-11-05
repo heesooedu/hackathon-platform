@@ -1,7 +1,7 @@
 'use client';
 
 import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { Lesson } from '@/types/database.types';
 import { reorderLessonsAction } from '@/app/lessons/actions';
@@ -29,9 +29,11 @@ export default function LessonListWithReorder({
   const [savingOrder, setSavingOrder] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
-  useEffect(() => {
+  const [syncedLessons, setSyncedLessons] = useState(initialLessons);
+  if (initialLessons !== syncedLessons) {
+    setSyncedLessons(initialLessons);
     setLessons(initialLessons);
-  }, [initialLessons]);
+  }
 
   async function persistNewOrder(updatedLessons: Lesson[]) {
     setLessons(updatedLessons);

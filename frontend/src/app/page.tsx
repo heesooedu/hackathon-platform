@@ -5,7 +5,7 @@ import {
   getCurrentUser,
   getCurrentProfile,
 } from '@/utils/supabase/server';
-import { ClassItem } from '@/types/database.types';
+import { ClassItem, Profile } from '@/types/database.types';
 import CreateClassModal from '@/components/CreateClassModal';
 import JoinClassModal from '@/components/JoinClassModal';
 import { loadTeacherMaterialLibraryContext } from '@/utils/materialLibraryLoader';
@@ -47,9 +47,9 @@ export default async function HomePage() {
         .eq('student_id', user.id)
         .order('joined_at', { ascending: false });
 
-      const rawStudentClasses = (mData || [])
-        .map((m: any) => m.class as ClassItem)
-        .filter((c) => Boolean(c) && !isMaterialLibraryClass(c));
+      const rawStudentClasses = ((mData || []) as unknown as { class: ClassItem | null }[])
+        .map((m) => m.class)
+        .filter((c): c is ClassItem => !!c && !isMaterialLibraryClass(c));
 
       if (rawStudentClasses.length > 0) {
         const sClassIds = rawStudentClasses.map((c) => c.id);
@@ -58,9 +58,9 @@ export default async function HomePage() {
           .select('class_id, teacher:profiles!class_teachers_teacher_id_fkey(id, name, role)')
           .in('class_id', sClassIds);
 
-        const ctMap = new Map<string, any[]>();
+        const ctMap = new Map<string, Profile[]>();
         if (!ctErr && ctRows) {
-          for (const r of ctRows as any[]) {
+          for (const r of ctRows as unknown as { class_id: string; teacher: Profile | Profile[] | null }[]) {
             const cid = r.class_id;
             const prof = Array.isArray(r.teacher) ? r.teacher[0] : r.teacher;
             if (!cid || !prof) continue;
@@ -238,7 +238,7 @@ export default async function HomePage() {
               studentClasses.length > 0 ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {studentClasses.map((c) => {
-                    const primaryName = (c.teacher as any)?.name || '선생님';
+                    const primaryName = c.teacher?.name || '선생님';
                     const coTeachers = c.co_teachers || [];
                     const teamNames = [primaryName, ...coTeachers.map((t) => t.name)].filter(Boolean);
 

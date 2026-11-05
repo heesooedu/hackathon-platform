@@ -125,7 +125,11 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   const { publishedQuizzes, inlineQuizzesMap } = separated;
 
   if (isTeacher) {
-    totalClassStudents = (memberRows || []).filter((m: any) => {
+    type MemberRow = {
+      student_id: string;
+      student: { role: string } | { role: string }[] | null;
+    };
+    totalClassStudents = ((memberRows || []) as unknown as MemberRow[]).filter((m) => {
       const stu = Array.isArray(m.student) ? m.student[0] : m.student;
       if (stu?.role === 'teacher') return false;
       if (allTeacherIds.has(m.student_id)) return false;

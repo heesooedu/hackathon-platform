@@ -255,9 +255,11 @@ export default function ColabRunnerBlock({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // 선생님 원본 코드가 바뀌면 동기화
-  useEffect(() => {
+  const [syncedInitialCode, setSyncedInitialCode] = useState(initialCode);
+  if (initialCode !== syncedInitialCode) {
+    setSyncedInitialCode(initialCode);
     setStudentCode(initialCode);
-  }, [initialCode]);
+  }
 
   // 텍스트영역 높이 자동 조절
   useEffect(() => {

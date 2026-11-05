@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import ColabRunnerBlock from '@/components/ColabRunnerBlock';
 
 export type MlAlgorithmType =
@@ -303,6 +303,30 @@ export interface AiLabBlockProps {
   onChangeContent?: (nextRaw: string) => void;
 }
 
+// k-Means 시작 중심점과 그에 따른 군집 배정
+function getKMeansStart(k: number) {
+  const presetStarts: { x: number; y: number }[] = [
+    { x: 2.1, y: 7.2 },
+    { x: 5.0, y: 4.8 },
+    { x: 8.0, y: 6.9 },
+    { x: 3.5, y: 2.0 },
+  ];
+  const centroids = presetStarts.slice(0, k);
+  const assignments = CLUSTERING_DATA.map((pt) => {
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    centroids.forEach((c, idx) => {
+      const d = (pt.x - c.x) ** 2 + (pt.y - c.y) ** 2;
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = idx;
+      }
+    });
+    return bestIdx;
+  });
+  return { centroids, assignments };
+}
+
 export default function AiLabBlock({
   rawContent,
   caption,
@@ -317,21 +341,22 @@ export default function AiLabBlock({
   const [gdEpoch, setGdEpoch] = useState<number>(0);
 
   // k-Means 단계별 상태
-  const [centroids, setCentroids] = useState<{ x: number; y: number }[]>([
-    { x: 2.2, y: 6.8 },
-    { x: 5.0, y: 4.5 },
-    { x: 7.8, y: 6.5 },
-  ]);
-  const [assignments, setAssignments] = useState<number[]>(() =>
-    CLUSTERING_DATA.map(() => 0)
+  const [centroids, setCentroids] = useState<{ x: number; y: number }[]>(
+    () => getKMeansStart(config.kClusters).centroids
+  );
+  const [assignments, setAssignments] = useState<number[]>(
+    () => getKMeansStart(config.kClusters).assignments
   );
   const [kmeansStepCount, setKmeansStepCount] = useState<number>(0);
 
   const knnSvgRef = useRef<SVGSVGElement | null>(null);
 
-  useEffect(() => {
+  // 외부에서 rawContent가 바뀌면 동기화
+  const [syncedRawContent, setSyncedRawContent] = useState(rawContent);
+  if (rawContent !== syncedRawContent) {
+    setSyncedRawContent(rawContent);
     setConfig(parseAiLabBlockContent(rawContent));
-  }, [rawContent]);
+  }
 
   const updateConfig = useCallback(
     (patch: Partial<AiLabConfig>) => {
@@ -348,33 +373,18 @@ export default function AiLabBlock({
 
   // k-Means 중심점 초기화 및 배정 계산
   const initKMeansCentroids = useCallback((k: number) => {
-    const presetStarts: { x: number; y: number }[] = [
-      { x: 2.1, y: 7.2 },
-      { x: 5.0, y: 4.8 },
-      { x: 8.0, y: 6.9 },
-      { x: 3.5, y: 2.0 },
-    ];
-    const nextC = presetStarts.slice(0, k);
-    setCentroids(nextC);
-    const nextAssign = CLUSTERING_DATA.map((pt) => {
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      nextC.forEach((c, idx) => {
-        const d = (pt.x - c.x) ** 2 + (pt.y - c.y) ** 2;
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = idx;
-        }
-      });
-      return bestIdx;
-    });
-    setAssignments(nextAssign);
+    const start = getKMeansStart(k);
+    setCentroids(start.centroids);
+    setAssignments(start.assignments);
     setKmeansStepCount(0);
   }, []);
 
-  useEffect(() => {
+  // 군집 개수가 바뀌면 처음부터 다시 시작
+  const [kmeansClusterCount, setKmeansClusterCount] = useState(config.kClusters);
+  if (config.kClusters !== kmeansClusterCount) {
+    setKmeansClusterCount(config.kClusters);
     initKMeansCentroids(config.kClusters);
-  }, [config.kClusters, initKMeansCentroids]);
+  }
 
   // 1) 선형 회귀 MSE 및 경사하강법 계산
   const regressionStats = useMemo(() => {
@@ -387,12 +397,13 @@ export default function AiLabBlock({
 
     const residuals = REGRESSION_DATA.map((pt) => {
       const yPred = w * pt.x + b;
-      const err = yPred - pt.y;
-      sumSqError += err * err;
-      gradW += (2 / n) * err * pt.x;
-      gradB += (2 / n) * err;
-      return { ...pt, yPred, err };
+      return { ...pt, yPred, err: yPred - pt.y };
     });
+    for (const { x, err } of residuals) {
+      sumSqError += err * err;
+      gradW += (2 / n) * err * x;
+      gradB += (2 / n) * err;
+    }
 
     const mse = sumSqError / n;
     return { mse, gradW, gradB, residuals };

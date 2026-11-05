@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { applyCodeTabIndentation } from '@/utils/notionBlocks'
 
 export const VPYTHON_TEMPLATES: { label: string; title: string; code: string }[] = [
@@ -523,11 +523,12 @@ export default function VPythonRunnerBlock({
   const [copied, setCopied] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
 
-  useEffect(() => {
-    const cleaned = stripLegacyEarthMoonDefaultCode(initialCode)
-    setCode(cleaned)
-    setActiveCode(cleaned)
-  }, [initialCode])
+  const [syncedInitialCode, setSyncedInitialCode] = useState(initialCode)
+  if (initialCode !== syncedInitialCode) {
+    setSyncedInitialCode(initialCode)
+    setCode(normalizedInitialCode)
+    setActiveCode(normalizedInitialCode)
+  }
 
   const focusSimulationWindow = () => {
     setTimeout(() => {

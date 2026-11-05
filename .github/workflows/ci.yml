@@ -44,7 +44,5 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
 
-      # 기존 lint 오류가 남아 있어 지금은 결과만 보여 주고 실패로 치지 않습니다.
-      - name: Lint (not blocking yet)
-        run: npm run lint
-        continue-on-error: true
+      - name: Lint
+        run: npm run lint -- --max-warnings=0

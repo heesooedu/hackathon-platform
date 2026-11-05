@@ -291,10 +291,12 @@ export default function ClassStudentManagementDashboard({
     peerAnswersByStudent,
   ]);
 
+  // 화면을 연 시점 기준 최근 7일
+  const [sevenDaysAgo] = useState(() => Date.now() - 7 * 24 * 60 * 60 * 1000);
+
   // 학급 전체 KPI 집계
   const classKpis = useMemo(() => {
     const totalStudents = studentAnalyticsList.length;
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const recentJoinedCount = studentAnalyticsList.filter(
       (s) => new Date(s.joinedAt).getTime() >= sevenDaysAgo
     ).length;
@@ -351,7 +353,7 @@ export default function ClassStudentManagementDashboard({
       activeQuestionerCount,
       peerMentorCount,
     };
-  }, [studentAnalyticsList, lessons.length]);
+  }, [studentAnalyticsList, lessons.length, sevenDaysAgo]);
 
   // 필터 및 정렬 적용된 학생 목록
   const filteredStudents = useMemo(() => {

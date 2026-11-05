@@ -8,7 +8,7 @@ import {
   createAnswer,
   toggleAnswerChecked,
 } from '@/app/groups/actions';
-import { QuestionGroup, Answer } from '@/types/database.types';
+import { QuestionGroup } from '@/types/database.types';
 
 interface RepresentativeQuestionSectionProps {
   groups: QuestionGroup[];

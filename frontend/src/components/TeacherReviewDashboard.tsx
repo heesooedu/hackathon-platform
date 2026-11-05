@@ -68,7 +68,6 @@ export default function TeacherReviewDashboard({
   const submissionRate =
     totalStudents > 0 ? Math.round((submittedCount / totalStudents) * 100) : 0;
 
-  const resolvedGroups = groups.filter((g) => g.is_resolved);
   const unresolvedGroups = groups.filter((g) => !g.is_resolved);
   const confusions = submissions.filter((s) => s.type === 'confusion');
 

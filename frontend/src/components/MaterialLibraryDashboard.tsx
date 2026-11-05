@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Lesson, ClassItem } from '@/types/database.types';
@@ -58,9 +58,11 @@ export default function MaterialLibraryDashboard({
   // 복제 / 삭제 진행 상태
   const [busyMaterialId, setBusyMaterialId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [syncedMaterials, setSyncedMaterials] = useState(initialMaterials);
+  if (initialMaterials !== syncedMaterials) {
+    setSyncedMaterials(initialMaterials);
     setMaterials(sortLessonsByOrder(initialMaterials));
-  }, [initialMaterials]);
+  }
 
   // 각 교안의 파싱 메타데이터를 결합
   const enrichedMaterials = useMemo(() => {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import ColabRunnerBlock from '@/components/ColabRunnerBlock';
 
 export type DatasetPresetId =
@@ -420,9 +420,12 @@ export default function DataAnalysisBlock({
   );
   const [activeTab, setActiveTab] = useState<'studio' | 'python'>('studio');
 
-  useEffect(() => {
+  // 외부에서 rawContent가 바뀌면 동기화
+  const [syncedRawContent, setSyncedRawContent] = useState(rawContent);
+  if (rawContent !== syncedRawContent) {
+    setSyncedRawContent(rawContent);
     setConfig(parseDataAnalysisBlockContent(rawContent));
-  }, [rawContent]);
+  }
 
   const updateConfig = useCallback(
     (patch: Partial<DataAnalysisConfig>) => {

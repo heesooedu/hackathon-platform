@@ -17,7 +17,6 @@ import {
   getBlockImages,
   createDefaultTableRows,
   groupBlocksIntoRows,
-  getNormalizedRowWidths,
   getNormalizedColumnWidths,
   getNormalizedStackHeights,
   cleanupOrphanRowIds,
@@ -81,7 +80,6 @@ interface NotionBlockEditorProps {
   onChange: (newBlocks: NotionBlock[]) => void;
 }
 
-const CALLOUT_ICONS = ['💡', '📌', '🎯', '⚠️', '❓', '📖', '🔬', '🏛️', '✨'];
 
 const CODE_LANGUAGES: { value: CodeLanguage; label: string }[] = [
   { value: 'python', label: '🐍 Python' },
@@ -731,6 +729,8 @@ export default function NotionBlockEditor({
       }
     }
 
+    // onChange는 이벤트에서만 호출되지만, 렌더 중 map 안의 핸들러가 참조해 오탐이 납니다.
+    // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
     const shouldCoalesce =
       Boolean(effectiveKey) &&
@@ -3433,6 +3433,8 @@ export default function NotionBlockEditor({
                       type="button"
                       onMouseDown={(e) => {
                         e.preventDefault();
+                        // 삽입 함수는 클릭 때만 ref를 읽으므로 오탐입니다.
+                        // eslint-disable-next-line react-hooks/refs
                         insertEmojiOrSymbolAtCursor(char);
                       }}
                       className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border border-gray-200/80 bg-gray-50/70 px-1 text-sm font-semibold text-gray-900 hover:border-emerald-300 hover:bg-emerald-50 hover:scale-110 transition cursor-pointer"
@@ -3606,6 +3608,8 @@ export default function NotionBlockEditor({
 
       {/* 노션 블록 리스트 렌더링 (2D 다단 가로+상하 분할 직사각형 조립 행 & 개별 블록 리사이즈 지원) */}
       <div className="space-y-3 pt-2">
+        {/* 블록 안의 핸들러는 이벤트 때만 ref를 읽으므로 오탐입니다. */}
+        {/* eslint-disable-next-line react-hooks/refs */}
         {groupBlocksIntoRows(blocks).map((rowGroup) => {
           const isMultiColumnRow = rowGroup.columns.length > 1;
           const normalizedWidths = getNormalizedColumnWidths(rowGroup.columns);

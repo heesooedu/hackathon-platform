@@ -1724,12 +1724,13 @@ export default function PhysicalComputingBlock({
   );
 
   // 외부에서 rawContent가 바뀌면 동기화
-  useEffect(() => {
-    const next = parsePhysicalBlockContent(rawContent);
-    setConfig(next.config);
-    setCode(next.code);
-    setCustomWires(Array.isArray(next.config.wires) ? next.config.wires : null);
-  }, [rawContent]);
+  const [syncedRawContent, setSyncedRawContent] = useState(rawContent);
+  if (rawContent !== syncedRawContent) {
+    setSyncedRawContent(rawContent);
+    setConfig(parsed.config);
+    setCode(parsed.code);
+    setCustomWires(Array.isArray(parsed.config.wires) ? parsed.config.wires : null);
+  }
 
   // 현재 활성화된 점퍼선 목록 (사용자 커스텀 배선이 없으면 표준 브레드보드 배선 자동 생성)
   const activeWires: JumperWire[] =
@@ -1829,7 +1830,7 @@ export default function PhysicalComputingBlock({
       commitWires(activeWires.filter((w) => w.id !== wireId));
       setHoveredWireId(null);
     },
-    [activeWires, commitWires]
+    [activeWires, commitWires, setHoveredWireId]
   );
 
   const handleSvgMouseMove = useCallback(
@@ -1862,7 +1863,6 @@ export default function PhysicalComputingBlock({
   // 가상 액추에이터 출력 상태 (시뮬레이션 엔진이 매 틱마다 갱신)
   const [pinStates, setPinStates] = useState<Record<string, number>>({});
   const [microbitIcon, setMicrobitIcon] = useState<string>('HEART');
-  const [microbitText, setMicrobitText] = useState<string>('');
   const [servoAngle, setServoAngle] = useState<number>(0);
   const [buzzerFreq, setBuzzerFreq] = useState<number>(0);
   const [serialLogs, setSerialLogs] = useState<string[]>([
@@ -1909,11 +1909,12 @@ export default function PhysicalComputingBlock({
   );
 
   // 코드 및 센서 상태 기반 실시간 시뮬레이션 평가 루프
+  if (!isRunning && buzzerFreq !== 0) {
+    setBuzzerFreq(0);
+  }
+
   useEffect(() => {
-    if (!isRunning) {
-      setBuzzerFreq(0);
-      return;
-    }
+    if (!isRunning) return;
 
     const timer = setInterval(() => {
       setTickCount((prev) => prev + 1);
@@ -1927,6 +1928,8 @@ export default function PhysicalComputingBlock({
 
     // 브레드보드 전원(VCC) - 접지(GND) 단락(쇼트) 감지 시 즉시 차단
     if (circuitAnalysis.hasShortCircuit) {
+      // 시뮬레이션 틱마다 결과를 상태에 쓰는 루프라 의도된 동작입니다.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPinStates({});
       setBuzzerFreq(0);
       setSerialLogs((prev) => {
@@ -1940,7 +1943,6 @@ export default function PhysicalComputingBlock({
 
     const nextPins: Record<string, number> = {};
     let nextIcon = 'SMALL_HEART';
-    let nextScrollText = '';
     let nextServo = servoAngle;
     let nextFreq = 0;
     let newLogLine = '';
@@ -2161,17 +2163,8 @@ export default function PhysicalComputingBlock({
       }
     }
 
-    // display.scroll("...") 문자열 추출
-    const scrollMatch = normalizedCode.match(
-      /display\.scroll\(\s*["']([^"']+)["']\s*\)/
-    );
-    if (scrollMatch) {
-      nextScrollText = scrollMatch[1];
-    }
-
     setPinStates(nextPins);
     setMicrobitIcon(nextIcon);
-    setMicrobitText(nextScrollText);
     setServoAngle(nextServo);
     setBuzzerFreq(nextFreq);
 
