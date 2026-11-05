@@ -102,10 +102,13 @@ export default function OnboardingPage({
                 name="teacher_code"
                 type="text"
                 required
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                maxLength={6}
                 autoComplete="off"
-                spellCheck={false}
-                placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
-                className="w-full rounded-xl border border-gray-200 px-4 py-3 font-mono text-sm uppercase text-gray-900 transition placeholder:normal-case focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                placeholder="6자리 숫자"
+                title="6자리 숫자를 입력해 주세요."
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 font-mono text-sm text-gray-900 transition placeholder:font-sans focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
               />
               <p className="mt-1.5 text-xs text-gray-500">
                 코드가 없다면 서비스 관리자에게 요청해 주세요.
