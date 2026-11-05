@@ -1,4 +1,4 @@
-import {
+import type {
   QuestionGroup,
   FormativeQuiz,
   QuizAttempt,
@@ -15,15 +15,16 @@ export function checkShortAnswerMatch(
   submittedText: string,
   expectedAnswerText: string
 ): boolean {
-  const cleanSubmitted = (submittedText || '')
-    .trim()
-    .replace(/\s+/g, '')
-    .toLowerCase();
+  // 일부 기기는 한글을 자모로 나눈 형태(NFD)로 입력하므로 같은 글자로 맞춘 뒤 비교합니다.
+  const clean = (text: string) =>
+    text.normalize('NFC').replace(/\s+/g, '').toLowerCase();
+
+  const cleanSubmitted = clean(submittedText || '');
   if (!cleanSubmitted) return false;
 
   const candidates = (expectedAnswerText || '')
     .split(',')
-    .map((c) => c.trim().replace(/\s+/g, '').toLowerCase())
+    .map(clean)
     .filter(Boolean);
 
   if (candidates.length === 0) return false;

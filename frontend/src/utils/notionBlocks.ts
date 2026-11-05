@@ -1,4 +1,4 @@
-import { QuizQuestionType } from '@/types/database.types';
+import type { QuizQuestionType } from '@/types/database.types';
 
 export type NotionBlockType =
   | 'h1'
@@ -282,6 +282,34 @@ export function groupBlocksIntoRows(blocks: NotionBlock[]): NotionBlockRowGroup[
   return groups;
 }
 
+const MIN_LAYOUT_PERCENT = 15;
+
+/**
+ * 비율을 합계 100이 되도록 맞춥니다. 최소 비율까지 올린 칸 때문에 100을 넘으면 가장 큰 칸에서 덜어냅니다.
+ */
+function fitPercentagesToHundred(weights: number[]): number[] {
+  const sum = (values: number[]) => values.reduce((acc, v) => acc + v, 0);
+  const total = sum(weights) || 100;
+  const fitted = weights.map((w) =>
+    Math.max(MIN_LAYOUT_PERCENT, Math.round((w / total) * 100))
+  );
+  const lastIdx = fitted.length - 1;
+  fitted[lastIdx] = Math.max(
+    MIN_LAYOUT_PERCENT,
+    100 - sum(fitted.slice(0, lastIdx))
+  );
+
+  let excess = sum(fitted) - 100;
+  while (excess > 0) {
+    const largestIdx = fitted.indexOf(Math.max(...fitted));
+    const reducible = Math.min(excess, fitted[largestIdx] - MIN_LAYOUT_PERCENT);
+    if (reducible <= 0) break;
+    fitted[largestIdx] -= reducible;
+    excess -= reducible;
+  }
+  return fitted;
+}
+
 /**
  * 한 행(Row Group) 내부 블록들의 가로 너비 비율(%)을 합계 100%가 되도록 정규화하여 반환합니다.
  */
@@ -299,21 +327,14 @@ export function getNormalizedRowWidths(
     ];
   }
 
-  const rawWeights = items.map((it) => {
-    const w = it.block.widthPercent;
-    return typeof w === 'number' && Number.isFinite(w) && w >= 15
-      ? w
-      : 100 / n;
-  });
-  const total = rawWeights.reduce((acc, v) => acc + v, 0) || 100;
-  const normalized = rawWeights.map((w) =>
-    Math.max(15, Math.round((w / total) * 100))
+  return fitPercentagesToHundred(
+    items.map((it) => {
+      const w = it.block.widthPercent;
+      return typeof w === 'number' && Number.isFinite(w) && w >= 15
+        ? w
+        : 100 / n;
+    })
   );
-  const sumExceptLast = normalized
-    .slice(0, n - 1)
-    .reduce((acc, v) => acc + v, 0);
-  normalized[n - 1] = Math.max(15, 100 - sumExceptLast);
-  return normalized;
 }
 
 /**
@@ -333,21 +354,14 @@ export function getNormalizedColumnWidths(
     ];
   }
 
-  const rawWeights = columns.map((col) => {
-    const w = col.widthPercent ?? col.items[0]?.block.widthPercent;
-    return typeof w === 'number' && Number.isFinite(w) && w >= 15
-      ? w
-      : 100 / n;
-  });
-  const total = rawWeights.reduce((acc, v) => acc + v, 0) || 100;
-  const normalized = rawWeights.map((w) =>
-    Math.max(15, Math.round((w / total) * 100))
+  return fitPercentagesToHundred(
+    columns.map((col) => {
+      const w = col.widthPercent ?? col.items[0]?.block.widthPercent;
+      return typeof w === 'number' && Number.isFinite(w) && w >= 15
+        ? w
+        : 100 / n;
+    })
   );
-  const sumExceptLast = normalized
-    .slice(0, n - 1)
-    .reduce((acc, v) => acc + v, 0);
-  normalized[n - 1] = Math.max(15, 100 - sumExceptLast);
-  return normalized;
 }
 
 /**
@@ -360,21 +374,14 @@ export function getNormalizedStackHeights(
   if (n === 0) return [];
   if (n === 1) return [100];
 
-  const rawWeights = items.map((it) => {
-    const h = it.block.stackHeightPercent;
-    return typeof h === 'number' && Number.isFinite(h) && h >= 15
-      ? h
-      : 100 / n;
-  });
-  const total = rawWeights.reduce((acc, v) => acc + v, 0) || 100;
-  const normalized = rawWeights.map((h) =>
-    Math.max(15, Math.round((h / total) * 100))
+  return fitPercentagesToHundred(
+    items.map((it) => {
+      const h = it.block.stackHeightPercent;
+      return typeof h === 'number' && Number.isFinite(h) && h >= 15
+        ? h
+        : 100 / n;
+    })
   );
-  const sumExceptLast = normalized
-    .slice(0, n - 1)
-    .reduce((acc, v) => acc + v, 0);
-  normalized[n - 1] = Math.max(15, 100 - sumExceptLast);
-  return normalized;
 }
 
 /**
@@ -586,9 +593,22 @@ function encodeInlineNewlines(text: string): string {
       if (!l) return '\u200B';
       const leadGuard = /^[ \t]/.test(l) ? '\u200B' : '';
       const trailGuard = /[ \t]$/.test(l) ? '\u200B' : '';
-      return `${leadGuard}${l}${trailGuard}`;
+      return `${leadGuard}${guardLiteralBreakTags(l)}${trailGuard}`;
     })
     .join('<br>');
+}
+
+/**
+ * \uAD50\uC0AC\uAC00 \uAE00\uC790\uB85C \uC4F4 `<br>`\uC774 \uC904\uBC14\uAFC8\uC73C\uB85C \uBC14\uB00C\uC9C0 \uC54A\uB3C4\uB85D \uC81C\uB85C\uD3ED \uACF5\uBC31\uC744 \uB07C\uC6CC \uB123\uC2B5\uB2C8\uB2E4.
+ * \uC77D\uC744 \uB54C \uC81C\uB85C\uD3ED \uACF5\uBC31\uC774 \uC9C0\uC6CC\uC9C0\uBBC0\uB85C \uC6D0\uB798 \uAE00\uC790\uB85C \uB3CC\uC544\uC635\uB2C8\uB2E4.
+ */
+function guardLiteralBreakTags(text: string): string {
+  return text.replace(/<(br\s*\/?>)/gi, '<\u200B$1');
+}
+
+// `![\uCEA1\uC158](\uC8FC\uC18C)` \uD615\uC2DD\uC740 \uC8FC\uC18C\uC758 \uB2EB\uB294 \uAD04\uD638\uC5D0\uC11C \uB05D\uB098\uBBC0\uB85C, \uC8FC\uC18C \uC548\uC758 \uAD04\uD638\uB294 \uAC19\uC740 \uB73B\uC758 \uD37C\uC13C\uD2B8 \uC778\uCF54\uB529\uC73C\uB85C \uC800\uC7A5\uD569\uB2C8\uB2E4.
+function encodeImageUrl(url: string): string {
+  return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
 function decodeInlineNewlines(text: string): string {
@@ -869,6 +889,9 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
             imageSize: rowSize,
             images: parsedImages,
           });
+        } else {
+          // 블록이 만들어지지 않았으므로 이 블록의 레이아웃이 다음 블록으로 넘어가지 않게 합니다.
+          pendingLayout = null;
         }
       } else if (
         langRaw === 'colab' ||
@@ -1165,7 +1188,7 @@ export function markdownToBlocks(markdown: string): NotionBlock[] {
       }
 
       const maxCols = Math.max(
-        2,
+        1,
         ...dataRows.map((r) => r.length)
       );
       const normalizedRows =
@@ -1384,7 +1407,8 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         break;
       case 'quote':
         if (b.content.length > 0) {
-          lines.push(`> ${encodeInlineNewlines(b.content)}`);
+          const calloutGuard = /^\s*\[!CALLOUT:/.test(b.content) ? '​' : '';
+          lines.push(`> ${calloutGuard}${encodeInlineNewlines(b.content)}`);
         } else {
           lines.push('<br>');
         }
@@ -1416,7 +1440,8 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         }
         break;
       case 'colab':
-        if (b.content.trim() || b.rowId) {
+        // 코드 없이 노트북 주소만 공유한 셀도 저장합니다.
+        if (b.content.trim() || b.externalUrl?.trim() || b.rowId) {
           const safeTitle = (b.caption || '')
             .replace(/[\n|]/g, ' ')
             .trim();
@@ -1560,16 +1585,16 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
         if (imgs.length === 1) {
           const sizeTag = b.imageSize ? `|${b.imageSize}` : '|md';
           const safeCaption = (imgs[0].caption || '')
-            .replace(/[\[\]|]/g, ' ')
+            .replace(/[\[\]|\r\n]/g, ' ')
             .trim();
-          lines.push(`![${safeCaption}${sizeTag}](${imgs[0].url})`);
+          lines.push(`![${safeCaption}${sizeTag}](${encodeImageUrl(imgs[0].url)})`);
         } else if (imgs.length > 1) {
           const sizeTag = b.imageSize || 'full';
           const itemLines = imgs.map((img) => {
             const safeCap = encodeInlineNewlines(
               (img.caption || '').replace(/[\[\]]/g, ' ').trim()
             );
-            return `![${safeCap}](${img.url})`;
+            return `![${safeCap}](${encodeImageUrl(img.url)})`;
           });
           lines.push(`\`\`\`image-row:${sizeTag}\n${itemLines.join('\n')}\n\`\`\``);
         }
@@ -1583,10 +1608,15 @@ export function blocksToMarkdown(blocks: NotionBlock[]): string {
             .split('\n')
             .map((l) => {
               if (!l) return '\u200B';
+              const trimmed = l.trim();
               const needsLeadingGuard =
-                /^[ \t]/.test(l) || isSpecialBlockLine(l.trim());
+                /^[ \t]/.test(l) ||
+                isSpecialBlockLine(trimmed) ||
+                isSpecialBlockLine(l) ||
+                trimmed === '-' ||
+                trimmed === '*';
               const needsTrailingGuard = /[ \t]$/.test(l);
-              return `${needsLeadingGuard ? '\u200B' : ''}${l}${needsTrailingGuard ? '\u200B' : ''}`;
+              return `${needsLeadingGuard ? '\u200B' : ''}${guardLiteralBreakTags(l)}${needsTrailingGuard ? '\u200B' : ''}`;
             });
           lines.push(pLines.join('\n'));
         } else {

@@ -1,4 +1,4 @@
-import {
+import type {
   Lesson,
   MaterialType,
   AppliedPatchItem,
@@ -89,8 +89,10 @@ function parseLessonMaterialInternal(
 ): ParsedLessonMaterial {
 
   // 1. 메타 엔벨로프가 포함되어 있는 경우 우선 파싱
-  const startIdx = rawField.indexOf(META_PREFIX);
-  const endIdx = rawField.indexOf(META_SUFFIX);
+  // 봉투는 항상 맨 뒤에 붙으므로, HTML 본문에 같은 글자가 있어도 뒤에서부터 찾습니다.
+  const startIdx = rawField.lastIndexOf(META_PREFIX);
+  const endIdx = rawField.lastIndexOf(META_SUFFIX);
+  let legacyField = rawField;
 
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
     const jsonBase64 = rawField.slice(startIdx + META_PREFIX.length, endIdx);
@@ -118,6 +120,9 @@ function parseLessonMaterialInternal(
       };
     } catch (e) {
       console.error('Failed to parse embedded lesson material meta:', e);
+      // 깨진 봉투 글자가 교안 본문으로 표시되지 않게 합니다.
+      legacyField =
+        rawField.slice(0, startIdx) + rawField.slice(endIdx + META_SUFFIX.length);
     }
   }
 
@@ -145,7 +150,7 @@ function parseLessonMaterialInternal(
     return {
       materialType: lesson.material_type || 'markdown',
       markdownContent: lesson.material_markdown,
-      htmlContent: rawField,
+      htmlContent: legacyField,
       fileName: lesson.material_file_name || null,
       appliedPatches: patches,
       aiAnalysis: lesson.ai_review_json || null,
@@ -158,7 +163,7 @@ function parseLessonMaterialInternal(
   }
 
   // 3. 기존 레거시 데이터: HTML 태그로 시작하면 html, 아니면 markdown으로 취급
-  const trimmed = rawField.trim();
+  const trimmed = legacyField.trim();
   if (!trimmed) {
     return {
       materialType: 'markdown',
