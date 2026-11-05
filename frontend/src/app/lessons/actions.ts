@@ -43,6 +43,7 @@ import {
   verifyClassTeacherAccess,
   fetchTeacherAccessibleClasses,
 } from '@/utils/classTeacherAuth';
+import { consumeAiQuota } from '@/utils/aiQuota';
 
 /**
  * 교안 마크다운 내 ```quiz 블록들을 해당 수업(lessonId)의 question_groups([__INLINE_QUIZ__]) 레코드와 동기화합니다.
@@ -1330,6 +1331,11 @@ export async function requestAiLessonReview(
     };
   }
 
+  const quotaError = await consumeAiQuota(supabase, 'lesson_review');
+  if (quotaError) {
+    return { success: false, error: quotaError };
+  }
+
   const aiRes = await analyzeMaterialAndGenerateQuizWithGemini(
     subList,
     groupList,
@@ -1827,6 +1833,11 @@ export async function generateInlineQuizDraftAction(
 
   if (profile?.role !== 'teacher') {
     return { success: false, error: '선생님 계정만 AI 문항을 생성할 수 있습니다.' };
+  }
+
+  const quotaError = await consumeAiQuota(supabase, 'inline_quiz');
+  if (quotaError) {
+    return { success: false, error: quotaError };
   }
 
   // 문항에 가까운 뒷부분 문맥만 보내 입력 비용을 제한

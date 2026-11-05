@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
 import { clusterQuestionsWithGemini, AiSuggestedGroup } from '@/utils/gemini';
 import { verifyClassTeacherAccess } from '@/utils/classTeacherAuth';
+import { consumeAiQuota } from '@/utils/aiQuota';
 import { Submission } from '@/types/database.types';
 
 export async function createQuestionGroup(formData: FormData) {
@@ -203,6 +204,11 @@ export async function requestAiCluster(
 
   if (!submissions || submissions.length === 0) {
     return { success: false, error: '분석할 학생 질문이 아직 없습니다.' };
+  }
+
+  const quotaError = await consumeAiQuota(supabase, 'question_cluster');
+  if (quotaError) {
+    return { success: false, error: quotaError };
   }
 
   const groups = await clusterQuestionsWithGemini(
