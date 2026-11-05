@@ -1,5 +1,6 @@
 'use server';
 
+import { koreaDatetimeLocalToIso } from '@/utils/koreaTime';
 import { randomInt } from 'node:crypto';
 
 import { revalidatePath } from 'next/cache';
@@ -533,7 +534,7 @@ async function deployMaterialToClassesInternal(
 ): Promise<{ deployedCount: number; alreadyLinkedCount: number }> {
   const supabase = await createClient();
   const masterParsed = parseLessonMaterial(masterLesson);
-  const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
+  const deadline = deadlineStr ? koreaDatetimeLocalToIso(deadlineStr) : null;
 
   // 교사 담당 클래스(대표 개설 또는 팀티칭)인지 확인
   const accessibleClasses = await fetchTeacherAccessibleClasses(supabase, teacherId);
@@ -967,7 +968,7 @@ export async function createLesson(formData: FormData) {
     }
   }
 
-  const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
+  const deadline = deadlineStr ? koreaDatetimeLocalToIso(deadlineStr) : null;
 
   const serializedMaterial = serializeLessonMaterial({
     materialType,
@@ -1054,7 +1055,7 @@ export async function updateLessonAction(formData: FormData) {
     .single();
 
   const existingParsed = parseLessonMaterial((existingLesson as Lesson) || null);
-  const deadline = deadlineStr ? new Date(deadlineStr).toISOString() : null;
+  const deadline = deadlineStr ? koreaDatetimeLocalToIso(deadlineStr) : null;
 
   const nextSubject = subjectCategoryInput || existingParsed.subjectCategory || null;
   const nextUnit = unitCategoryInput || existingParsed.unitCategory || null;

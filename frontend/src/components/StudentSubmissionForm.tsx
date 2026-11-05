@@ -1,5 +1,6 @@
 'use client';
 
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { useState, useEffect, useRef } from 'react';
 import { submitLearningStatus } from '@/app/submissions/actions';
 import { Submission, SubmissionType } from '@/types/database.types';
@@ -187,6 +188,7 @@ export default function StudentSubmissionForm({
             <span className="text-xs text-gray-400">
               최종 제출:{' '}
               {new Date(existingSubmission.updated_at).toLocaleString('ko-KR', {
+                timeZone: KOREA_TIME_ZONE,
                 month: 'numeric',
                 day: 'numeric',
                 hour: '2-digit',

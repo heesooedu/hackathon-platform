@@ -1,5 +1,6 @@
 'use client';
 
+import { toKoreaDatetimeLocal } from '@/utils/koreaTime';
 import { useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -60,19 +61,6 @@ export interface NotionLessonStudioProps {
   defaultDeployClassId?: string;
 }
 
-function toDatetimeLocalValue(isoString: string | null | undefined): string {
-  if (!isoString) return '';
-  try {
-    const d = new Date(isoString);
-    if (Number.isNaN(d.getTime())) return '';
-    const tzOffsetMs = d.getTimezoneOffset() * 60000;
-    const localISOTime = new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 16);
-    return localISOTime;
-  } catch {
-    return '';
-  }
-}
-
 export default function NotionLessonStudio({
   classId = '',
   className = '',
@@ -108,7 +96,7 @@ export default function NotionLessonStudio({
       : '1'
   );
   const [deadline, setDeadline] = useState(() =>
-    toDatetimeLocalValue(initialLesson?.deadline)
+    toKoreaDatetimeLocal(initialLesson?.deadline)
   );
   const [selectedDeployClassIds, setSelectedDeployClassIds] = useState<string[]>(() =>
     defaultDeployClassId ? [defaultDeployClassId] : []

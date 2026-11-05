@@ -1,5 +1,6 @@
 'use client';
 
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Lesson } from '@/types/database.types';
@@ -255,6 +256,7 @@ export default function LessonListWithReorder({
                       <span>
                         마감:{' '}
                         {new Date(lesson.deadline).toLocaleString('ko-KR', {
+                          timeZone: KOREA_TIME_ZONE,
                           month: 'numeric',
                           day: 'numeric',
                           hour: '2-digit',

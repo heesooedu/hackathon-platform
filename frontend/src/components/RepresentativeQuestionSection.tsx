@@ -1,5 +1,6 @@
 'use client';
 
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { useState } from 'react';
 import {
   toggleGroupResolved,
@@ -261,6 +262,7 @@ export default function RepresentativeQuestionSection({
                             <div className="flex items-center gap-2">
                               <span className="text-[11px] text-gray-400">
                                 {new Date(ans.created_at).toLocaleDateString('ko-KR', {
+                                  timeZone: KOREA_TIME_ZONE,
                                   month: 'numeric',
                                   day: 'numeric',
                                 })}

@@ -1,5 +1,6 @@
 'use client';
 
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { useState } from 'react';
 import {
   Lesson,
@@ -259,7 +260,7 @@ export default function ClassDetailView({
                               {stu.name}
                             </div>
                             <div className="text-xs text-gray-400">
-                              {new Date(stu.joinedAt).toLocaleDateString('ko-KR')}{' '}
+                              {new Date(stu.joinedAt).toLocaleDateString('ko-KR', { timeZone: KOREA_TIME_ZONE })}{' '}
                               참여
                             </div>
                           </div>

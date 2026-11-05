@@ -1,3 +1,4 @@
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { Submission, SubmissionType } from '@/types/database.types';
 
 interface TeacherSubmissionDashboardProps {
@@ -171,6 +172,7 @@ export default function TeacherSubmissionDashboard({
 
                     <span className="text-xs text-gray-400">
                       {new Date(sub.updated_at).toLocaleString('ko-KR', {
+                        timeZone: KOREA_TIME_ZONE,
                         month: 'numeric',
                         day: 'numeric',
                         hour: '2-digit',

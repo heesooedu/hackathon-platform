@@ -1,5 +1,6 @@
 'use client';
 
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { useState } from 'react';
 import { Submission, SubmissionType } from '@/types/database.types';
 import GroupQuestionModal from '@/components/GroupQuestionModal';
@@ -281,6 +282,7 @@ export default function QuestionBoard({
 
                     <span className="text-xs text-gray-400">
                       {new Date(sub.created_at).toLocaleDateString('ko-KR', {
+                        timeZone: KOREA_TIME_ZONE,
                         month: 'numeric',
                         day: 'numeric',
                       })}

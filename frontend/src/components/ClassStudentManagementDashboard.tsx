@@ -1,5 +1,6 @@
 'use client';
 
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import { useState, useMemo, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -810,7 +811,7 @@ export default function ClassStudentManagementDashboard({
                           </div>
                           <div className="text-[11px] text-gray-400 mt-0.5">
                             등록일:{' '}
-                            {new Date(stu.joinedAt).toLocaleDateString('ko-KR')}
+                            {new Date(stu.joinedAt).toLocaleDateString('ko-KR', { timeZone: KOREA_TIME_ZONE })}
                           </div>
                           {stu.attentionReasons.length > 0 && (
                             <div className="text-[11px] text-amber-700 font-medium mt-0.5">
@@ -1110,7 +1111,7 @@ export default function ClassStudentManagementDashboard({
                               {sub.content}
                               <div className="text-[11px] text-gray-400 mt-1.5">
                                 제출 시각:{' '}
-                                {new Date(sub.created_at).toLocaleString('ko-KR')}
+                                {new Date(sub.created_at).toLocaleString('ko-KR', { timeZone: KOREA_TIME_ZONE })}
                               </div>
                             </div>
                           ) : (

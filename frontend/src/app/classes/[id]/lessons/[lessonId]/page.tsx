@@ -1,3 +1,4 @@
+import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
@@ -194,6 +195,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
                 <span className="text-xs text-gray-400">
                   마감:{' '}
                   {new Date(lesson.deadline).toLocaleString('ko-KR', {
+                    timeZone: KOREA_TIME_ZONE,
                     month: 'numeric',
                     day: 'numeric',
                     hour: '2-digit',
