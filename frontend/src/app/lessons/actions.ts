@@ -1898,7 +1898,15 @@ export async function submitInlineQuizAttemptAction(
     };
   }
 
-  // 2. 아직 동기화되지 않은 예전 교안: 채점 결과만 보여 주고 기록은 남기지 않음
+  // 2. 채점 그룹이 없는 문항: 학생에게는 정답이 없으므로 교사 미리보기만 채점
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.isTeacher) {
+    return {
+      success: false,
+      error: '이 문항은 아직 채점할 수 없습니다. 선생님께 교안을 다시 저장해 달라고 알려 주세요.',
+    };
+  }
+
   let authoritativeQuiz: InlineQuizBlockData = inlineQuiz;
   const { data: lessonRow } = await supabase
     .from('lessons')
@@ -1915,10 +1923,7 @@ export async function submitInlineQuizAttemptAction(
       authoritativeQuiz = foundBlock.quizData;
     }
 
-    const access = await verifyClassTeacherAccess(supabase, classId, user.id);
-    if (access.isTeacher) {
-      await syncInlineQuizGroupsForLesson(lessonId, markdown);
-    }
+    await syncInlineQuizGroupsForLesson(lessonId, markdown);
   }
 
   const isCorrect =

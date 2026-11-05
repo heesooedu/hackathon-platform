@@ -73,6 +73,17 @@ export default function InlineQuizBlockView({
   }
 
   const persistedQuiz = parsedQuiz ? inlineQuizzesMap?.[parsedQuiz.quizId] : undefined;
+
+  // 학생용 교안에는 정답이 없고, 풀어 본 문항의 정답만 서버 결과로 받음
+  if (parsedQuiz && !isTeacher && persistedQuiz) {
+    parsedQuiz = {
+      ...parsedQuiz,
+      correctOptionIndex: persistedQuiz.correct_option_index,
+      answerText: persistedQuiz.answer_text || '',
+      explanation: persistedQuiz.explanation || '',
+    };
+  }
+
   const myExistingAttempt =
     persistedQuiz && currentUserId && persistedQuiz.attempts
       ? persistedQuiz.attempts.find((a) => a.student_id === currentUserId)

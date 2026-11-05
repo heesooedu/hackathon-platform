@@ -1,6 +1,10 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { createClient, getCurrentUser } from '@/utils/supabase/server';
+import {
+  createClient,
+  getCurrentProfile,
+  getCurrentUser,
+} from '@/utils/supabase/server';
 import ImportMaterialModal from '@/components/ImportMaterialModal';
 import ClassDetailView from '@/components/ClassDetailView';
 import TeamTeachingModal from '@/components/TeamTeachingModal';
@@ -34,11 +38,12 @@ export default async function ClassDetailPage({
   params,
   searchParams,
 }: ClassDetailPageProps) {
-  const [{ id: classId }, resolvedSearchParams, user, supabase] =
+  const [{ id: classId }, resolvedSearchParams, user, profile, supabase] =
     await Promise.all([
       params,
       searchParams ? searchParams : Promise.resolve({} as { tab?: string }),
       getCurrentUser(),
+      getCurrentProfile(),
       createClient(),
     ]);
 
@@ -52,11 +57,14 @@ export default async function ClassDetailPage({
   // 1단계 병렬 조회: 클래스 접근 권한(대표 교사 + 공동 교사) + 해당 클래스의 레슨 목록을 동시에 조회
   const [access, { data: rawLessons }] = await Promise.all([
     verifyClassTeacherAccess(supabase, classId, user.id),
-    supabase
-      .from('lessons')
-      .select('*')
-      .eq('class_id', classId)
-      .order('created_at', { ascending: false }),
+    // 학생은 퀴즈 정답과 교사용 AI 리포트가 제거된 교안만 받음
+    profile?.role === 'teacher'
+      ? supabase
+          .from('lessons')
+          .select('*')
+          .eq('class_id', classId)
+          .order('created_at', { ascending: false })
+      : supabase.rpc('get_student_lessons', { p_class_id: classId }),
   ]);
 
   const classData = access.classData;

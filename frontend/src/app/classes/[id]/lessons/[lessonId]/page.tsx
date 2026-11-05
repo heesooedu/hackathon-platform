@@ -49,11 +49,10 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     { data: boardData },
   ] = await Promise.all([
     verifyClassTeacherAccess(supabase, classId, user.id),
-    supabase
-      .from('lessons')
-      .select('*')
-      .eq('id', lessonId)
-      .single(),
+    // 학생은 퀴즈 정답과 교사용 AI 리포트가 제거된 교안만 받음
+    isTeacherRole
+      ? supabase.from('lessons').select('*').eq('id', lessonId).single()
+      : supabase.rpc('get_student_lesson', { p_lesson_id: lessonId }),
     isTeacherRole
       ? supabase
           .from('submissions')

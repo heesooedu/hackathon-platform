@@ -39,19 +39,15 @@ export async function submitLearningStatus(formData: FormData) {
     return { error: '이 클래스에 참여 중인 학생만 제출할 수 있습니다.' };
   }
 
-  const { data: lesson, error: lessonError } = await supabase
-    .from('lessons')
-    .select('status, deadline, class_id')
-    .eq('id', lessonId)
-    .eq('class_id', classId)
-    .single();
+  const { data: isOpen, error: lessonError } = await supabase.rpc('is_lesson_open', {
+    p_lesson_id: lessonId,
+  });
 
-  if (lessonError || !lesson) {
+  if (lessonError) {
     return { error: '레슨 정보를 찾을 수 없습니다.' };
   }
 
-  const isDeadlinePassed = lesson.deadline ? new Date(lesson.deadline) < new Date() : false;
-  if (lesson.status === 'closed' || isDeadlinePassed) {
+  if (!isOpen) {
     return { error: '이 레슨은 질문 접수가 마감되어 제출할 수 없습니다.' };
   }
 
