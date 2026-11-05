@@ -46,6 +46,7 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     { data: allSubmissionsData },
     { data: groupsData },
     { data: memberRows },
+    { data: boardData },
   ] = await Promise.all([
     verifyClassTeacherAccess(supabase, classId, user.id),
     supabase
@@ -53,20 +54,18 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
       .select('*')
       .eq('id', lessonId)
       .single(),
-    supabase
-      .from('submissions')
-      .select(
-        isTeacherRole
-          ? '*, student:student_id(id, name, role)'
-          : 'id, lesson_id, student_id, type, content, created_at, updated_at'
-      )
-      .eq('lesson_id', lessonId)
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('question_groups')
-      .select(
-        isTeacherRole
-          ? `
+    isTeacherRole
+      ? supabase
+          .from('submissions')
+          .select('*, student:student_id(id, name, role)')
+          .eq('lesson_id', lessonId)
+          .order('created_at', { ascending: false })
+      : Promise.resolve({ data: null }),
+    isTeacherRole
+      ? supabase
+          .from('question_groups')
+          .select(
+            `
       *,
       members:question_group_members(
         id,
@@ -77,30 +76,20 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
         author:profiles(id, name, role)
       )
     `
-          : `
-      *,
-      members:question_group_members(
-        id,
-        submission:submissions(id, lesson_id, type, content, created_at)
-      ),
-      answers(
-        id,
-        group_id,
-        author_id,
-        content,
-        is_teacher_checked,
-        created_at
-      )
-    `
-      )
-      .eq('lesson_id', lessonId)
-      .order('created_at', { ascending: false }),
+          )
+          .eq('lesson_id', lessonId)
+          .order('created_at', { ascending: false })
+      : Promise.resolve({ data: null }),
     isTeacherRole
       ? supabase
           .from('class_members')
           .select('student_id, student:student_id(role)')
           .eq('class_id', classId)
       : Promise.resolve({ data: null }),
+    // 학생은 동료 ID와 풀기 전 퀴즈 정답이 제거된 결과만 받음
+    isTeacherRole
+      ? Promise.resolve({ data: null })
+      : supabase.rpc('get_lesson_board', { p_lesson_id: lessonId }),
   ]);
 
   const classData = access.classData;
@@ -125,17 +114,15 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
     : false;
   const isClosed = lesson.status === 'closed' || isDeadlinePassed;
 
-  const rawSubmissions = (allSubmissionsData || []) as unknown as Submission[];
-  const rawGroups = (groupsData || []) as unknown as QuestionGroup[];
+  const rawSubmissions = (allSubmissionsData || boardData?.submissions || []) as unknown as Submission[];
+  const rawGroups = (groupsData || boardData?.groups || []) as unknown as QuestionGroup[];
   const separated = separateGroupsAndQuizzes(rawGroups);
 
-  // 교사용 / 학생용 특화 데이터 및 학생 화면용 개인정보 비식별화(Sanitization)
   let totalClassStudents = 0;
   let mySubmission: Submission | null = null;
-  let allSubmissions: Submission[] = rawSubmissions;
   let normalGroups: QuestionGroup[] = separated.normalGroups;
-  let publishedQuizzes = separated.publishedQuizzes;
-  let inlineQuizzesMap = separated.inlineQuizzesMap;
+  const allSubmissions = rawSubmissions;
+  const { publishedQuizzes, inlineQuizzesMap } = separated;
 
   if (isTeacher) {
     totalClassStudents = (memberRows || []).filter((m: any) => {
@@ -147,32 +134,13 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
   } else {
     mySubmission = rawSubmissions.find((s) => s.student_id === user.id) || null;
 
-    // 다른 학생의 제출물 고유번호(student_id) 및 프로필이 학생 브라우저로 전달되지 않도록 마스킹
-    allSubmissions = rawSubmissions.map((s) => ({
-      ...s,
-      student_id: s.student_id === user.id ? user.id : 'anonymous',
-      student: undefined,
-    }));
-
-    // 대표 질문 내 묶인 질문 및 동료 답변에서도 타 학생 고유번호/실명 제거 (교사 답변은 선생님 배지용으로 표시)
+    // 교사 답변에는 선생님 배지를 표시
     normalGroups = separated.normalGroups.map((g) => ({
       ...g,
-      members: (g.members || [])
-        .filter((m) => Boolean(m.submission))
-        .map((m) => ({
-          ...m,
-          submission: {
-            ...m.submission,
-            student_id: 'anonymous',
-            student: undefined,
-          },
-        })),
-      answers: (g.answers || []).map((ans) => {
-        const isTeacherAuthor = allTeacherIds.has(ans.author_id);
-        return {
-          ...ans,
-          author_id: ans.author_id === user.id ? user.id : isTeacherAuthor ? 'teacher' : 'anonymous',
-          author: isTeacherAuthor
+      answers: (g.answers || []).map((ans) => ({
+        ...ans,
+        author:
+          ans.author_id === 'teacher'
             ? ({
                 id: 'teacher',
                 name: '담당 선생님',
@@ -181,35 +149,8 @@ export default async function LessonDetailPage({ params }: LessonDetailPageProps
                 created_at: ans.created_at,
               } as Profile)
             : undefined,
-        };
-      }),
+      })),
     }));
-
-    // 형성평가(퀴즈)에서는 본인 풀이 기록만 남기고 다른 학생의 점수·선택지·실명 기록 제거
-    publishedQuizzes = separated.publishedQuizzes.map((q) => ({
-      ...q,
-      attempts: (q.attempts || [])
-        .filter((a) => a.student_id === user.id)
-        .map((a) => ({
-          ...a,
-          student: undefined,
-        })),
-    }));
-
-    // 교안 인라인 체크포인트 퀴즈에서도 본인 풀이 기록만 남기고 다른 학생 기록 제거
-    const sanitizedInlineMap: typeof separated.inlineQuizzesMap = {};
-    for (const [blockId, iq] of Object.entries(separated.inlineQuizzesMap)) {
-      sanitizedInlineMap[blockId] = {
-        ...iq,
-        attempts: (iq.attempts || [])
-          .filter((a) => a.student_id === user.id)
-          .map((a) => ({
-            ...a,
-            student: undefined,
-          })),
-      };
-    }
-    inlineQuizzesMap = sanitizedInlineMap;
   }
 
   return (

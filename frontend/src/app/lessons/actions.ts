@@ -1768,8 +1768,7 @@ export async function submitQuizAnswerAction(
   lessonId: string,
   classId: string,
   quizId: string,
-  selectedOptionIndex: number,
-  _clientIsCorrect?: boolean
+  selectedOptionIndex: number
 ): Promise<{ success: boolean; isCorrect?: boolean; error?: string }> {
   const supabase = await createClient();
   const {
@@ -1777,81 +1776,21 @@ export async function submitQuizAnswerAction(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: '로그인이 필요합니다.' };
 
-  // 1. 해당 클래스 구성원인지 확인 (교사 또는 소속 학생)
-  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
-  if (!access.isTeacher) {
-    const { data: membership } = await supabase
-      .from('class_members')
-      .select('id')
-      .eq('class_id', classId)
-      .eq('student_id', user.id)
-      .single();
-
-    if (!membership) {
-      return { success: false, error: '소속된 클래스의 형성평가만 응시할 수 있습니다.' };
-    }
-  }
-
-  // 2. 클라이언트 채점값을 신뢰하지 않고 서버에서 실제 정답(correct_option_index)을 직접 대조하여 채점
-  const { data: quizGroup, error: quizFetchErr } = await supabase
-    .from('question_groups')
-    .select('id, representative_title, representative_content')
-    .eq('id', quizId)
-    .eq('lesson_id', lessonId)
-    .single();
-
-  if (quizFetchErr || !quizGroup || !quizGroup.representative_title.startsWith(QUIZ_GROUP_PREFIX)) {
-    return { success: false, error: '유효하지 않은 형성평가 문항입니다.' };
-  }
-
-  let serverIsCorrect = false;
-  try {
-    const parsedQuiz = JSON.parse(quizGroup.representative_content);
-    const correctIndex = Number(parsedQuiz.correct_option_index ?? 0);
-    serverIsCorrect = Number(selectedOptionIndex) === correctIndex;
-  } catch {
-    return { success: false, error: '문항 정보를 확인할 수 없습니다.' };
-  }
-
-  const payloadStr = JSON.stringify({
-    __type: 'QUIZ_ATTEMPT',
-    selected_option_index: Number(selectedOptionIndex),
-    is_correct: serverIsCorrect,
+  // 소속 확인, 채점, 기록은 DB에서 처리해 클라이언트가 결과를 위조하지 못하게 함
+  const { data, error } = await supabase.rpc('submit_quiz_attempt', {
+    p_group_id: quizId,
+    p_selected_option_index: selectedOptionIndex,
   });
 
-  const { data: existingAnswers } = await supabase
-    .from('answers')
-    .select('id')
-    .eq('group_id', quizId)
-    .eq('author_id', user.id);
-
-  if (existingAnswers && existingAnswers.length > 0) {
-    const { error } = await supabase
-      .from('answers')
-      .update({
-        content: payloadStr,
-        is_teacher_checked: serverIsCorrect,
-      })
-      .eq('id', existingAnswers[0].id);
-
-    if (error) {
-      return { success: false, error: '답안 수정 중 오류: ' + error.message };
-    }
-  } else {
-    const { error } = await supabase.from('answers').insert({
-      group_id: quizId,
-      author_id: user.id,
-      content: payloadStr,
-      is_teacher_checked: serverIsCorrect,
-    });
-
-    if (error) {
-      return { success: false, error: '답안 제출 중 오류: ' + error.message };
-    }
+  if (error || !data?.success) {
+    return {
+      success: false,
+      error: data?.message || '답안 제출 중 오류가 발생했습니다.',
+    };
   }
 
   revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
-  return { success: true, isCorrect: serverIsCorrect };
+  return { success: true, isCorrect: Boolean(data.is_correct) };
 }
 
 /**
@@ -1909,22 +1848,30 @@ export async function submitInlineQuizAttemptAction(
     return { success: false, error: '수업 정보가 올바르지 않습니다.' };
   }
 
-  // 1. 해당 클래스 구성원인지 확인 (교사 또는 소속 학생)
-  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
-  if (!access.isTeacher) {
-    const { data: membership } = await supabase
-      .from('class_members')
-      .select('id')
-      .eq('class_id', classId)
-      .eq('student_id', user.id)
-      .single();
+  // 1. 소속 확인, 채점, 기록은 DB에서 처리해 클라이언트가 결과를 위조하지 못하게 함
+  const { data, error } = await supabase.rpc('submit_inline_quiz_attempt', {
+    p_lesson_id: lessonId,
+    p_quiz_block_id: inlineQuiz.quizId,
+    p_selected_option_index:
+      typeof payload.selectedOptionIndex === 'number'
+        ? payload.selectedOptionIndex
+        : null,
+    p_submitted_text: payload.submittedText ?? null,
+  });
 
-    if (!membership) {
-      return { success: false, error: '소속된 클래스의 퀴즈만 응시할 수 있습니다.' };
-    }
+  if (data?.success) {
+    revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
+    return { success: true, isCorrect: Boolean(data.is_correct), persisted: true };
   }
 
-  // 2. 레슨 원문에서 해당 quizId 블록의 실제 정답 정보 조회 (서버 측 신뢰성 보장)
+  if (error || !data?.not_found) {
+    return {
+      success: false,
+      error: data?.message || '답안 제출 중 오류가 발생했습니다.',
+    };
+  }
+
+  // 2. 아직 동기화되지 않은 예전 교안: 채점 결과만 보여 주고 기록은 남기지 않음
   let authoritativeQuiz: InlineQuizBlockData = inlineQuiz;
   const { data: lessonRow } = await supabase
     .from('lessons')
@@ -1933,127 +1880,30 @@ export async function submitInlineQuizAttemptAction(
     .single();
 
   if (lessonRow) {
-    const parsedMat = parseLessonMaterial(lessonRow as Lesson);
-    const blocks = markdownToBlocks(parsedMat.markdownContent || '');
-    const foundBlock = blocks.find(
+    const markdown = parseLessonMaterial(lessonRow as Lesson).markdownContent || '';
+    const foundBlock = markdownToBlocks(markdown).find(
       (b) => b.type === 'quiz' && b.quizData?.quizId === inlineQuiz.quizId
     );
     if (foundBlock?.quizData) {
       authoritativeQuiz = foundBlock.quizData;
     }
-  }
 
-  // 3. question_groups에서 [__INLINE_QUIZ__] 그룹 조회 (없으면 생성 시도)
-  const { data: existingGroups } = await supabase
-    .from('question_groups')
-    .select('id, representative_title, representative_content')
-    .eq('lesson_id', lessonId);
-
-  let targetGroupId: string | null = null;
-  for (const g of existingGroups || []) {
-    if (!g.representative_title.startsWith(INLINE_QUIZ_GROUP_PREFIX)) continue;
-    try {
-      const parsed = JSON.parse(g.representative_content);
-      if (parsed.inline_block_id === authoritativeQuiz.quizId) {
-        targetGroupId = g.id;
-        break;
-      }
-    } catch {
-      // ignore
+    const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+    if (access.isTeacher) {
+      await syncInlineQuizGroupsForLesson(lessonId, markdown);
     }
   }
 
-  if (!targetGroupId) {
-    const repTitle = `${INLINE_QUIZ_GROUP_PREFIX}체크포인트. ${authoritativeQuiz.questionText}`;
-    const repContent = JSON.stringify({
-      inline_block_id: authoritativeQuiz.quizId,
-      question_type: authoritativeQuiz.questionType,
-      question_text: authoritativeQuiz.questionText,
-      options: authoritativeQuiz.options,
-      correct_option_index: authoritativeQuiz.correctOptionIndex,
-      answer_text: authoritativeQuiz.answerText || '',
-      explanation: authoritativeQuiz.explanation || '',
-      target_concept: authoritativeQuiz.targetConcept || '핵심 개념 확인',
-    });
+  const isCorrect =
+    authoritativeQuiz.questionType === 'short_answer'
+      ? checkShortAnswerMatch(
+          payload.submittedText || '',
+          authoritativeQuiz.answerText || ''
+        )
+      : Number(payload.selectedOptionIndex) ===
+        Number(authoritativeQuiz.correctOptionIndex ?? 0);
 
-    const { data: createdGroup } = await supabase
-      .from('question_groups')
-      .insert({
-        lesson_id: lessonId,
-        representative_title: repTitle,
-        representative_content: repContent,
-        is_published: true,
-        is_resolved: false,
-      })
-      .select('id')
-      .single();
-
-    if (createdGroup?.id) {
-      targetGroupId = createdGroup.id;
-    }
-  }
-
-  // 4. 서버 측 정답 채점 (객관식 / OX / 단답형)
-  let serverIsCorrect = false;
-  if (authoritativeQuiz.questionType === 'short_answer') {
-    serverIsCorrect = checkShortAnswerMatch(
-      payload.submittedText || '',
-      authoritativeQuiz.answerText || ''
-    );
-  } else {
-    serverIsCorrect =
-      Number(payload.selectedOptionIndex) ===
-      Number(authoritativeQuiz.correctOptionIndex ?? 0);
-  }
-
-  // 5. DB(answers)에 학생 풀이 기록 저장/업데이트
-  let persisted = false;
-  if (targetGroupId) {
-    const answerPayload = JSON.stringify({
-      __type: 'QUIZ_ATTEMPT',
-      selected_option_index:
-        typeof payload.selectedOptionIndex === 'number'
-          ? payload.selectedOptionIndex
-          : -1,
-      submitted_text:
-        typeof payload.submittedText === 'string'
-          ? payload.submittedText.trim()
-          : undefined,
-      is_correct: serverIsCorrect,
-    });
-
-    const { data: existingAnswers } = await supabase
-      .from('answers')
-      .select('id')
-      .eq('group_id', targetGroupId)
-      .eq('author_id', user.id);
-
-    if (existingAnswers && existingAnswers.length > 0) {
-      const { error } = await supabase
-        .from('answers')
-        .update({
-          content: answerPayload,
-          is_teacher_checked: serverIsCorrect,
-        })
-        .eq('id', existingAnswers[0].id);
-      if (!error) persisted = true;
-    } else {
-      const { error } = await supabase.from('answers').insert({
-        group_id: targetGroupId,
-        author_id: user.id,
-        content: answerPayload,
-        is_teacher_checked: serverIsCorrect,
-      });
-      if (!error) persisted = true;
-    }
-  }
-
-  revalidatePath(`/classes/${classId}/lessons/${lessonId}`);
-  return {
-    success: true,
-    isCorrect: serverIsCorrect,
-    persisted,
-  };
+  return { success: true, isCorrect, persisted: false };
 }
 
 /**

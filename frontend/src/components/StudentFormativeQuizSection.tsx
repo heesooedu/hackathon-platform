@@ -46,15 +46,13 @@ export default function StudentFormativeQuizSection({
     if (selectedIdx === undefined) return;
 
     setSubmittingId(quiz.id);
-    const isCorrect = selectedIdx === quiz.correct_option_index;
 
     try {
       const res = await submitQuizAnswerAction(
         lessonId,
         classId,
         quiz.id,
-        selectedIdx,
-        isCorrect
+        selectedIdx
       );
       if (res.success) {
         setSubmittedMap((prev) => ({ ...prev, [quiz.id]: true }));
