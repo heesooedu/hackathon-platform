@@ -6,6 +6,8 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+import { parseLessonMaterial } from '../src/utils/materialPayload.ts';
+import { blocksToMarkdown, markdownToBlocks } from '../src/utils/notionBlocks.ts';
 
 const migrationsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -503,15 +505,107 @@ describe('교안 정답과 AI 리포트', () => {
 });
 
 describe('재실행', () => {
-  test('13~17을 다시 실행해도 오류가 없다', async () => {
+  test('13~18을 다시 실행해도 오류가 없다', async () => {
     for (const file of [
       '13_anonymous_board_and_quiz_rpc.sql',
       '14_restrict_peer_reads.sql',
       '15_ai_quota_and_join_limits.sql',
       '16_student_safe_lessons.sql',
       '17_restrict_lesson_reads.sql',
+      '18_align_quiz_scan_with_app.sql',
     ]) {
       await db.exec(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
     }
+  });
+});
+
+// 재실행 시험이 16을 다시 적용하므로, 18의 동작은 그 뒤에 확인합니다.
+describe('정답 제거와 앱 해석의 일치', () => {
+  const FENCE = '```';
+  const quiz = JSON.stringify({
+    quizId: 'iq_scan',
+    questionText: '문제',
+    options: ['가', '나'],
+    correctOptionIndex: 1,
+    answerText: '비밀정답',
+    explanation: '비밀해설',
+  });
+  const sanitize = async (markdown) =>
+    (await db.query('select (public.scan_quiz_blocks($1)).sanitized s', [markdown])).rows[0].s;
+
+  const prefixes = {
+    공백: '  ',
+    탭: '\t',
+    '줄바꿈 없는 공백': ' ',
+    '전각 공백': '　',
+    'EM 공백': ' ',
+    BOM: '﻿',
+    '세로 탭': '\u000B',
+    '폼 피드': '\f',
+  };
+
+  for (const [name, space] of Object.entries(prefixes)) {
+    test(`펜스 앞의 ${name}`, async () => {
+      const markdown = `${space}${FENCE}quiz\n${quiz}\n${space}${FENCE}`;
+      assert.equal(markdownToBlocks(markdown)[0].quizData.answerText, '비밀정답', '앱은 퀴즈로 읽는다');
+      const safe = await sanitize(markdown);
+      assert.ok(!safe.includes('비밀'), `노출: ${JSON.stringify(safe)}`);
+      assert.equal(markdownToBlocks(safe)[0].quizData.quizId, 'iq_scan');
+    });
+
+    test(`펜스 머리글 뒤의 ${name}`, async () => {
+      const safe = await sanitize(`${FENCE}quiz${space}\n${quiz}\n${FENCE}`);
+      assert.ok(!safe.includes('비밀'), `노출: ${JSON.stringify(safe)}`);
+    });
+  }
+
+  test('CR만 있는 줄바꿈', async () => {
+    assert.ok(!(await sanitize(`${FENCE}quiz\r${quiz}\r${FENCE}`)).includes('비밀'));
+  });
+
+  test('윈도우 줄바꿈은 빈 줄을 만들지 않는다', async () => {
+    assert.equal(await sanitize(`${FENCE}python\r\nprint(1)\r\n${FENCE}`), `${FENCE}python\nprint(1)\n${FENCE}`);
+  });
+
+  test('다른 코드 블록 안의 글은 그대로 둔다', async () => {
+    const markdown = `${FENCE}python\nprint("correctOptionIndex")\n${FENCE}`;
+    assert.equal(await sanitize(markdown), markdown);
+  });
+
+  test('본문에 쓴 펜스 모양 글자는 앱 저장 형식 그대로 지나간다', async () => {
+    const markdown = blocksToMarkdown([{ id: 'a', type: 'p', content: `${FENCE}quiz` }]);
+    assert.equal(await sanitize(markdown), markdown);
+    assert.equal(markdownToBlocks(markdown)[0].type, 'p');
+  });
+
+  test('앱이 저장한 교안은 정답만 빠지고 나머지는 같다', async () => {
+    const blocks = markdownToBlocks(`# 제목\n\n${FENCE}quiz\n${quiz}\n${FENCE}\n\n끝`);
+    const safe = await sanitize(blocksToMarkdown(blocks));
+    assert.ok(!safe.includes('비밀'));
+    assert.deepEqual(markdownToBlocks(safe).map((b) => b.type), ['h1', 'quiz', 'p']);
+  });
+
+  test('HTML 본문에 봉투 표시 글자가 있어도 맨 뒤 봉투에서 정답을 지운다', async () => {
+    const PREFIX = '<!--__PEDAGOGY_V2_META__:';
+    const SUFFIX = ':__END_PEDAGOGY_V2_META__-->';
+    const json = JSON.stringify({
+      version: 2,
+      materialType: 'html',
+      markdownContent: `${FENCE}quiz\n${quiz}\n${FENCE}`,
+      appliedPatches: [],
+      aiAnalysis: { summary: '교사 전용' },
+    });
+    const raw = `<script>const a = "${PREFIX}"; const b = "${SUFFIX}";</script>\n${PREFIX}${Buffer.from(json).toString('base64')}${SUFFIX}`;
+    const safe = (await db.query('select public.student_safe_material($1) s', [raw])).rows[0].s;
+    assert.ok(safe.startsWith('<script>'));
+    const parsed = parseLessonMaterial({ material_html: safe });
+    assert.equal(parsed.materialType, 'html');
+    assert.ok(!parsed.markdownContent.includes('비밀'));
+    assert.equal(parsed.aiAnalysis, null);
+  });
+
+  test('보조 함수는 학생이 직접 실행할 수 없다', async () => {
+    await assert.rejects(as(ALICE, "select public.trim_like_app('a')"));
+    await assert.rejects(as(ALICE, "select public.last_position('a', 'a')"));
   });
 });
