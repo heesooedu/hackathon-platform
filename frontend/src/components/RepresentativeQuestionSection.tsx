@@ -1,6 +1,7 @@
 'use client';
 
 import { KOREA_TIME_ZONE } from '@/utils/koreaTime';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import {
   toggleGroupResolved,
@@ -28,22 +29,28 @@ export default function RepresentativeQuestionSection({
   const [answeringGroupId, setAnsweringGroupId] = useState<string | null>(null);
   const [answerContent, setAnswerContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const router = useRouter();
 
   function toggleOpenSubmissions(groupId: string) {
     setOpenSubmissions((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
   }
 
   async function handleToggleResolved(groupId: string, currentStatus: boolean) {
-    await toggleGroupResolved(groupId, classId, lessonId, currentStatus);
+    const result = await toggleGroupResolved(groupId, classId, lessonId, currentStatus);
+    setActionError(result?.error ?? null);
   }
 
   async function handleToggleChecked(answerId: string, currentChecked: boolean) {
-    await toggleAnswerChecked(answerId, classId, lessonId, currentChecked);
+    const result = await toggleAnswerChecked(answerId, classId, lessonId, currentChecked);
+    setActionError(result?.error ?? null);
   }
 
   async function handleAnswerSubmit(groupId: string) {
     if (!answerContent.trim()) return;
     setSubmitting(true);
+    setAnswerError(null);
 
     const formData = new FormData();
     formData.set('group_id', groupId);
@@ -52,9 +59,15 @@ export default function RepresentativeQuestionSection({
     formData.set('content', answerContent);
 
     try {
-      await createAnswer(formData);
+      const result = await createAnswer(formData);
+      // 실패하면 작성한 글이 사라지지 않도록 입력창을 그대로 둡니다.
+      if (result?.error) {
+        setAnswerError(result.error);
+        return;
+      }
       setAnswerContent('');
       setAnsweringGroupId(null);
+      router.refresh();
     } finally {
       setSubmitting(false);
     }
@@ -77,6 +90,12 @@ export default function RepresentativeQuestionSection({
           유사한 질문들이 대표 질문으로 묶였습니다. 동료와 함께 생각을 나누어보세요.
         </p>
       </div>
+
+      {actionError && (
+        <p role="alert" className="text-sm font-semibold text-red-600">
+          {actionError}
+        </p>
+      )}
 
       <div className="space-y-6">
         {groups.map((group) => {
@@ -193,11 +212,17 @@ export default function RepresentativeQuestionSection({
                       placeholder="친구들의 이해를 도울 수 있는 나만의 직관적인 설명이나 문제 해결 과정을 적어주세요."
                       className="w-full rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                     />
+                    {answerError && (
+                      <p role="alert" className="text-xs font-semibold text-red-600">
+                        {answerError}
+                      </p>
+                    )}
                     <div className="flex justify-end gap-2">
                       <button
                         onClick={() => {
                           setAnsweringGroupId(null);
                           setAnswerContent('');
+                          setAnswerError(null);
                         }}
                         className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-100"
                       >
