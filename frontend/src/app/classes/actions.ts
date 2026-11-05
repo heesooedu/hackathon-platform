@@ -93,12 +93,6 @@ export async function joinClass(formData: FormData) {
     redirect('/login');
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
   const { data, error } = await supabase.rpc('join_class_by_code', {
     p_join_code: cleanCode,
   });
@@ -116,20 +110,6 @@ export async function joinClass(formData: FormData) {
 
   if (!result.success) {
     return { error: result.message };
-  }
-
-  // 교사 계정이 코드로 합류한 경우, class_teachers 테이블에도 동기화 시도
-  if (profile?.role === 'teacher' && result.class_id) {
-    await supabase
-      .from('class_teachers')
-      .upsert(
-        {
-          class_id: result.class_id,
-          teacher_id: user.id,
-          invited_by: user.id,
-        },
-        { onConflict: 'class_id,teacher_id' }
-      );
   }
 
   revalidatePath('/', 'layout');
@@ -161,7 +141,6 @@ export async function addStudentToClassAction(
     return { error: '담당 선생님만 학생을 추가할 수 있습니다.' };
   }
 
-  // 1차: SECURITY DEFINER RPC 함수 호출
   const { data: rpcData, error: rpcError } = await supabase.rpc(
     'teacher_add_student_to_class',
     {
@@ -170,67 +149,22 @@ export async function addStudentToClassAction(
     }
   );
 
-  if (!rpcError && rpcData) {
-    const res = rpcData as {
-      error?: string;
-      success?: boolean;
-      student_name?: string;
-    };
-    if (!res.error) {
-      revalidatePath(`/classes/${classId}`);
-      revalidatePath('/');
-      return { studentName: res.student_name || cleanIdentifier };
-    }
-    // 만약 팀티칭 교사가 호출했는데 구버전 RPC가 대표 교사만 허용하여 에러를 반환한 경우 폴백으로 진행
-    if (access.isOwner) {
-      return { error: res.error };
-    }
+  if (rpcError) {
+    return { error: '학생 추가 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.' };
   }
 
-  // 2차 폴백: 마이그레이션(09/10) 적용 전 환경 호환
-  const { data: matchedProfiles } = await supabase
-    .from('profiles')
-    .select('id, name, role')
-    .eq('role', 'student')
-    .ilike('name', cleanIdentifier);
-
-  if (!matchedProfiles || matchedProfiles.length === 0) {
-    return {
-      error:
-        '일치하는 학생 계정을 찾을 수 없습니다. (학생에게 6자리 참여 코드 [' +
-        access.classData.join_code +
-        ']를 안내하거나 이름을 확인해 주세요.)',
-    };
-  }
-
-  if (matchedProfiles.length > 1) {
-    return {
-      error:
-        '동명이인 학생이 여러 명 있습니다. 이메일 주소로 정확히 추가해 주세요.',
-    };
-  }
-
-  const targetStudent = matchedProfiles[0];
-
-  const { error: insertError } = await supabase.from('class_members').insert({
-    class_id: classId,
-    student_id: targetStudent.id,
-  });
-
-  if (insertError) {
-    if (insertError.code === '23505') {
-      return { error: '이미 이 클래스에 등록되어 있는 학생입니다.' };
-    }
-    return {
-      error:
-        '학생 추가 권한 정책 적용이 필요합니다: ' +
-        insertError.message,
-    };
+  const res = rpcData as {
+    error?: string;
+    success?: boolean;
+    student_name?: string;
+  };
+  if (res.error) {
+    return { error: res.error };
   }
 
   revalidatePath(`/classes/${classId}`);
   revalidatePath('/');
-  return { studentName: targetStudent.name || cleanIdentifier };
+  return { studentName: res.student_name || cleanIdentifier };
 }
 
 export async function removeStudentFromClassAction(
@@ -312,7 +246,7 @@ export async function getAvailableTeachersForInviteAction(
   }
 
   const access = await verifyClassTeacherAccess(supabase, classId, user.id);
-  if (!access.classData || !access.isTeacher) {
+  if (!access.classData || !access.isOwner) {
     return { teachers: [], error: '권한이 없습니다.' };
   }
 
@@ -340,7 +274,7 @@ export async function getAvailableTeachersForInviteAction(
 export async function inviteCoTeacherAction(
   classId: string,
   identifier: string
-): Promise<{ error?: string; teacherName?: string; teacherProfile?: Profile }> {
+): Promise<{ error?: string; teacherName?: string }> {
   const cleanIdentifier = (identifier || '').trim();
   if (!cleanIdentifier) {
     return { error: '초대할 선생님의 이메일 또는 성함을 입력해 주세요.' };
@@ -356,11 +290,10 @@ export async function inviteCoTeacherAction(
   }
 
   const access = await verifyClassTeacherAccess(supabase, classId, user.id);
-  if (!access.classData || !access.isTeacher) {
-    return { error: '담당 선생님만 공동 교사를 초대할 수 있습니다.' };
+  if (!access.classData || !access.isOwner) {
+    return { error: '클래스 대표 교사만 공동 교사를 초대할 수 있습니다.' };
   }
 
-  // 1차: 10_team_teaching.sql의 SECURITY DEFINER RPC 호출 시도
   const { data: rpcData, error: rpcError } = await supabase.rpc(
     'teacher_invite_co_teacher',
     {
@@ -369,119 +302,25 @@ export async function inviteCoTeacherAction(
     }
   );
 
-  if (!rpcError && rpcData) {
-    const res = rpcData as {
-      error?: string;
-      success?: boolean;
-      teacher_id?: string;
-      teacher_name?: string;
-    };
-    if (res.error) {
-      return { error: res.error };
-    }
-    revalidatePath(`/classes/${classId}`);
-    revalidatePath('/materials');
-    revalidatePath('/');
-    return {
-      teacherName: res.teacher_name || cleanIdentifier,
-    };
+  if (rpcError) {
+    return { error: '공동 교사 초대 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.' };
   }
 
-  // 2차 폴백: profiles 테이블에서 교사 검색 (UUID 직접 지정 또는 이름 검색)
-  const isUuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      cleanIdentifier
-    );
-
-  let matchedTeachers: Profile[] = [];
-
-  if (isUuid) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, name, role, avatar_url, created_at')
-      .eq('id', cleanIdentifier)
-      .eq('role', 'teacher');
-    matchedTeachers = (data as Profile[]) || [];
-  } else {
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, name, role, avatar_url, created_at')
-      .eq('role', 'teacher')
-      .ilike('name', cleanIdentifier);
-    matchedTeachers = (data as Profile[]) || [];
-  }
-
-  if (matchedTeachers.length === 0) {
-    return {
-      error:
-        '일치하는 선생님 계정을 찾을 수 없습니다. (아래 등록된 선생님 목록에서 선택하거나, 정확한 이메일 검색을 위해 Supabase SQL Editor에서 10_team_teaching.sql을 적용해 주세요.)',
-    };
-  }
-
-  if (matchedTeachers.length > 1) {
-    return {
-      error:
-        '동명이인 선생님이 여러 분 계십니다. 아래 선생님 목록에서 직접 선택해 주세요.',
-    };
-  }
-
-  const targetTeacher = matchedTeachers[0];
-
-  if (access.allTeacherIds.has(targetTeacher.id)) {
-    return {
-      error: `${targetTeacher.name} 선생님은 이미 이 클래스의 담당 교사로 참여 중입니다.`,
-    };
-  }
-
-  // 2-1) class_teachers 테이블에 INSERT 시도
-  const { error: ctInsertError } = await supabase.from('class_teachers').insert({
-    class_id: classId,
-    teacher_id: targetTeacher.id,
-    invited_by: user.id,
-  });
-
-  if (!ctInsertError) {
-    revalidatePath(`/classes/${classId}`);
-    revalidatePath('/materials');
-    revalidatePath('/');
-    return {
-      teacherName: targetTeacher.name,
-      teacherProfile: targetTeacher,
-    };
-  }
-
-  if (ctInsertError.code === '23505') {
-    return {
-      error: `${targetTeacher.name} 선생님은 이미 공동 교사로 등록되어 있습니다.`,
-    };
-  }
-
-  // 2-2) 10_team_teaching.sql 미적용 환경을 위해 class_members 테이블 폴백 저장
-  const { error: cmInsertError } = await supabase.from('class_members').insert({
-    class_id: classId,
-    student_id: targetTeacher.id,
-  });
-
-  if (cmInsertError) {
-    if (cmInsertError.code === '23505') {
-      return {
-        error: `${targetTeacher.name} 선생님은 이미 공동 교사로 참여 중입니다.`,
-      };
-    }
-    return {
-      error:
-        '공동 교사 초대 중 오류가 발생했습니다. (Supabase SQL Editor에서 10_team_teaching.sql을 실행해 주세요: ' +
-        cmInsertError.message +
-        ')',
-    };
+  const res = rpcData as {
+    error?: string;
+    success?: boolean;
+    teacher_id?: string;
+    teacher_name?: string;
+  };
+  if (res.error) {
+    return { error: res.error };
   }
 
   revalidatePath(`/classes/${classId}`);
   revalidatePath('/materials');
   revalidatePath('/');
   return {
-    teacherName: targetTeacher.name,
-    teacherProfile: targetTeacher,
+    teacherName: res.teacher_name || cleanIdentifier,
   };
 }
 

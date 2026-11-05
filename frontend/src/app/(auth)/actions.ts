@@ -50,14 +50,12 @@ export async function signup(formData: FormData) {
 
   const supabase = await createClient();
 
-  const { error } = await supabase.auth.signUp({
+  // 교사 역할은 온보딩의 인증 코드 확인으로만 받을 수 있습니다.
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      data: {
-        name,
-        role,
-      },
+      data: role === 'student' ? { name, role } : { name },
     },
   });
 
@@ -66,7 +64,7 @@ export async function signup(formData: FormData) {
   }
 
   revalidatePath('/', 'layout');
-  redirect('/');
+  redirect(role === 'teacher' && data.session ? '/onboarding?role=teacher' : '/');
 }
 
 export async function signOut() {

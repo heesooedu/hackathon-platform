@@ -225,7 +225,6 @@ export default async function ClassDetailPage({
               <TeamTeachingModal
                 classId={classId}
                 classNameTitle={classData.name}
-                joinCode={classData.join_code}
                 primaryTeacher={primaryTeacher}
                 coTeachers={coTeachers}
                 currentUserId={user.id}

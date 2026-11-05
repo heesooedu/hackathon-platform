@@ -94,6 +94,11 @@ export default function SignupPage() {
                 <span className="text-xs text-gray-400 mt-0.5">수업 및 질문 관리</span>
               </button>
             </div>
+            {role === 'teacher' && (
+              <p className="mt-2 text-xs text-gray-500">
+                가입 후 교사 인증 코드를 입력하면 선생님 권한이 활성화됩니다.
+              </p>
+            )}
           </div>
 
           <div>

@@ -12,7 +12,6 @@ import {
 interface TeamTeachingModalProps {
   classId: string;
   classNameTitle: string;
-  joinCode: string;
   primaryTeacher: {
     id: string;
     name: string;
@@ -25,7 +24,6 @@ interface TeamTeachingModalProps {
 export default function TeamTeachingModal({
   classId,
   classNameTitle,
-  joinCode,
   primaryTeacher,
   coTeachers,
   currentUserId,
@@ -41,13 +39,12 @@ export default function TeamTeachingModal({
     type: 'success' | 'error';
     text: string;
   } | null>(null);
-  const [copiedCode, setCopiedCode] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [invitingTeacherId, setInvitingTeacherId] = useState<string | null>(null);
   const [removingTeacherId, setRemovingTeacherId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !isOwner) return;
     let cancelled = false;
     setLoadingDirectory(true);
     getAvailableTeachersForInviteAction(classId)
@@ -63,7 +60,7 @@ export default function TeamTeachingModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, classId, coTeachers.length]);
+  }, [isOpen, isOwner, classId, coTeachers.length]);
 
   const handleInviteByInput = (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,16 +144,6 @@ export default function TeamTeachingModal({
       setAvailableTeachers(updated.teachers || []);
       router.refresh();
     });
-  };
-
-  const handleCopyJoinCode = async () => {
-    try {
-      await navigator.clipboard.writeText(joinCode);
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
-    } catch {
-      // ignore clipboard error
-    }
   };
 
   const filteredDirectory = availableTeachers.filter((t) => {
@@ -267,7 +254,7 @@ export default function TeamTeachingModal({
                   {/* 공동 수업 교사 목록 */}
                   {coTeachers.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-4 text-center text-xs text-slate-500">
-                      아직 초대된 공동 수업 선생님이 없습니다. 아래에서 동료 선생님을 초대해 보세요!
+                      아직 초대된 공동 수업 선생님이 없습니다.
                     </div>
                   ) : (
                     coTeachers.map((ct) => {
@@ -325,113 +312,97 @@ export default function TeamTeachingModal({
                 </div>
               </div>
 
-              {/* 2. 이메일 또는 이름으로 초대 */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                <h3 className="text-xs font-extrabold text-slate-800">
-                  ✉️ 선생님 이메일 또는 성함으로 직접 초대
-                </h3>
-                <p className="mt-0.5 text-[11px] text-slate-500">
-                  초대할 선생님의 가입 이메일 주소나 성함을 입력하면 즉시 이 클래스의 공동 교사로 등록됩니다.
-                </p>
-                <form onSubmit={handleInviteByInput} className="mt-3 flex gap-2">
-                  <input
-                    type="text"
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder="예: teacher2@school.kr 또는 박교사"
-                    className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-900 focus:border-indigo-500 focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isPending || !identifier.trim()}
-                    className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-extrabold text-white shadow-xs transition hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {isPending && !invitingTeacherId && !removingTeacherId
-                      ? '초대 중...'
-                      : '+ 공동 교사 초대'}
-                  </button>
-                </form>
-              </div>
-
-              {/* 3. 가입된 동료 선생님 목록에서 1클릭 초대 */}
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                    👩‍🏫 가입된 동료 선생님 목록에서 1-클릭 초대
-                  </h3>
-                  {availableTeachers.length > 3 && (
-                    <input
-                      type="text"
-                      value={searchFilter}
-                      onChange={(e) => setSearchFilter(e.target.value)}
-                      placeholder="선생님 성함 검색..."
-                      className="w-40 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-800 focus:border-indigo-400 focus:bg-white focus:outline-none"
-                    />
-                  )}
-                </div>
-
-                {loadingDirectory ? (
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center text-xs text-slate-400">
-                    선생님 목록을 불러오는 중...
-                  </div>
-                ) : filteredDirectory.length === 0 ? (
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center text-xs text-slate-500">
-                    {availableTeachers.length === 0
-                      ? '현재 추가로 초대 가능한 선생님 계정이 없거나 모두 초대되었습니다.'
-                      : '검색 조건과 일치하는 선생님이 없습니다.'}
-                  </div>
-                ) : (
-                  <div className="max-h-44 space-y-1.5 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2">
-                    {filteredDirectory.map((t) => (
-                      <div
-                        key={t.id}
-                        className="flex items-center justify-between rounded-xl px-3 py-2 transition hover:bg-slate-50"
+              {isOwner && (
+                <>
+                  {/* 2. 이메일 또는 이름으로 초대 */}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <h3 className="text-xs font-extrabold text-slate-800">
+                      ✉️ 선생님 이메일 또는 성함으로 직접 초대
+                    </h3>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      초대할 선생님의 가입 이메일 주소나 성함을 입력하면 즉시 이 클래스의 공동 교사로 등록됩니다.
+                    </p>
+                    <form onSubmit={handleInviteByInput} className="mt-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={identifier}
+                        onChange={(e) => setIdentifier(e.target.value)}
+                        placeholder="예: teacher2@school.kr 또는 박교사"
+                        className="flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-900 focus:border-indigo-500 focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isPending || !identifier.trim()}
+                        className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-extrabold text-white shadow-xs transition hover:bg-indigo-700 disabled:opacity-50"
                       >
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-extrabold text-slate-700">
-                            {(t.name || '교')[0]}
-                          </div>
-                          <div>
-                            <span className="text-xs font-bold text-slate-800">
-                              {t.name} 선생님
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={isPending}
-                          onClick={() => handleQuickInvite(t)}
-                          className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-extrabold text-indigo-700 transition hover:bg-indigo-600 hover:text-white disabled:opacity-50"
-                        >
-                          {isPending && invitingTeacherId === t.id
-                            ? '초대 중...'
-                            : '+ 팀티칭 초대'}
-                        </button>
-                      </div>
-                    ))}
+                        {isPending && !invitingTeacherId && !removingTeacherId
+                          ? '초대 중...'
+                          : '+ 공동 교사 초대'}
+                      </button>
+                    </form>
                   </div>
-                )}
-              </div>
 
-              {/* 4. 참여 코드로 합류 안내 */}
-              <div className="flex items-center justify-between rounded-2xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
-                <div>
-                  <p className="text-xs font-extrabold text-indigo-950">
-                    🔑 참여 코드로도 팀티칭 합류가 가능합니다
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-indigo-700">
-                    동료 선생님이 홈 화면의 <strong>[참여 코드로 팀티칭 합류]</strong>에서 코드{' '}
-                    <span className="font-mono font-black">{joinCode}</span>를 입력해도 공동 교사로 즉시 등록됩니다.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCopyJoinCode}
-                  className="shrink-0 rounded-xl border border-indigo-200 bg-white px-3 py-1.5 text-xs font-extrabold text-indigo-700 shadow-2xs transition hover:bg-indigo-50"
-                >
-                  {copiedCode ? '✅ 복사됨' : `코드 복사 (${joinCode})`}
-                </button>
-              </div>
+                  {/* 3. 가입된 동료 선생님 목록에서 1클릭 초대 */}
+                  <div>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                        👩‍🏫 가입된 동료 선생님 목록에서 1-클릭 초대
+                      </h3>
+                      {availableTeachers.length > 3 && (
+                        <input
+                          type="text"
+                          value={searchFilter}
+                          onChange={(e) => setSearchFilter(e.target.value)}
+                          placeholder="선생님 성함 검색..."
+                          className="w-40 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-800 focus:border-indigo-400 focus:bg-white focus:outline-none"
+                        />
+                      )}
+                    </div>
+
+                    {loadingDirectory ? (
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center text-xs text-slate-400">
+                        선생님 목록을 불러오는 중...
+                      </div>
+                    ) : filteredDirectory.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center text-xs text-slate-500">
+                        {availableTeachers.length === 0
+                          ? '현재 추가로 초대 가능한 선생님 계정이 없거나 모두 초대되었습니다.'
+                          : '검색 조건과 일치하는 선생님이 없습니다.'}
+                      </div>
+                    ) : (
+                      <div className="max-h-44 space-y-1.5 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2">
+                        {filteredDirectory.map((t) => (
+                          <div
+                            key={t.id}
+                            className="flex items-center justify-between rounded-xl px-3 py-2 transition hover:bg-slate-50"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-extrabold text-slate-700">
+                                {(t.name || '교')[0]}
+                              </div>
+                              <div>
+                                <span className="text-xs font-bold text-slate-800">
+                                  {t.name} 선생님
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={isPending}
+                              onClick={() => handleQuickInvite(t)}
+                              className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-extrabold text-indigo-700 transition hover:bg-indigo-600 hover:text-white disabled:opacity-50"
+                            >
+                              {isPending && invitingTeacherId === t.id
+                                ? '초대 중...'
+                                : '+ 팀티칭 초대'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* 푸터 */}

@@ -1,11 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { use, useState } from 'react';
 import { saveRole } from './actions';
 import { UserRole } from '@/types/database.types';
 
-export default function OnboardingPage() {
-  const [role, setRole] = useState<UserRole>('student');
+export default function OnboardingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ role?: string }>;
+}) {
+  const { role: requestedRole } = use(searchParams);
+  const [role, setRole] = useState<UserRole>(
+    requestedRole === 'teacher' ? 'teacher' : 'student'
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -84,6 +91,27 @@ export default function OnboardingPage() {
               </button>
             </div>
           </div>
+
+          {role === 'teacher' && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1" htmlFor="teacher_code">
+                교사 인증 코드
+              </label>
+              <input
+                id="teacher_code"
+                name="teacher_code"
+                type="text"
+                required
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 font-mono text-sm uppercase text-gray-900 transition placeholder:normal-case focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+              <p className="mt-1.5 text-xs text-gray-500">
+                코드가 없다면 서비스 관리자에게 요청해 주세요.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1" htmlFor="name">

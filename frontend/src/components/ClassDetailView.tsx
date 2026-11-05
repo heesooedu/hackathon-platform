@@ -191,7 +191,6 @@ export default function ClassDetailView({
                     <TeamTeachingModal
                       classId={classId}
                       classNameTitle={className}
-                      joinCode={joinCode}
                       primaryTeacher={primaryTeacher}
                       coTeachers={coTeachers}
                       currentUserId={currentUserId}

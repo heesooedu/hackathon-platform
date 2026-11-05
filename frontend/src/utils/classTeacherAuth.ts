@@ -35,7 +35,6 @@ function normalizeProfile(raw: unknown): Profile | null {
 /**
  * 클래스의 대표 교사(Owner) 및 공동 교사(Co-Teacher / 팀티칭) 여부를 확인하고
  * 해당 클래스의 모든 공동 교사 목록을 반환합니다.
- * DB 마이그레이션(10_team_teaching.sql) 전후 모두 호환되도록 class_teachers 및 class_members 폴백을 함께 확인합니다.
  */
 export async function verifyClassTeacherAccess(
   supabase: SupabaseClient,
@@ -71,7 +70,6 @@ export async function verifyClassTeacherAccess(
 
   const coTeacherMap = new Map<string, Profile>();
 
-  // 1) class_teachers 테이블 조회 (10_team_teaching.sql 적용 시)
   const { data: ctRows, error: ctError } = await supabase
     .from('class_teachers')
     .select('teacher_id, created_at, teacher:profiles!class_teachers_teacher_id_fkey(id, name, role, avatar_url, created_at)')
@@ -90,23 +88,6 @@ export async function verifyClassTeacherAccess(
         created_at: (row.created_at as string) || new Date().toISOString(),
       };
       coTeacherMap.set(tid, prof);
-    }
-  }
-
-  // 2) 폴백: class_members에 등록된 계정 중 role === 'teacher'인 경우 공동 교사로 인식
-  const { data: memberTeacherRows } = await supabase
-    .from('class_members')
-    .select('student_id, joined_at, student:profiles!class_members_student_id_fkey(id, name, role, avatar_url, created_at)')
-    .eq('class_id', classId);
-
-  if (memberTeacherRows) {
-    for (const row of memberTeacherRows as Record<string, unknown>[]) {
-      const prof = normalizeProfile(row.student);
-      if (prof && prof.role === 'teacher' && prof.id !== classData.teacher_id) {
-        if (!coTeacherMap.has(prof.id)) {
-          coTeacherMap.set(prof.id, prof);
-        }
-      }
     }
   }
 
@@ -134,12 +115,10 @@ export async function fetchTeacherAccessibleClasses(
   teacherId: string
 ): Promise<ClassItem[]> {
   // 1) 대표 개설 클래스 ID 및 팀티칭 참여 클래스 ID 수집
-  const [{ data: ownedRows }, { data: coTaughtRows, error: ctErr }, { data: memberFallbackRows }] =
-    await Promise.all([
-      supabase.from('classes').select('id').eq('teacher_id', teacherId),
-      supabase.from('class_teachers').select('class_id').eq('teacher_id', teacherId),
-      supabase.from('class_members').select('class_id').eq('student_id', teacherId),
-    ]);
+  const [{ data: ownedRows }, { data: coTaughtRows, error: ctErr }] = await Promise.all([
+    supabase.from('classes').select('id').eq('teacher_id', teacherId),
+    supabase.from('class_teachers').select('class_id').eq('teacher_id', teacherId),
+  ]);
 
   const classIdSet = new Set<string>();
   for (const r of ownedRows || []) {
@@ -149,9 +128,6 @@ export async function fetchTeacherAccessibleClasses(
     for (const r of coTaughtRows) {
       if (r.class_id) classIdSet.add(r.class_id);
     }
-  }
-  for (const r of memberFallbackRows || []) {
-    if (r.class_id) classIdSet.add(r.class_id);
   }
 
   const allClassIds = Array.from(classIdSet);
@@ -211,13 +187,7 @@ export async function fetchTeacherAccessibleClasses(
       const sid = (m.student_id as string) || studentProf?.id;
       if (!sid) continue;
       if (sid === ownerId) continue;
-      if (studentProf?.role === 'teacher') {
-        if (!ctMap.has(sid)) {
-          ctMap.set(sid, studentProf);
-        }
-        continue;
-      }
-      if (ctMap.has(sid)) continue;
+      if (studentProf?.role === 'teacher' || ctMap.has(sid)) continue;
       studentCount += 1;
     }
 

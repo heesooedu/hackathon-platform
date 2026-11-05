@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import {
   createClient,
   getCurrentUser,
@@ -15,6 +16,10 @@ export default async function HomePage() {
     getCurrentUser(),
     getCurrentProfile(),
   ]);
+
+  if (user && profile && !profile.role) {
+    redirect('/onboarding');
+  }
 
   let teacherClasses: ClassItem[] = [];
   let studentClasses: ClassItem[] = [];
@@ -106,7 +111,6 @@ export default async function HomePage() {
                       <span>📚</span>
                       <span>교안 보관함 · 제작 스튜디오</span>
                     </Link>
-                    <JoinClassModal variant="teacher" />
                     <CreateClassModal />
                   </>
                 ) : (
@@ -225,7 +229,7 @@ export default async function HomePage() {
                   <div className="text-4xl mb-3">🏫</div>
                   <h3 className="text-base font-bold text-gray-700">담당 중인 클래스가 없습니다</h3>
                   <p className="mt-1 text-sm text-gray-400">
-                    우측 상단의 [새 클래스 만들기]로 학급을 열거나 [참여 코드로 팀티칭 합류]를 눌러 동료 선생님의 수업에 함께 참여해 보세요.
+                    우측 상단의 [새 클래스 만들기]로 학급을 열어 보세요. 동료 선생님의 수업에는 대표 교사의 초대로 함께할 수 있습니다.
                   </p>
                 </div>
               )
