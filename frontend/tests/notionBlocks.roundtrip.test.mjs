@@ -12,8 +12,8 @@ const block = (type, fields = {}) => ({ id: `t-${(nextId += 1)}`, type, content:
 
 // 저장 때마다 새로 만들어지는 id와 값이 없는 필드는 비교에서 뺍니다.
 function comparable(blocks) {
-  return blocks.map(({ id: _id, ...rest }) =>
-    Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined))
+  return blocks.map((item) =>
+    Object.fromEntries(Object.entries(item).filter(([key, value]) => key !== 'id' && value !== undefined))
   );
 }
 
@@ -295,6 +295,13 @@ describe('입력 호환', () => {
   test('읽을 이미지가 없는 묶음은 다음 블록의 레이아웃을 가로채지 않는다', () => {
     const blocks = markdownToBlocks('<!--block-layout:{"widthPercent":50}-->\n```image-row:md\n잘못된 줄\n```\n\n본문');
     assert.deepEqual(comparable(blocks), [{ type: 'p', content: '본문' }]);
+  });
+});
+
+describe('아직 고치지 않은 문제', () => {
+  // 고치려면 펜스 형식과 DB의 scan_quiz_blocks를 함께 바꿔야 해서 결정이 필요합니다.
+  test('코드 안의 ``` 줄 뒤 내용이 코드 블록 밖으로 밀려난다', { todo: '저장 형식 변경 필요' }, () => {
+    assertRoundTrip([block('code', { language: 'text', content: '```python\nprint(1)\n```\n끝' })]);
   });
 });
 
