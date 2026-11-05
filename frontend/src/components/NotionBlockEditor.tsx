@@ -2226,6 +2226,11 @@ export default function NotionBlockEditor({
             ? '✨ 위 교안 문맥을 분석해 AI 문항을 자동으로 생성했습니다!'
             : '✨ 위 교안 소제목/문맥을 바탕으로 맞춤형 문항 템플릿을 채웠습니다!',
         }));
+      } else {
+        setQuizAiNoticeByBlockId((prev) => ({
+          ...prev,
+          [block.id]: `⚠️ ${res.error || '문항을 생성하지 못했습니다.'}`,
+        }));
       }
     } catch {
       setQuizAiNoticeByBlockId((prev) => ({

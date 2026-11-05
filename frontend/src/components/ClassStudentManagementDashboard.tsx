@@ -566,7 +566,7 @@ export default function ClassStudentManagementDashboard({
             <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
               <span>➕ 학생 직접 추가</span>
               <span className="text-xs font-normal text-gray-500">
-                가입된 학생의 이메일 주소 또는 이름을 입력해 클래스에 바로 등록합니다.
+                가입된 학생의 이메일 주소를 입력해 클래스에 바로 등록합니다.
               </span>
             </h3>
             <form
@@ -577,7 +577,7 @@ export default function ClassStudentManagementDashboard({
                 type="text"
                 value={studentIdentifier}
                 onChange={(e) => setStudentIdentifier(e.target.value)}
-                placeholder="학생 이메일 (예: student@school.kr) 또는 이름 입력"
+                placeholder="학생 이메일 (예: student@school.kr)"
                 className="flex-1 max-w-md px-3.5 py-2 text-sm rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 disabled={isPending}
               />
@@ -739,7 +739,7 @@ export default function ClassStudentManagementDashboard({
               아직 등록된 학생이 없습니다
             </h4>
             <p className="text-xs text-gray-500 max-w-md mx-auto">
-              위 입력창에서 학생의 이메일/이름으로 직접 추가하거나, 클래스 참여 코드(
+              위 입력창에서 학생의 이메일로 직접 추가하거나, 클래스 참여 코드(
               <strong className="text-indigo-600 font-mono">{joinCode}</strong>
               )를 학생들에게 공유해 주세요.
             </p>

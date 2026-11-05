@@ -267,9 +267,105 @@ describe('일반 답변 회귀', () => {
   });
 });
 
+describe('AI 사용량 제한', () => {
+  const consume = async (userId) =>
+    value(await as(userId, `select public.consume_ai_quota('test')`));
+
+  test('학생은 AI 사용량을 받을 수 없다', async () => {
+    assert.equal((await consume(ALICE)).allowed, false);
+  });
+
+  test('교사는 시간당 30회까지 사용하고 그다음은 거부된다', async () => {
+    for (let i = 0; i < 30; i++) assert.equal((await consume(TEACHER)).allowed, true);
+    const res = await consume(TEACHER);
+    assert.equal(res.allowed, false);
+    assert.match(res.message, /1시간/);
+  });
+
+  test('한도는 계정별로 적용된다', async () => {
+    assert.equal((await consume(CO_TEACHER)).allowed, true);
+  });
+
+  test('일일 한도를 넘으면 거부된다', async () => {
+    await db.exec(`
+      update ai_usage_events set created_at = now() - interval '2 hours';
+      insert into ai_usage_events(user_id, kind, created_at)
+      select '${TEACHER}', 'test', now() - interval '3 hours' from generate_series(1, 70);
+    `);
+    const res = await consume(TEACHER);
+    assert.equal(res.allowed, false);
+    assert.match(res.message, /오늘/);
+  });
+
+  test('사용 기록은 API로 읽거나 쓸 수 없다', async () => {
+    await assert.rejects(as(TEACHER, 'select * from ai_usage_events'));
+    await assert.rejects(as(TEACHER, `insert into ai_usage_events(user_id, kind) values ($1, 'x')`, [TEACHER]));
+  });
+});
+
+describe('참여 코드', () => {
+  const join = async (userId, code) =>
+    value(await as(userId, 'select public.join_class_by_code($1)', [code]));
+
+  test('올바른 코드로 참여한다', async () => {
+    assert.equal((await join(OUTSIDER, 'ab3k9x')).success, true);
+    await db.exec(`delete from class_members where student_id = '${OUTSIDER}'`);
+  });
+
+  test('10번 틀리면 정답 코드도 1시간 동안 거부된다', async () => {
+    for (let i = 0; i < 10; i++) {
+      assert.match((await join(OUTSIDER, 'ZZZZZZ')).message, /유효하지 않은/);
+    }
+    const blocked = await join(OUTSIDER, 'AB3K9X');
+    assert.equal(blocked.success, false);
+    assert.match(blocked.message, /시도 횟수/);
+  });
+
+  test('1시간이 지나면 다시 참여할 수 있다', async () => {
+    await db.exec(`update join_code_attempts set attempted_at = now() - interval '2 hours'`);
+    assert.equal((await join(OUTSIDER, 'AB3K9X')).success, true);
+    await db.exec(`delete from class_members where student_id = '${OUTSIDER}'`);
+  });
+
+  test('교안 보관함 코드는 실패로 기록되고 참여되지 않는다', async () => {
+    assert.equal((await join(OUTSIDER, '#ABCDE')).success, false);
+  });
+
+  test('시도 기록은 API로 읽을 수 없다', async () => {
+    await assert.rejects(as(OUTSIDER, 'select * from join_code_attempts'));
+  });
+
+  test('교사는 코드를 재발급할 수 있고 이전 코드는 거부된다', async () => {
+    const { affectedRows } = await as(CO_TEACHER, `update classes set join_code = 'NEW234' where id = $1`, [CLASS]);
+    assert.equal(affectedRows, 1);
+    assert.equal((await join(OUTSIDER, 'AB3K9X')).success, false);
+    assert.equal((await join(OUTSIDER, 'NEW234')).success, true);
+    await db.exec(`delete from class_members where student_id = '${OUTSIDER}'`);
+  });
+
+  test('학생은 코드를 바꿀 수 없다', async () => {
+    const { affectedRows } = await as(ALICE, `update classes set join_code = 'HACK22' where id = $1`, [CLASS]);
+    assert.equal(affectedRows, 0);
+  });
+});
+
+describe('학생 직접 등록', () => {
+  const add = async (identifier) =>
+    value(await as(TEACHER, 'select public.teacher_add_student_to_class($1, $2)', [CLASS, identifier]));
+
+  test('이름으로는 찾을 수 없다', async () => {
+    assert.match((await add('외부')).error, /찾을 수 없습니다/);
+  });
+
+  test('이메일로는 등록된다', async () => {
+    assert.equal((await add('O@example.test')).success, true);
+    await db.exec(`delete from class_members where student_id = '${OUTSIDER}'`);
+  });
+});
+
 describe('재실행', () => {
-  test('13, 14를 다시 실행해도 오류가 없다', async () => {
-    for (const file of ['13_anonymous_board_and_quiz_rpc.sql', '14_restrict_peer_reads.sql']) {
+  test('13~15를 다시 실행해도 오류가 없다', async () => {
+    for (const file of ['13_anonymous_board_and_quiz_rpc.sql', '14_restrict_peer_reads.sql', '15_ai_quota_and_join_limits.sql']) {
       await db.exec(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
     }
   });

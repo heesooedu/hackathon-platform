@@ -1,5 +1,6 @@
 'use server';
 
+import { randomInt } from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
@@ -11,7 +12,7 @@ function generateJoinCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let result = '';
   for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    result += chars.charAt(randomInt(chars.length));
   }
   return result;
 }
@@ -74,6 +75,45 @@ export async function createClass(formData: FormData) {
   redirect(`/classes/${classId}`);
 }
 
+export async function regenerateJoinCodeAction(
+  classId: string
+): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: '로그인이 필요합니다.' };
+  }
+
+  const access = await verifyClassTeacherAccess(supabase, classId, user.id);
+  if (!access.classData || !access.isTeacher) {
+    return { error: '담당 선생님만 참여 코드를 재발급할 수 있습니다.' };
+  }
+
+  if (access.classData.join_code?.startsWith('#')) {
+    return { error: '교안 보관함에는 참여 코드를 사용할 수 없습니다.' };
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error } = await supabase
+      .from('classes')
+      .update({ join_code: generateJoinCode() })
+      .eq('id', classId);
+
+    if (!error) {
+      revalidatePath(`/classes/${classId}`);
+      revalidatePath('/');
+      return {};
+    }
+
+    if (error.code !== '23505') {
+      return { error: '참여 코드 재발급 중 오류가 발생했습니다.' };
+    }
+  }
+
+  return { error: '참여 코드 생성에 실패했습니다. 다시 시도해 주세요.' };
+}
+
 export async function joinClass(formData: FormData) {
   const joinCode = formData.get('join_code') as string;
 
@@ -122,7 +162,7 @@ export async function addStudentToClassAction(
 ): Promise<{ error?: string; studentName?: string }> {
   const cleanIdentifier = (identifier || '').trim();
   if (!cleanIdentifier) {
-    return { error: '추가할 학생의 이메일 또는 이름을 입력해 주세요.' };
+    return { error: '추가할 학생의 이메일을 입력해 주세요.' };
   }
 
   const supabase = await createClient();

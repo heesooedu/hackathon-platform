@@ -3,6 +3,11 @@ import JSZip from 'jszip';
 import * as CFB from 'cfb';
 import { inflateRawSync } from 'node:zlib';
 
+// 업로드 크기는 작아도 압축을 풀면 메모리를 고갈시키는 파일을 막기 위한 한도
+const MAX_EXPANDED_BYTES = 64 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 5000;
+const EXPANDED_TOO_LARGE_MESSAGE = '압축을 풀면 크기가 너무 큰 문서입니다.';
+
 export interface ParsedDocumentResult {
   success: boolean;
   fileName: string;
@@ -58,10 +63,41 @@ function decodeXmlEntities(text: string): string {
 }
 
 /**
+ * ZIP 기반 문서를 스트리밍으로 끝까지 읽어 실제 압축 해제 크기를 확인합니다.
+ * 파일 헤더의 크기 값은 위조할 수 있으므로 신뢰하지 않습니다.
+ */
+async function assertZipWithinLimits(buffer: Buffer): Promise<JSZip> {
+  const zip = await JSZip.loadAsync(buffer);
+  const entries = Object.values(zip.files).filter((entry) => !entry.dir);
+
+  if (entries.length > MAX_ZIP_ENTRIES) {
+    throw new Error('문서 안의 항목이 너무 많습니다.');
+  }
+
+  let totalBytes = 0;
+  for (const entry of entries) {
+    await new Promise<void>((resolve, reject) => {
+      const stream = entry.nodeStream('nodebuffer');
+      stream.on('data', (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_EXPANDED_BYTES) {
+          stream.pause();
+          reject(new Error(EXPANDED_TOO_LARGE_MESSAGE));
+        }
+      });
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+  }
+
+  return zip;
+}
+
+/**
  * HWPX (한글 표준 OWPML ZIP 포맷)에서 텍스트/단락 추출
  */
 async function parseHwpxBuffer(buffer: Buffer): Promise<string> {
-  const zip = await JSZip.loadAsync(buffer);
+  const zip = await assertZipWithinLimits(buffer);
   const sectionFiles = Object.keys(zip.files)
     .filter((name) => /^Contents\/section\d+\.xml$/i.test(name))
     .sort();
@@ -116,16 +152,24 @@ function parseHwpV5Buffer(buffer: Buffer): string {
     1, 2, 3, 11, 12, 14, 15, 16, 17, 18, 21, 22, 23,
   ]);
 
+  let expandedBytes = 0;
+
   for (let secIdx = 0; secIdx < 20; secIdx++) {
-    const entry = CFB.find(container, `BodyText/Section${secIdx}`);
+    const entry = CFB.find(container, `/BodyText/Section${secIdx}`);
     if (!entry || !entry.content) break;
 
     let streamBuf: Buffer = Buffer.from(entry.content as Uint8Array);
     if (isCompressed) {
       try {
-        streamBuf = inflateRawSync(streamBuf) as Buffer;
-      } catch {
-        // 압축 해제 실패 시 원본 유지
+        streamBuf = inflateRawSync(streamBuf, {
+          maxOutputLength: MAX_EXPANDED_BYTES - expandedBytes,
+        }) as Buffer;
+        expandedBytes += streamBuf.length;
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') {
+          throw new Error(EXPANDED_TOO_LARGE_MESSAGE);
+        }
+        // 그 밖의 압축 해제 실패 시 원본 유지
       }
     }
 
@@ -214,6 +258,7 @@ export async function parseUploadedDocument(
 
     // 2. MS Word (.docx)
     if (lower.endsWith('.docx')) {
+      await assertZipWithinLimits(buffer);
       const htmlResult = await mammoth.convertToHtml({ buffer });
       let markdown = htmlToSimpleMarkdown(htmlResult.value);
 

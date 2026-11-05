@@ -1,5 +1,7 @@
 'use server';
 
+import { randomInt } from 'node:crypto';
+
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/utils/supabase/server';
@@ -118,11 +120,14 @@ export async function syncInlineQuizGroupsForLesson(
   }
 }
 
+const MAX_AI_CONTEXT_CHARS = 20000;
+const MAX_AI_OBJECTIVE_CHARS = 1000;
+
 function generateLibraryJoinCode(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let result = '#';
   for (let i = 0; i < 5; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    result += chars.charAt(randomInt(chars.length));
   }
   return result;
 }
@@ -1814,10 +1819,21 @@ export async function generateInlineQuizDraftAction(
     return { success: false, error: '로그인이 필요합니다.' };
   }
 
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  if (profile?.role !== 'teacher') {
+    return { success: false, error: '선생님 계정만 AI 문항을 생성할 수 있습니다.' };
+  }
+
+  // 문항에 가까운 뒷부분 문맥만 보내 입력 비용을 제한
   return generateInlineQuizFromContextWithGemini(
-    contextText,
+    (contextText || '').slice(-MAX_AI_CONTEXT_CHARS),
     questionType,
-    learningObjective
+    learningObjective?.slice(0, MAX_AI_OBJECTIVE_CHARS)
   );
 }
 

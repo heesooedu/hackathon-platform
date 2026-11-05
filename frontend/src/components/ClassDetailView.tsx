@@ -15,6 +15,8 @@ import ClassStudentManagementDashboard, {
   StudentPeerAnswerItem,
 } from '@/components/ClassStudentManagementDashboard';
 
+import RegenerateJoinCodeButton from '@/components/RegenerateJoinCodeButton';
+
 interface ClassDetailViewProps {
   classId: string;
   className: string;
@@ -125,6 +127,7 @@ export default function ClassDetailView({
             {joinCode}
           </span>
           <CopyCodeButton code={joinCode} />
+          {isTeacher && <RegenerateJoinCodeButton classId={classId} />}
         </div>
       </div>
 
