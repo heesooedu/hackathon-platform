@@ -363,9 +363,154 @@ describe('학생 직접 등록', () => {
   });
 });
 
+describe('교안 정답과 AI 리포트', () => {
+  const PREFIX = '<!--__PEDAGOGY_V2_META__:';
+  const SUFFIX = ':__END_PEDAGOGY_V2_META__-->';
+  const MATERIAL_LESSON = id(24);
+  const LEGACY_LESSON = id(25);
+  const quiz = {
+    quizId: 'iq_secret',
+    questionType: 'multiple_choice',
+    questionText: '비밀 문제',
+    options: ['가', '나'],
+    correctOptionIndex: 1,
+    answerText: '비밀정답',
+    explanation: '비밀해설',
+    targetConcept: '개념',
+  };
+  const fence = (q) => '```quiz\n' + JSON.stringify(q, null, 2) + '\n```';
+  const envelope = (markdown, extra = {}) => JSON.stringify({
+    version: 2,
+    materialType: 'markdown',
+    markdownContent: markdown,
+    htmlContent: '',
+    fileName: null,
+    appliedPatches: [{ id: 'p1', title: '보충', content_markdown: `패치\n${fence({ ...quiz, quizId: 'iq_patch' })}` }],
+    aiAnalysis: { summary: '교사 전용 진단' },
+    sourceMaterialId: id(99),
+    pageIcon: '💻',
+    ...extra,
+  });
+  const encode = (json) => `${PREFIX}${Buffer.from(json, 'utf-8').toString('base64')}${SUFFIX}`;
+  const decode = (raw) => {
+    const start = raw.indexOf(PREFIX) + PREFIX.length;
+    return JSON.parse(Buffer.from(raw.slice(start, raw.indexOf(SUFFIX)), 'base64').toString('utf-8'));
+  };
+  const lessonOf = async (userId, lessonId = MATERIAL_LESSON) =>
+    value(await as(userId, 'select public.get_student_lesson($1)', [lessonId]));
+
+  before(async () => {
+    const markdown = `# 제목 🚀\r\n본문\n${fence(quiz)}\n\n\`\`\`python\nprint("correctOptionIndex")\n\`\`\`\n끝`;
+    await db.query(
+      `insert into lessons(id, class_id, title, learning_objective, material_html, material_markdown, ai_review_json)
+       values ($1, $2, '교안', '목표', $3, $4, '{"summary":"교사 전용"}')`,
+      [MATERIAL_LESSON, CLASS, encode(envelope(markdown)), markdown]
+    );
+    await db.query(
+      `insert into lessons(id, class_id, title, learning_objective, material_html)
+       values ($1, $2, '옛 교안', '목표', $3)`,
+      [LEGACY_LESSON, CLASS, fence({ ...quiz, quizId: 'iq_legacy' })]
+    );
+  });
+
+  test('학생은 lessons 원본을 직접 읽을 수 없다', async () => {
+    assert.equal((await as(ALICE, 'select id from lessons')).rows.length, 0);
+    assert.equal((await as(ALICE, 'select material_html from lessons where id = $1', [MATERIAL_LESSON])).rows.length, 0);
+  });
+
+  test('교사는 원본과 정답을 그대로 읽는다', async () => {
+    const { rows } = await as(CO_TEACHER, 'select material_html from lessons where id = $1', [MATERIAL_LESSON]);
+    assert.equal(decode(rows[0].material_html).aiAnalysis.summary, '교사 전용 진단');
+    assert.ok(decode(rows[0].material_html).markdownContent.includes('비밀정답'));
+  });
+
+  test('학생용 교안에는 정답, 해설, AI 리포트, 원본 ID가 없다', async () => {
+    const lesson = await lessonOf(ALICE);
+    const body = decode(lesson.material_html);
+    const all = JSON.stringify(lesson) + JSON.stringify(body);
+    for (const secret of ['비밀정답', '비밀해설', '교사 전용', id(99), '"correctOptionIndex":1', 'answerText']) {
+      assert.ok(!all.includes(secret), `노출: ${secret}`);
+    }
+    assert.equal(lesson.ai_review_json, null);
+    assert.equal(body.aiAnalysis, undefined);
+    assert.equal(body.sourceMaterialId, undefined);
+  });
+
+  test('학생용 교안은 문제와 보기, 나머지 본문을 유지한다', async () => {
+    const lesson = await lessonOf(ALICE);
+    const body = decode(lesson.material_html);
+    assert.ok(body.markdownContent.includes('# 제목 🚀'));
+    assert.ok(body.markdownContent.includes('print("correctOptionIndex")'), '다른 코드 블록은 그대로');
+    assert.equal(body.pageIcon, '💻');
+    const quizJson = body.markdownContent.match(/```quiz\n(.*)\n```/)[1];
+    const stripped = JSON.parse(quizJson);
+    assert.equal(stripped.quizId, 'iq_secret');
+    assert.equal(stripped.questionText, '비밀 문제');
+    assert.deepEqual(stripped.options, ['가', '나']);
+    assert.equal(lesson.title, '교안');
+    assert.equal(lesson.learning_objective, '목표');
+  });
+
+  test('메타 없는 예전 교안도 정답이 제거된다', async () => {
+    const lesson = await lessonOf(ALICE, LEGACY_LESSON);
+    assert.ok(!lesson.material_html.includes('비밀정답'));
+    assert.ok(lesson.material_html.includes('iq_legacy'));
+  });
+
+  test('닫는 펜스가 없거나 JSON이 깨진 quiz 블록도 내용을 내보내지 않는다', async () => {
+    const scan = async (text) =>
+      (await db.query('select (public.scan_quiz_blocks($1)).sanitized s', [text])).rows[0].s;
+    assert.ok(!(await scan('```quiz\n{"answerText":"비밀"')).includes('비밀'));
+    assert.ok(!(await scan('```quiz\n{"answerText":"비밀",\n```')).includes('비밀'));
+    assert.ok(!(await scan('  ```QUIZ:제목\n{"answerText":"비밀"}\n  ```')).includes('비밀'));
+  });
+
+  test('해석할 수 없는 봉투는 내보내지 않는다', async () => {
+    await db.query(`update lessons set material_html = $2 where id = $1`, [LEGACY_LESSON, `${PREFIX}@@@${SUFFIX}`]);
+    assert.equal((await lessonOf(ALICE, LEGACY_LESSON)).material_html, null);
+  });
+
+  test('목록 RPC도 같은 값을 돌려주고 외부인은 받지 못한다', async () => {
+    const list = value(await as(ALICE, 'select public.get_student_lessons($1)', [CLASS]));
+    assert.ok(list.length >= 2);
+    assert.ok(!JSON.stringify(list).includes('교사 전용'));
+    assert.deepEqual(value(await as(OUTSIDER, 'select public.get_student_lessons($1)', [CLASS])), []);
+    assert.equal(await lessonOf(OUTSIDER), null);
+  });
+
+  test('학생이 내부 함수를 직접 호출할 수 없다', async () => {
+    await assert.rejects(as(ALICE, `select public.student_safe_material('x')`));
+    await assert.rejects(as(ALICE, `select public.decode_material_envelope('x')`));
+  });
+
+  test('마이그레이션 16이 빠진 채점 그룹을 보충하고, 다시 실행해도 중복되지 않는다', async () => {
+    const count = async () =>
+      (await db.query(`select count(*)::int c from question_groups where lesson_id = $1`, [MATERIAL_LESSON])).rows[0].c;
+    assert.equal(await count(), 0);
+    await db.exec(fs.readFileSync(path.join(migrationsDir, '16_student_safe_lessons.sql'), 'utf8'));
+    assert.equal(await count(), 1);
+    await db.exec(fs.readFileSync(path.join(migrationsDir, '16_student_safe_lessons.sql'), 'utf8'));
+    assert.equal(await count(), 1);
+
+    const res = value(await as(ALICE, 'select public.submit_inline_quiz_attempt($1, $2, $3, $4)', [MATERIAL_LESSON, 'iq_secret', 1, null]));
+    assert.deepEqual(res, { success: true, is_correct: true });
+
+    const group = (await board(ALICE, MATERIAL_LESSON)).groups[0];
+    assert.equal(JSON.parse(group.representative_content).answer_text, '비밀정답');
+    const unsolved = (await board(BOB, MATERIAL_LESSON)).groups[0];
+    assert.ok(!unsolved.representative_content.includes('비밀정답'));
+  });
+});
+
 describe('재실행', () => {
-  test('13~15를 다시 실행해도 오류가 없다', async () => {
-    for (const file of ['13_anonymous_board_and_quiz_rpc.sql', '14_restrict_peer_reads.sql', '15_ai_quota_and_join_limits.sql']) {
+  test('13~17을 다시 실행해도 오류가 없다', async () => {
+    for (const file of [
+      '13_anonymous_board_and_quiz_rpc.sql',
+      '14_restrict_peer_reads.sql',
+      '15_ai_quota_and_join_limits.sql',
+      '16_student_safe_lessons.sql',
+      '17_restrict_lesson_reads.sql',
+    ]) {
       await db.exec(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
     }
   });
