@@ -2,58 +2,30 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-declare global {
-  interface Window {
-    mermaid?: {
-      initialize: (config: Record<string, unknown>) => void;
-      render: (
-        id: string,
-        text: string
-      ) => Promise<{ svg: string; bindFunctions?: (el: Element) => void }>;
-    };
-  }
-}
+type MermaidApi = typeof import('mermaid').default;
 
-let mermaidLoadingPromise: Promise<void> | null = null;
+let mermaidPromise: Promise<MermaidApi> | null = null;
 
-function loadMermaidFromCdn(): Promise<void> {
-  if (typeof window === 'undefined') return Promise.resolve();
-  if (window.mermaid) return Promise.resolve();
-  if (mermaidLoadingPromise) return mermaidLoadingPromise;
-
-  mermaidLoadingPromise = new Promise((resolve, reject) => {
-    const existing = document.getElementById('mermaid-cdn-script');
-    if (existing) {
-      existing.addEventListener('load', () => resolve());
-      existing.addEventListener('error', () =>
-        reject(new Error('Mermaid 로드 실패'))
-      );
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.id = 'mermaid-cdn-script';
-    script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js';
-    script.async = true;
-    script.onload = () => {
-      if (window.mermaid) {
-        window.mermaid.initialize({
+function loadMermaid(): Promise<MermaidApi> {
+  if (!mermaidPromise) {
+    mermaidPromise = import('mermaid')
+      .then(({ default: mermaid }) => {
+        mermaid.initialize({
           startOnLoad: false,
           theme: 'default',
-          securityLevel: 'loose',
+          // 교사가 작성한 차트가 학생 화면에서 스크립트를 실행하지 못하도록 라벨을 정화하고 클릭 동작을 막음
+          securityLevel: 'strict',
           fontFamily: 'Pretendard, -apple-system, BlinkMacSystemFont, sans-serif',
         });
-      }
-      resolve();
-    };
-    script.onerror = () => {
-      mermaidLoadingPromise = null;
-      reject(new Error('Mermaid 스크립트를 불러오지 못했습니다.'));
-    };
-    document.head.appendChild(script);
-  });
+        return mermaid;
+      })
+      .catch((err: unknown) => {
+        mermaidPromise = null;
+        throw err;
+      });
+  }
 
-  return mermaidLoadingPromise;
+  return mermaidPromise;
 }
 
 export default function MermaidDiagram({ chart }: { chart: string }) {
@@ -74,11 +46,11 @@ export default function MermaidDiagram({ chart }: { chart: string }) {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        await loadMermaidFromCdn();
-        if (cancelled || !window.mermaid) return;
+        const mermaid = await loadMermaid();
+        if (cancelled) return;
 
         const uniqueId = `${renderIdRef.current}-${Date.now()}`;
-        const { svg } = await window.mermaid.render(uniqueId, cleanChart);
+        const { svg } = await mermaid.render(uniqueId, cleanChart);
         if (!cancelled) {
           setSvgHtml(svg);
           setErrorMsg(null);
